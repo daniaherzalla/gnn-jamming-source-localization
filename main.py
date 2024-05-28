@@ -1,9 +1,9 @@
+import csv
 import torch
 from config import params
 from data_processing import load_data, create_data_loader, load_scaler
 from train import initialize_model, train_epoch, validate, predict_and_evaluate
-from utils import save_metrics_and_params
-from utils import set_random_seeds
+from utils import set_random_seeds, save_metrics_and_params
 import logging
 from custom_logging import setup_logging
 
@@ -62,9 +62,17 @@ def main():
     # Evaluate the model on the test set
     scaler = load_scaler()  # Adjust the path to your scaler file
     predictions, actuals = predict_and_evaluate(model, test_loader, device, scaler)
-    # Save predictions and actuals for further analysis
-    with open('results/predictions.json', 'w') as f:
-        json.dump({'predictions': predictions, 'actuals': actuals}, f, indent=4)
+
+    # Ensure both lists have the same length
+    if len(predictions) != len(actuals):
+        raise ValueError("Predictions and actuals lists must have the same length")
+
+    # Save predictions and actuals to a CSV file
+    with open('results/predictions.csv', 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Prediction', 'Actual'])  # Write the header
+        for pred, act in zip(predictions, actuals):
+            writer.writerow([pred, act])  # Write each prediction-actual pair
 
 
 if __name__ == "__main__":

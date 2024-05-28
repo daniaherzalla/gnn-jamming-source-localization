@@ -1,9 +1,9 @@
+import math
 import torch
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from model import GraphAttentionNetwork
 from typing import Tuple
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 import logging
 from custom_logging import setup_logging
@@ -105,4 +105,6 @@ def predict_and_evaluate(model, loader, device, scaler):
     # Now calculate your metrics, e.g., MSE, RMSE, etc., using predictions and actuals
     mse = mean_squared_error(actuals, predictions)
     print(f'Mean Squared Error: {mse}')
+    rmse = math.sqrt(mse)
+    print(f'Root Mean Squared Error: {rmse}')
     return predictions, actuals

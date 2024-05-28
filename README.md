@@ -1,37 +1,46 @@
-# Jamming Source Localization using GNNs
+# Graph Attention Network for Jammer Localization in Drone Swarms
 
-## Project Overview
-This project focuses on localizing a single static jamming source in a swarm of drones using a Graph Neural Network (GNN) to estimate the position. A potential extension of this project can include estimating the jammer type (omnidirectional or directional) and transmit power.
+## Overview
+This project utilizes a Graph Attention Network (GAT) to localize jammers in a simulated drone swarm environment. The GAT model processes spatial coordinates, RSSI values, and other features to predict the jammer's position within the swarm. 
 
 ## Model Architecture
-The current GNN model employed in this project utilizes Graph Attention Networks (GATs) to dynamically adapt to varying signal patterns within a drone swarm affected by jamming. The model's structure is designed to capture and process the unique characteristics of each node and its connections as follows:
 
-**Input Layer:** Processes node features, which include positional data, received signal strength, jamming status, and the distance from the centroid of the swarm.   
-**Edges Definition:** Nodes are interconnected based on geographical proximity. The weight of each edge is determined by the average of their normalized RSSI values.      
-**GAT Layers:** Incorporates two layers of GAT.   
-**Attention Pooling Layer:** Instead of traditional global mean pooling, the model employs attention pooling to aggregate node features across the graph. This method utilizes the learned attention mechanisms to weigh node features dynamically.   
-**Output Layer:** Outputs the estimated jamming source coordinates as (x, y, z), leveraging the graph representation derived from the attention pooling.
+The model is structured around a Graph Attention Network (GAT). This architecture is particularly effective for understanding complex spatial relationships and interaction patterns in scenarios where the data inherently forms a graph, such as in drone swarms under jamming attacks. The architecture is detailed as follows:
+
+- **Input Layer**: Each node in the graph represents a drone, characterized by features such as spatial coordinates, RSSI values, and jamming status. These features are first processed through a linear transformation.
+
+- **Graph Attention Layers**: The core of the model consists of multiple GAT layers. Each layer includes:
+  - **Attention Mechanisms**: Attention coefficients are calculated using a shared attention mechanism that considers pairs of nodes. This mechanism allows the model to focus on more informative parts of the graph dynamically.
+  - **Feature Aggregation**: Node features are updated by aggregating neighbor features weighted by the learned attention coefficients. This aggregation is performed independently for each attention head.
+  - **Multi-Head Attention**: The model employs several parallel attention mechanisms (heads) to enhance the stability and capacity of the learning process. The outputs of these heads are concatenated and can be passed through further GAT layers or directed towards the output.
+
+- **Output Layer**: The final set of features, after passing through multiple attention layers, is processed to predict the jammer's coordinates. This output can be customized to also include predictions for the jammer's type and transmit power, depending on the configured objectives.
+
+- **Regularization and Non-linearities**: LeakyReLU is applied between layers and dropout is applied at the last layer to prevent overfitting and introduce non-linearity.
 
 ## Repository Structure
 
 ```
 gnn-jamming-source-localization/
 │
-├── data/                      # Folder containing preprocessed data splits for reproducibility
-│   ├── train_dataset.pkl      # Training dataset pickle file
-│   ├── test_dataset.pkl       # Test dataset pickle file
-│   ├── validation_dataset.pkl # Validation dataset pickle file
-│   ├── scalar.pkl             # Scaler object used for normalizing/denormalizing data
-├── results/                   # Folder for storing results and metrics
-│   ├── model_metrics_and_params.csv  # Metrics and parameters for various model runs
-│   ├── hyperparameter_tuning_results.json  # Results of hyperparameter tuning
-├── data_processing.py         # Preprocesses the CSV data for training the model.
-├── model.py                   # Defines the GNN model for jammer localization.
-├── train.py                   # Contains functions to train the GNN model.
-├── hyperparam_tuning.py       # Script for hyperparameter optimization using Hyperopt.
-├── utils.py                   # Helper functions used across the project.
-├── custom_logging.py          # Custom logging utilities for debugging and tracking.
-└── config.py                  # Configuration settings for model and training.
+├── data/                       # Folder containing preprocessed data splits for reproducibility
+│   ├── static_swarm_3d.csv     # Static swarm dataset used for model training (1000 scenarios)
+│   ├── train.gzip              # Training dataset (compressed pickle file)
+│   ├── test.gzip               # Test dataset (compressed pickle file)
+│   ├── validation.gzip         # Validation dataset (compressed pickle file)
+│   ├── scaler.pkl              # Scaler object used for normalizing/denormalizing data
+├── results/                    # Folder for storing results and metrics
+│   ├── hyperparam_tuning_results.json  # Results of hyperparameter tuning
+│   ├── model_metrics_and_params.csv    # Metrics and parameters from various model runs
+│   ├── predictions.csv                 # Predicted vs actual jammer positions from test data
+├── main.py                     # Orchestrates the training and evaluation processes, including data loading and model initialization
+├── train.py                    # Contains the training and validation loops, and functions for model evaluation
+├── data_processing.py          # Handles data loading, preprocessing, and transformation into formats suitable for PyTorch Geometric
+├── model.py                    # Defines the Graph Attention Network and other neural network architectures used in the project
+├── hyperparam_tuning.py        # Manages hyperparameter optimization using Hyperopt.
+├── utils.py                    # Provides utility functions 
+├── custom_logging.py           # Configures custom logging formats, enhancing output readability during execution
+└── config.py                   # Stores configuration parameters that dictate the model's runtime behavior
 ```
 
 ## Installation
@@ -46,27 +55,20 @@ Note: Ensure you have Python 3.8 or above installed on your system.
 
 ## Usage
 
-To preprocess the data and train the model, run:
-
-```bash
-python main.py
-```
-
 For hyperparameter tuning:
 
 ```bash
 python hyperparam_tuning.py
 ```
 
+To initiate the data processing, model training, and final evaluations, run:
+
+```bash
+python main.py
+```
+
 ## Configurations
 
 Adjust the `config.py` file to set various parameters such as the number of epochs, batch size, learning rate, and other model-specific settings. 
-The values are currently set based on the outcome of the hyperparameter tuning logged in `hyperparameter_tuning_results.json`.
+The current values are set based on the best hyperparameter results logged in `data/hyperparam_tuning_results.json`.
 
-## Dependencies
-
-- PyTorch
-- PyTorch Geometric
-- Hyperopt
-- Numpy
-- Pandas

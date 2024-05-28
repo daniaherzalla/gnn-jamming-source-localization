@@ -1,10 +1,11 @@
 import json
 import torch
-from hyperopt import hp, fmin, tpe, Trials, space_eval
+import numpy as np
+from hyperopt import hp, fmin, tpe, Trials, space_eval, base
 from train import initialize_model, train_epoch, validate
 from data_processing import load_data, create_data_loader
 from config import params
-from utils import set_random_seeds, convert_to_serializable
+from utils import set_random_seeds
 
 set_random_seeds()
 
@@ -51,7 +52,19 @@ def objective(hyperparameters, train_dataset, val_dataset, test_dataset):
     return val_loss
 
 
-def save_results(trials, best_hyperparams, filename='results/hyperparameter_tuning_results.json'):
+def convert_to_serializable(val):
+    if isinstance(val, (np.int64, np.int32)):
+        return int(val)
+    elif isinstance(val, (np.float64, np.float32)):
+        return float(val)
+    elif isinstance(val, list) and len(val) == 1:
+        return convert_to_serializable(val[0])
+    elif isinstance(val, dict):
+        return {k: convert_to_serializable(v) for k, v in val.items()}
+    return val
+
+
+def save_results(trials, best_hyperparams, filename='hyperparam_tuning_results.json'):
     """
     Save the results of the hyperparameter tuning process.
 
@@ -63,10 +76,14 @@ def save_results(trials, best_hyperparams, filename='results/hyperparameter_tuni
     Returns:
         None
     """
-    # Trials doc: https://github.com/hyperopt/hyperopt/blob/master/hyperopt/base.py
     results = {
         'best_hyperparameters': best_hyperparams,
-        'trials': [{'hyperparameters': convert_to_serializable(trial['misc']['vals']), 'result': convert_to_serializable(trial['result'])} for trial in trials.trials]
+        'trials': [
+            {
+                'hyperparameters': {key: convert_to_serializable(val) for key, val in trial['misc']['vals'].items()},
+                'result': convert_to_serializable(trial['result'])
+            } for trial in trials.trials
+        ]
     }
     with open(filename, 'w') as f:
         json.dump(results, f, indent=4)
@@ -78,7 +95,7 @@ def main():
 
     # Define the hyperparameter space including batch size as a parameter
     hyperparameter_space = {
-        'dropout_rate': hp.uniform('dropout_rate', 0.1, 0.5),
+        'dropout_rate': hp.uniform('dropout_rate', 0.1, 0.6),
         'num_heads': hp.choice('num_heads', [2, 4, 8]),
         'batch_size': hp.choice('batch_size', [32, 64, 128, 256]),
         'learning_rate': hp.uniform('learning_rate', 0.0001, 0.01),
@@ -92,7 +109,7 @@ def main():
         fn=lambda hyperparameters: objective(hyperparameters, train_dataset, val_dataset, test_dataset),
         space=hyperparameter_space,
         algo=tpe.suggest,
-        max_evals=50,
+        max_evals=80,
         trials=trials
     )
     best_hyperparams = space_eval(hyperparameter_space, best_hyperparameters)
