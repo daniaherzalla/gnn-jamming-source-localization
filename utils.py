@@ -41,16 +41,13 @@ def set_random_seeds(seed_value=42):
     torch.cuda.manual_seed_all(seed_value + 3)
 
 
-def convert_to_serializable(obj):
-    if isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, dict):
-        return {k: convert_to_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_serializable(i) for i in obj]
-    else:
-        return obj
+def convert_to_serializable(val):
+    if isinstance(val, (np.int64, np.int32)):
+        return int(val)
+    elif isinstance(val, (np.float64, np.float32)):
+        return float(val)
+    elif isinstance(val, list) and len(val) == 1:
+        return convert_to_serializable(val[0])
+    elif isinstance(val, dict):
+        return {k: convert_to_serializable(v) for k, v in val.items()}
+    return val

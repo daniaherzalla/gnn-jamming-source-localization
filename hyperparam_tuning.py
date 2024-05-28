@@ -1,11 +1,10 @@
 import json
 import torch
-import numpy as np
-from hyperopt import hp, fmin, tpe, Trials, space_eval, base
+from hyperopt import hp, fmin, tpe, Trials, space_eval
 from train import initialize_model, train_epoch, validate
 from data_processing import load_data, create_data_loader
 from config import params
-from utils import set_random_seeds
+from utils import set_random_seeds, convert_to_serializable
 
 set_random_seeds()
 
@@ -50,18 +49,6 @@ def objective(hyperparameters, train_dataset, val_dataset, test_dataset):
         print(f"Epoch: {epoch}, Train Loss: {train_loss}, Val Loss: {val_loss}")
 
     return val_loss
-
-
-def convert_to_serializable(val):
-    if isinstance(val, (np.int64, np.int32)):
-        return int(val)
-    elif isinstance(val, (np.float64, np.float32)):
-        return float(val)
-    elif isinstance(val, list) and len(val) == 1:
-        return convert_to_serializable(val[0])
-    elif isinstance(val, dict):
-        return {k: convert_to_serializable(v) for k, v in val.items()}
-    return val
 
 
 def save_results(trials, best_hyperparams, filename='hyperparam_tuning_results.json'):

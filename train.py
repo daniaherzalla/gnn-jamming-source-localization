@@ -89,20 +89,34 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
 
 
 def predict_and_evaluate(model, loader, device, scaler):
+    """
+    Evaluate the model and compute performance metrics.
+
+    Args:
+        model (torch.nn.Module): The trained model to evaluate.
+        loader (torch.utils.data.DataLoader): The data loader providing the dataset for evaluation.
+        device (torch.device): The device to perform the computations on (e.g., 'cpu' or 'cuda').
+        scaler (object): The scaler used to normalize the data, with an inverse_transform method to denormalize it.
+
+    Returns:
+        tuple: A tuple containing two lists:
+            - predictions (list): The predicted values after denormalization.
+            - actuals (list): The actual values after denormalization.
+    """
     model.eval()
     predictions, actuals = [], []
     with torch.no_grad():
         for data in loader:
             data = data.to(device)
             output = model(data)
-            # Apply inverse transformation to the model output
+            # Apply inverse transformation to the model output (denormalize)
             predicted_coords = scaler.inverse_transform(output.cpu().numpy())
             actual_coords = scaler.inverse_transform(data.y.cpu().numpy())
 
             predictions.extend(predicted_coords)
             actuals.extend(actual_coords)
 
-    # Now calculate your metrics, e.g., MSE, RMSE, etc., using predictions and actuals
+    # calculate metrics MSE, RMSE using predictions and actuals
     mse = mean_squared_error(actuals, predictions)
     print(f'Mean Squared Error: {mse}')
     rmse = math.sqrt(mse)

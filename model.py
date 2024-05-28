@@ -43,28 +43,3 @@ class GraphAttentionNetwork(torch.nn.Module):
         x = self.dropout(x)  # apply dropout last layer
         x = self.regressor(x)  # Predict the jammer's coordinates
         return x
-
-
-class SimpleGraphNetwork(Module):
-    """
-    A simple fully connected neural network model for graph data.
-    """
-    def __init__(self):
-        super(SimpleGraphNetwork, self).__init__()
-        self.fc1 = Linear(6, 16)
-        self.fc2 = Linear(16, 32)
-        self.fc3 = Linear(32, 3)
-        self.relu = ReLU()
-
-    def forward(self, data):
-        x, batch = data.x, data.batch
-        # Apply a fully connected network to each node independently
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        x = self.relu(x)
-        # aggregate node features to a graph-level prediction # not befitting for our use case?
-        x = global_mean_pool(x, batch)
-        x = self.fc3(x)
-        return x
-
