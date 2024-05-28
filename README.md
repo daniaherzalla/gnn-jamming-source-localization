@@ -7,7 +7,7 @@ This project utilizes a Graph Attention Network (GAT) to localize jammers in a s
 
 The model is structured around a Graph Attention Network (GAT). This architecture is particularly effective for understanding complex spatial relationships and interaction patterns in scenarios where the data inherently forms a graph, such as in drone swarms under jamming attacks. The architecture is detailed as follows:
 
-- **Input Layer**: Each node in the graph represents a drone, characterized by features such as spatial coordinates, RSSI values, and jamming status. These features are first processed through a linear transformation.
+- **Input Layer**: Each node in the graph represents a drone, characterized by features such as spatial coordinates, RSSI values, jamming status, and distance from center of the swarm. These features are first processed through a linear transformation.
 
 - **Graph Attention Layers**: The core of the model consists of multiple GAT layers. Each layer includes:
   - **Attention Mechanisms**: Attention coefficients are calculated using a shared attention mechanism that considers pairs of nodes. This mechanism allows the model to focus on more informative parts of the graph dynamically.
