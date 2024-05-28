@@ -31,7 +31,6 @@ def initialize_model(device: torch.device, params: dict) -> Tuple[GraphAttention
     """
     logging.info("Initializing model...")
     model = GraphAttentionNetwork(params["dropout_rate"], params["num_heads"]).to(device)
-    # model = SimpleGraphNetwork().to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=params['patience'], verbose=True)
     criterion = torch.nn.MSELoss()

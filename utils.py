@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 
-def save_metrics_and_params(metrics: Dict[str, float], params: Dict[str, float], filename: str = 'model_metrics_and_params.csv') -> None:
+def save_metrics_and_params(metrics: Dict[str, float], params: Dict[str, float], filename: str = 'results/model_metrics_and_params.csv') -> None:
     """
     Save metrics and parameters to a JSON file.
 

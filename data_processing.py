@@ -1,3 +1,4 @@
+import gzip
 import os
 import pandas as pd
 import numpy as np
@@ -19,7 +20,7 @@ setup_logging()
 set_random_seeds()
 
 
-def fit_and_save_scaler(data, path='scaler.pkl'):
+def fit_and_save_scaler(data, path='data/scaler.pkl'):
     """
     Fits a MinMaxScaler to the specified features of the data and saves the scaler to a file.
 
@@ -39,7 +40,7 @@ def fit_and_save_scaler(data, path='scaler.pkl'):
     return scaler
 
 
-def load_scaler(path='scaler.pkl'):
+def load_scaler(path='data/scaler.pkl'):
     """
     Loads a MinMaxScaler from a file.
 
@@ -54,7 +55,17 @@ def load_scaler(path='scaler.pkl'):
     return scaler
 
 
-def preprocess_data(data, scaler_path='scaler.pkl'):
+def preprocess_data(data, scaler_path='data/scaler.pkl'):
+    """
+   Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
+
+   Args:
+       data (pd.DataFrame): The input data containing columns to be processed.
+       scaler_path (str): The path to save/load the scaler for normalization.
+
+   Returns:
+       pd.DataFrame: The preprocessed data with transformed features.
+   """
     logging.info("Preprocessing data...")
     for col in ['drone_positions', 'states', 'drones_rssi']:
         data[col] = data[col].apply(safe_convert_list)
@@ -80,6 +91,19 @@ def preprocess_data(data, scaler_path='scaler.pkl'):
 
 
 def save_datasets(data, train_path, val_path, test_path):
+    """
+    Save the preprocessed data into train, validation, and test datasets.
+
+    Args:
+        data (pd.DataFrame): The preprocessed data to be split and saved.
+        train_path (str): The file path to save the training dataset.
+        val_path (str): The file path to save the validation dataset.
+        test_path (str): The file path to save the test dataset.
+
+    Returns:
+        Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
+        The train, validation, and test datasets.
+    """
     torch_geo_dataset = [create_torch_geo_data(row) for _, row in data.iterrows()]
     train_size = int(0.6 * len(torch_geo_dataset))
     val_size = int(0.2 * len(torch_geo_dataset))
@@ -88,24 +112,38 @@ def save_datasets(data, train_path, val_path, test_path):
     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(torch_geo_dataset, [train_size, val_size, test_size])
 
     logging.info("Saving preprocessed data...")
-    with open(train_path, 'wb') as f:
+    with gzip.open(train_path, 'wb') as f:
         pickle.dump(train_dataset, f)
-    with open(val_path, 'wb') as f:
+    with gzip.open(val_path, 'wb') as f:
         pickle.dump(val_dataset, f)
-    with open(test_path, 'wb') as f:
+    with gzip.open(test_path, 'wb') as f:
         pickle.dump(test_dataset, f)
 
     return train_dataset, val_dataset, test_dataset
 
 
 def load_data(dataset_path: str, train_path: str, val_path: str, test_path: str):
+    """
+    Load the data from the given paths, or preprocess and save it if not already done.
+
+    Args:
+        dataset_path (str): The file path of the raw dataset.
+        train_path (str): The file path of the saved training dataset.
+        val_path (str): The file path of the saved validation dataset.
+        test_path (str): The file path of the saved test dataset.
+
+    Returns:
+        Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
+        The train, validation, and test datasets.
+    """
     if all(os.path.exists(path) for path in [train_path, val_path, test_path]):
         logging.info("Loading preprocessed data...")
-        with open(train_path, 'rb') as f:
+        # Load compressed datasets
+        with gzip.open(train_path, 'rb') as f:
             train_dataset = pickle.load(f)
-        with open(val_path, 'rb') as f:
+        with gzip.open(val_path, 'rb') as f:
             val_dataset = pickle.load(f)
-        with open(test_path, 'rb') as f:
+        with gzip.open(test_path, 'rb') as f:
             test_dataset = pickle.load(f)
     else:
         data = pd.read_csv(dataset_path)
@@ -117,7 +155,7 @@ def load_data(dataset_path: str, train_path: str, val_path: str, test_path: str)
 
 def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int):
     """
-
+    Create data loader objects.
     Args:
         batch_size (int): Batch size for the DataLoader.
 
@@ -150,82 +188,17 @@ def safe_convert_list(row: str) -> List[Any]:
         return []
 
 
-# def create_torch_geo_data(row: pd.Series) -> Data:
-#     """
-#     Create a PyTorch Geometric data object from a row of the dataset.
-#
-#     Args:
-#         row (pd.Series): A row of the DataFrame.
-#
-#     Returns:
-#         Data: A PyTorch Geometric data object.
-#     """
-#     node_features = [np.array(pos + [1 if state == 'jammed' else 0, rssi, dist], dtype=float) for pos, state, rssi, dist in zip(row['drone_positions'], row['states'], row['drones_rssi'], row['distance_to_centroid'])]
-#     node_features = np.stack(node_features)
-#     node_features = torch.tensor(node_features, dtype=torch.float)
-#
-#     edge_index = []
-#     edge_weight = []
-#     num_drones = len(row['drone_positions'])
-#     for i in range(num_drones):
-#         for j in range(i + 1, num_drones):
-#             dist = np.linalg.norm(np.array(row['drone_positions'][i]) - np.array(row['drone_positions'][j]))
-#             proximity_threshold = 10
-#             if dist < proximity_threshold:
-#                 edge_index.append([i, j])
-#                 edge_index.append([j, i])
-#                 edge_weight.append((row['drones_rssi'][i] + row['drones_rssi'][j]) / 2)
-#                 edge_weight.append((row['drones_rssi'][i] + row['drones_rssi'][j]) / 2)
-#
-#     if not edge_index:  # Check if the edge_index list is still empty
-#         edge_index = [[i, i] for i in range(num_drones)]  # Add a self-loop to each node
-#         edge_weight = [1.0 for _ in range(num_drones)]  # Use a default edge weight of 1
-#
-#     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-#     edge_weight = torch.tensor(edge_weight, dtype=torch.float)
-#
-#     y = torch.tensor(row['jammer_position'], dtype=torch.float).unsqueeze(0)
-#     return Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight, y=y)
-
-
-# def create_torch_geo_data(row: pd.Series) -> Data:
-#     """
-#     Create a PyTorch Geometric data object from a row of the dataset.
-#
-#     Args:
-#         row (pd.Series): A row of the DataFrame.
-#
-#     Returns:
-#         Data: A PyTorch Geometric data object.
-#     """
-#     node_features = [np.array(pos + [1 if state == 'jammed' else 0, rssi, dist], dtype=float) for pos, state, rssi, dist in zip(row['drone_positions'], row['states'], row['drones_rssi'], row['distance_to_centroid'])]
-#     node_features = torch.tensor(np.stack(node_features), dtype=torch.float)
-#
-#     edge_index = []
-#     edge_weight = []
-#     num_drones = len(row['drone_positions'])
-#     for i in range(num_drones):
-#         for j in range(i + 1, num_drones):
-#             dist = np.linalg.norm(np.array(row['drone_positions'][i]) - np.array(row['drone_positions'][j]))
-#             if dist < 10:  # Proximity threshold
-#                 edge_index.append([i, j])
-#                 edge_index.append([j, i])
-#                 edge_weight.extend([(row['drones_rssi'][i] + row['drones_rssi'][j]) / 2] * 2)
-#
-#     if not edge_index:  # Ensuring at least self-loops if no edges exist
-#         edge_index = [[i, i] for i in range(num_drones)]
-#         edge_weight = [1.0] * num_drones
-#
-#     data = Data(
-#         x=node_features,
-#         edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
-#         edge_attr=torch.tensor(edge_weight, dtype=torch.float),
-#         y=torch.tensor(row['jammer_position'], dtype=torch.float).unsqueeze(0)
-#     )
-#     return data
-
 def create_torch_geo_data(row: pd.Series) -> Data:
-    # Efficiently prepare node features and convert to Tensor
+    """
+    Create a PyTorch Geometric Data object from a row of the dataset.
+
+    Args:
+        row (pd.Series): A row of the dataset containing drone positions, states, RSSI values, and other features.
+
+    Returns:
+        Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
+    """
+    # prepare node features and convert to Tensor
     node_features = [pos + [1 if state == 'jammed' else 0, rssi, dist] for pos, state, rssi, dist in zip(row['drone_positions'], row['states'], row['drones_rssi'], row['distance_to_centroid'])]
     node_features = torch.tensor(node_features, dtype=torch.float32)  # Use float32 directly
 

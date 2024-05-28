@@ -8,6 +8,13 @@ set_random_seeds()
 
 
 class GraphAttentionNetwork(torch.nn.Module):
+    """
+    A Graph Attention Network (GAT) model for predicting jammer coordinates.
+
+    Args:
+        dropout_rate (float): The dropout rate for regularization.
+        num_heads (int): The number of attention heads in the GAT layers.
+    """
     def __init__(self, dropout_rate, num_heads):
         super(GraphAttentionNetwork, self).__init__()
         self.gat1 = GATConv(6, 32, heads=num_heads)  # Input feature dimension is 6, adjust as per your data
@@ -17,6 +24,15 @@ class GraphAttentionNetwork(torch.nn.Module):
         self.dropout = torch.nn.Dropout(dropout_rate)
 
     def forward(self, data):
+        """
+        Forward pass for the GraphAttentionNetwork.
+
+        Args:
+            data (Data): The input data containing node features and edge indices.
+
+        Returns:
+            Tensor: The predicted coordinates of the jammer.
+        """
         x, edge_index = data.x, data.edge_index
         x = F.relu(self.gat1(x, edge_index))
         # x = self.dropout(x)
@@ -30,6 +46,9 @@ class GraphAttentionNetwork(torch.nn.Module):
 
 
 class SimpleGraphNetwork(Module):
+    """
+    A simple fully connected neural network model for graph data.
+    """
     def __init__(self):
         super(SimpleGraphNetwork, self).__init__()
         self.fc1 = Linear(6, 16)

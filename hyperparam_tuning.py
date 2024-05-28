@@ -4,12 +4,24 @@ from hyperopt import hp, fmin, tpe, Trials, space_eval
 from train import initialize_model, train_epoch, validate
 from data_processing import load_data, create_data_loader
 from config import params
-from utils import set_random_seeds
+from utils import set_random_seeds, convert_to_serializable
 
 set_random_seeds()
 
 
 def objective(hyperparameters, train_dataset, val_dataset, test_dataset):
+    """
+    Objective function for hyperparameter optimization.
+
+    Args:
+        hyperparameters (dict): Dictionary containing hyperparameters to be optimized.
+        train_dataset (Dataset): The training dataset.
+        val_dataset (Dataset): The validation dataset.
+        test_dataset (Dataset): The test dataset.
+
+    Returns:
+        float: The validation loss after training with the given hyperparameters.
+    """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Create DataLoaders inside the objective function using current hyperparameters for batch size
@@ -39,11 +51,23 @@ def objective(hyperparameters, train_dataset, val_dataset, test_dataset):
     return val_loss
 
 
-def save_results(trials, best_hyperparams, filename='hyperparameter_tuning_results.json'):
+def save_results(trials, best_hyperparams, filename='results/hyperparameter_tuning_results.json'):
+    """
+    Save the results of the hyperparameter tuning process.
+
+    Args:
+        trials (hyperopt.Trials): The trials object containing information about all the trial runs.
+        best_hyperparams (dict): The best hyperparameters found during the tuning process.
+        filename (str): The file path to save the results to.
+
+    Returns:
+        None
+    """
+    # Trials doc: https://github.com/hyperopt/hyperopt/blob/master/hyperopt/base.py
     results = {
-        'best_hyperparameters': best_hyperparams
+        'best_hyperparameters': best_hyperparams,
+        'trials': [{'hyperparameters': convert_to_serializable(trial['misc']['vals']), 'result': convert_to_serializable(trial['result'])} for trial in trials.trials]
     }
-    # 'trials': [convert_to_serializable(trial['result']) for trial in trials.trials]
     with open(filename, 'w') as f:
         json.dump(results, f, indent=4)
 
@@ -68,7 +92,7 @@ def main():
         fn=lambda hyperparameters: objective(hyperparameters, train_dataset, val_dataset, test_dataset),
         space=hyperparameter_space,
         algo=tpe.suggest,
-        max_evals=100,
+        max_evals=50,
         trials=trials
     )
     best_hyperparams = space_eval(hyperparameter_space, best_hyperparameters)
