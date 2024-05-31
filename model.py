@@ -15,14 +15,13 @@ class GNN(torch.nn.Module):
     Args:
         dropout_rate (float): The dropout rate for regularization.
         num_heads (int): The number of attention heads in the GAT layers.
+        in_channels (int): Input feature dimension set to 6: drone pos (x,y,z), rssi, status, dist to centroid.
     """
     def __init__(self, dropout_rate, num_heads, model_type='GAT', in_channels=6, hidden_channels=32, out_channels=64, num_layers=2, out_features=3, act=None, norm=None, v2=False):
         super(GNN, self).__init__()
-        # Input feature dimension is 6: drone pos (x,y,z), rssi, status, dist to centroid
-        # GNN models
+        # Model definitions
         if model_type == 'MLP':
-            self.gnn = MLP(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels,
-                           num_layers=num_layers, dropout=0.0, act=act, norm=norm)
+            self.gnn = MLP(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
         elif model_type == 'GCN':
             self.gnn = GCN(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
         elif model_type == 'Sage':
@@ -33,11 +32,11 @@ class GNN(torch.nn.Module):
             self.gnn = GAT(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=dropout_rate, act=act, norm=norm, heads=num_heads, v2='v2' in model_type)
 
         # Final layer
-        self.attention_pool = AttentionalAggregation(gate_nn=Linear(hidden_channels * num_heads, 1))  # Input: hidden_channels * num_heads
-        self.regressor = Linear(hidden_channels * num_heads, out_features)  # Input: hidden_channels * num_heads
+        self.attention_pool = AttentionalAggregation(gate_nn=Linear(hidden_channels * num_heads, 1))
+        self.regressor = Linear(hidden_channels * num_heads, out_features)
         self.dropout = torch.nn.Dropout(dropout_rate)
 
-        # Initialize weights
+        # Initialize weights # TODO: create custom function for gcn layers
         init_weights(self)
 
     def forward(self, data):
