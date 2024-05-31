@@ -7,14 +7,14 @@ This project utilizes a Graph Attention Network (GAT) to localize jammers in a s
 
 The model is structured around a Graph Attention Network (GAT). This architecture is particularly effective for understanding complex spatial relationships and interaction patterns in scenarios where the data inherently forms a graph, such as in drone swarms under jamming attacks. The architecture is detailed as follows:
 
-- **Input Layer**: Each node in the graph represents a drone, characterized by features such as spatial coordinates, RSSI values, jamming status, and distance from center of the swarm. These features are first processed through a linear transformation.
+- **Input Layer**: Each node in the graph represents a data sample from a drone, characterized by features such as spatial coordinates, RSSI values, jamming status, and distance from center of the swarm. These features are first processed through a linear transformation.
 
 - **Graph Attention Layers**: The core of the model consists of multiple GAT layers. Each layer includes:
   - **Attention Mechanisms**: Attention coefficients are calculated using a shared attention mechanism that considers pairs of nodes. This mechanism allows the model to focus on more informative parts of the graph dynamically.
   - **Feature Aggregation**: Node features are updated by aggregating neighbor features weighted by the learned attention coefficients. This aggregation is performed independently for each attention head.
   - **Multi-Head Attention**: The model employs several parallel attention mechanisms (heads) to enhance the stability and capacity of the learning process. The outputs of these heads are concatenated and can be passed through further GAT layers or directed towards the output.
 
-- **Output Layer**: The final set of features, after passing through multiple attention layers, is processed to predict the jammer's coordinates. This output can be customized to also include predictions for the jammer's type and transmit power, depending on the configured objectives.
+- **Output Layer**: The final set of features, after passing through multiple attention layers, is processed to predict the jammer's coordinates. This output can be customized to also include predictions for the jammer's type and transmit power in future iterations of the project.
 
 - **Regularization and Non-linearities**: LeakyReLU is applied between layers and dropout is applied at the last layer to prevent overfitting and introduce non-linearity.
 
