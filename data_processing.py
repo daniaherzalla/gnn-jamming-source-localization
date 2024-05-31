@@ -8,6 +8,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from typing import Tuple, List, Any
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 import logging
 import pickle
@@ -55,7 +56,7 @@ def load_scaler(path='data/scaler.pkl'):
     return scaler
 
 
-def preprocess_data(data, scaler_path='data/scaler.pkl'):
+def preprocess_data(data, scaler_path='data/scaler.pkl', inference=False):
     """
    Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
 
@@ -66,11 +67,13 @@ def preprocess_data(data, scaler_path='data/scaler.pkl'):
    Returns:
        pd.DataFrame: The preprocessed data with transformed features.
    """
+    # TODO: add more graph related node features
     logging.info("Preprocessing data...")
     for col in ['drone_positions', 'states', 'drones_rssi']:
         data[col] = data[col].apply(safe_convert_list)
 
-    data['jammer_position'] = data['jammer_position'].apply(lambda x: [float(i) for i in x.strip('[]').split()])
+    if not inference:
+        data['jammer_position'] = data['jammer_position'].apply(lambda x: [float(i) for i in x.strip('[]').split()])
 
     if not os.path.exists(scaler_path):
         scaler = fit_and_save_scaler(data, ['drone_positions', 'jammer_position'], scaler_path)
@@ -78,7 +81,8 @@ def preprocess_data(data, scaler_path='data/scaler.pkl'):
         scaler = load_scaler(scaler_path)
 
     data['drone_positions'] = data['drone_positions'].apply(lambda x: scaler.transform(x).tolist())
-    data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([x])[0].tolist())
+    if not inference:
+        data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([x])[0].tolist())
 
     data['centroid'] = data['drone_positions'].apply(lambda positions: np.mean(positions, axis=0))
     data['distance_to_centroid'] = data.apply(lambda row: [np.linalg.norm(np.array(pos) - row['centroid']) for pos in row['drone_positions']], axis=1)
@@ -165,7 +169,7 @@ def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int
         test_loader (DataLoader): DataLoader for the testing dataset.
     """
     logging.info("Creating DataLoader objects...")
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
@@ -198,13 +202,39 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
+
     # prepare node features and convert to Tensor
-    node_features = [pos + [1 if state == 'jammed' else 0, rssi, dist] for pos, state, rssi, dist in zip(row['drone_positions'], row['states'], row['drones_rssi'], row['distance_to_centroid'])]
+    node_features = [pos + [1 if state == 'jammed' else 0, rssi, dist] for pos, state, rssi, dist in
+                     zip(row['drone_positions'], row['states'], row['drones_rssi'], row['distance_to_centroid'])]
     node_features = torch.tensor(node_features, dtype=torch.float32)  # Use float32 directly
 
-    # Preparing edges and weights
+    # Preparing edges and weights using KNN
+    # positions = np.array(row['drone_positions'])
+    # k = 5  # num of neighbors
+    # nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
+    # distances, indices = nbrs.kneighbors(positions)
+    # edge_index, edge_weight = [], []
+    #
+    # for i in range(indices.shape[0]):
+    #     # Add self-loop
+    #     edge_index.extend([[i, i]])
+    #     edge_weight.extend([0.0])
+    #
+    #     for j in range(1, indices.shape[1]):
+    #         edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
+    #         dist = distances[i, j]
+    #         edge_weight.extend([dist, dist])
+
+    # Preparing edges and weights using geographical proximity
     edge_index, edge_weight = [], []
     num_nodes = len(row['drone_positions'])
+
+    # Add self-loops
+    for i in range(num_nodes):
+        edge_index.append([i, i])
+        edge_weight.append(row['drones_rssi'][i])
+
+    # Add edges based on proximity
     for i in range(num_nodes):
         for j in range(i + 1, num_nodes):
             dist = np.linalg.norm(np.array(row['drone_positions'][i]) - np.array(row['drone_positions'][j]))
