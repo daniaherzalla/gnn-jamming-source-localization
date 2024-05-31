@@ -15,10 +15,11 @@ class GNN(torch.nn.Module):
     Args:
         dropout_rate (float): The dropout rate for regularization.
         num_heads (int): The number of attention heads in the GAT layers.
-        in_channels (int): Input feature dimension set to 6: drone pos (x,y,z), rssi, status, dist to centroid.
+        in_channels (int): Input features dimension: drone pos (x,y,z), RSSI, jamming status, distance to centroid.
     """
     def __init__(self, dropout_rate, num_heads, model_type='GAT', in_channels=6, hidden_channels=32, out_channels=64, num_layers=2, out_features=3, act=None, norm=None, v2=False):
         super(GNN, self).__init__()
+
         # Model definitions
         if model_type == 'MLP':
             self.gnn = MLP(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
@@ -36,8 +37,8 @@ class GNN(torch.nn.Module):
         self.regressor = Linear(hidden_channels * num_heads, out_features)
         self.dropout = torch.nn.Dropout(dropout_rate)
 
-        # Initialize weights # TODO: create custom function for gcn layers
-        init_weights(self)
+        # Initialize weights
+        init_weights(self)  # TODO: create custom function for gcn/other layers
 
     def forward(self, data):
         """
