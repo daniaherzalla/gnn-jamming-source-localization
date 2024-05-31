@@ -10,7 +10,7 @@ from custom_logging import setup_logging
 # Setup custom logging
 setup_logging()
 
-set_random_seeds()
+# set_random_seeds()
 
 
 def main():
@@ -20,14 +20,12 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     train_dataset, val_dataset, test_dataset = load_data(params['dataset_path'], params['train_path'], params['val_path'], params['test_path'])
-    # print("Size of train dataset:", len(train_dataset))
-    # print("Example data object:", train_dataset[0])
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
-    model, optimizer, scheduler, criterion = initialize_model(device, params)
+
+    steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
+    model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
 
     best_val_loss = float('inf')
-    patience = params['patience']
-    epochs_no_improve = 0
 
     logging.info("Training and validation loop")
     for epoch in range(params['max_epochs']):
@@ -40,12 +38,6 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_model_state = model.state_dict()
-            epochs_no_improve = 0
-        else:
-            epochs_no_improve += 1
-            if epochs_no_improve >= patience:
-                logging.info("Early stopping")
-                break
 
     metrics = {
         'best_val_loss': best_val_loss,
