@@ -1,31 +1,48 @@
 import torch
-from torch_geometric.nn import GATConv, global_mean_pool, AttentionalAggregation
-from torch.nn import Linear, ReLU, Module
-import torch.nn.functional as F
+from torch_geometric.graphgym import init_weights
+from torch_geometric.nn import global_mean_pool, MLP, GCN, GraphSAGE, GIN, GAT, AttentionalAggregation
+
+from torch.nn import Linear, ReLU
 from utils import set_random_seeds
 
 set_random_seeds()
 
 
-class GraphAttentionNetwork(torch.nn.Module):
+class GNN(torch.nn.Module):
     """
-    A Graph Attention Network (GAT) model for predicting jammer coordinates.
+    A GNN model for predicting jammer coordinates.
 
     Args:
         dropout_rate (float): The dropout rate for regularization.
         num_heads (int): The number of attention heads in the GAT layers.
     """
-    def __init__(self, dropout_rate, num_heads):
-        super(GraphAttentionNetwork, self).__init__()
-        self.gat1 = GATConv(6, 32, heads=num_heads)  # Input feature dimension is 6, adjust as per your data
-        self.gat2 = GATConv(32 * num_heads, 64, heads=num_heads)
-        self.attention_pool = AttentionalAggregation(gate_nn=Linear(64 * num_heads, 1))
-        self.regressor = torch.nn.Linear(64 * num_heads, 3)  # Assuming output of GlobalAttention is [64]
+    def __init__(self, dropout_rate, num_heads, model_type='GAT', in_channels=6, hidden_channels=32, out_channels=64, num_layers=2, out_features=3, act=None, norm=None, v2=False):
+        super(GNN, self).__init__()
+        # Input feature dimension is 6: drone pos (x,y,z), rssi, status, dist to centroid
+        # GNN models
+        if model_type == 'MLP':
+            self.gnn = MLP(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels,
+                           num_layers=num_layers, dropout=0.0, act=act, norm=norm)
+        elif model_type == 'GCN':
+            self.gnn = GCN(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
+        elif model_type == 'Sage':
+            self.gnn = GraphSAGE(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
+        elif model_type == 'GIN':
+            self.gnn = GIN(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
+        elif model_type in ['GAT', 'GATv2']:
+            self.gnn = GAT(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=dropout_rate, act=act, norm=norm, heads=num_heads, v2='v2' in model_type)
+
+        # Final layer
+        self.attention_pool = AttentionalAggregation(gate_nn=Linear(hidden_channels * num_heads, 1))  # Input: hidden_channels * num_heads
+        self.regressor = Linear(hidden_channels * num_heads, out_features)  # Input: hidden_channels * num_heads
         self.dropout = torch.nn.Dropout(dropout_rate)
+
+        # Initialize weights
+        init_weights(self)
 
     def forward(self, data):
         """
-        Forward pass for the GraphAttentionNetwork.
+        Forward pass for the GNN.
 
         Args:
             data (Data): The input data containing node features and edge indices.
@@ -34,10 +51,9 @@ class GraphAttentionNetwork(torch.nn.Module):
             Tensor: The predicted coordinates of the jammer.
         """
         x, edge_index = data.x, data.edge_index
-        x = F.relu(self.gat1(x, edge_index))
-        # x = self.dropout(x)
-        x = F.relu(self.gat2(x, edge_index))
-        # x = self.dropout(x)
+
+        # Apply GNN layers
+        x = self.gnn(x, edge_index)
         x = self.attention_pool(x, data.batch)  # Apply attention pooling to get a single vector for the graph
         # x = global_mean_pool(x, data.batch)  # Pooling to predict a single output per graph
         x = self.dropout(x)  # apply dropout last layer
