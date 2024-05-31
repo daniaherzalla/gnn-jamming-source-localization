@@ -30,8 +30,7 @@ def main():
     logging.info("Training and validation loop")
     for epoch in range(params['max_epochs']):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        # calculate validation loss to determine if the model is improving during training
-        val_loss = validate(model, val_loader, criterion, device)
+        val_loss = validate(model, val_loader, criterion, device)  # calculate validation loss to determine if the model is improving during training
         scheduler.step(val_loss)
         logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.5f}, Val Loss: {val_loss:.5f}')
 
