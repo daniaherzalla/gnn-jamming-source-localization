@@ -1,12 +1,15 @@
 import json
 import torch
 from hyperopt import hp, fmin, tpe, Trials, space_eval
-from train import initialize_model, train_epoch, validate
+from train import initialize_model, train, validate
 from data_processing import load_data, create_data_loader
 from config import params
-from utils import set_random_seeds, convert_to_serializable
+from utils import set_seeds_and_reproducibility, convert_to_serializable
 
-set_random_seeds()
+set_seeds_and_reproducibility()
+
+# Clear CUDA memory cache
+# torch.cuda.empty_cache()
 
 
 def objective(hyperparameters, train_dataset, val_dataset, test_dataset):
@@ -23,35 +26,41 @@ def objective(hyperparameters, train_dataset, val_dataset, test_dataset):
         float: The validation loss after training with the given hyperparameters.
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cpu')
 
     # Create DataLoaders inside the objective function using current hyperparameters for batch size
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, hyperparameters['batch_size'])
-
-    model, optimizer, scheduler, criterion = initialize_model(device, hyperparameters)
-
-    best_val_loss = float('inf')
-    epochs_no_improve = 0
+    steps_per_epoch = len(train_loader)
+    model, optimizer, scheduler, criterion = initialize_model(device, hyperparameters, steps_per_epoch)
 
     for epoch in range(hyperparameters['max_epochs']):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch)
         val_loss = validate(model, val_loader, criterion, device)
         scheduler.step(val_loss)
-
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            epochs_no_improve = 0
-        else:
-            epochs_no_improve += 1
-            if epochs_no_improve >= hyperparameters['patience']:
-                print("Early stopping")
-                break
-
         print(f"Epoch: {epoch}, Train Loss: {train_loss}, Val Loss: {val_loss}")
 
     return val_loss
 
 
-def save_results(trials, best_hyperparams, filename='hyperparam_tuning_results.json'):
+def map_indices_to_values(hyperparameters):
+    """
+    Map indices to actual values for hyperparameters that use hp.choice.
+
+    Args:
+        hyperparameters (dict): Dictionary of hyperparameters with indices.
+
+    Returns:
+        dict: Dictionary of hyperparameters with actual values.
+    """
+    actual_values = {
+        "num_heads": [2, 4, 8],
+        "batch_size": [32, 64, 128],
+        "max_epochs": [100, 150, 200]
+    }
+    return {key: actual_values[key][hyperparameters[key][0]] if key in actual_values else hyperparameters[key][0] for key in hyperparameters}
+
+
+def save_results(trials, best_hyperparams, filename='hyperparam_tuning_results_test.json'):
     """
     Save the results of the hyperparameter tuning process.
 
@@ -64,10 +73,10 @@ def save_results(trials, best_hyperparams, filename='hyperparam_tuning_results.j
         None
     """
     results = {
-        'best_hyperparameters': best_hyperparams,
+        'best_hyperparameters': convert_to_serializable(best_hyperparams),
         'trials': [
             {
-                'hyperparameters': {key: convert_to_serializable(val) for key, val in trial['misc']['vals'].items()},
+                'hyperparameters': map_indices_to_values(trial['misc']['vals']),
                 'result': convert_to_serializable(trial['result'])
             } for trial in trials.trials
         ]
@@ -82,12 +91,11 @@ def main():
 
     # Define the hyperparameter space including batch size as a parameter
     hyperparameter_space = {
-        'dropout_rate': hp.uniform('dropout_rate', 0.1, 0.6),
+        'dropout_rate': hp.uniform('dropout_rate', 0.1, 0.5),
         'num_heads': hp.choice('num_heads', [2, 4, 8]),
-        'batch_size': hp.choice('batch_size', [32, 64, 128, 256]),
+        'batch_size': hp.choice('batch_size', [32, 64, 128]),
         'learning_rate': hp.uniform('learning_rate', 0.0001, 0.01),
         'weight_decay': hp.loguniform('weight_decay', -6, -1),
-        'patience': hp.choice('patience', [10, 20, 30]),
         'max_epochs': hp.choice('max_epochs', [100, 150, 200])
     }
 
@@ -96,7 +104,7 @@ def main():
         fn=lambda hyperparameters: objective(hyperparameters, train_dataset, val_dataset, test_dataset),
         space=hyperparameter_space,
         algo=tpe.suggest,
-        max_evals=80,
+        max_evals=3,
         trials=trials
     )
     best_hyperparams = space_eval(hyperparameter_space, best_hyperparameters)
