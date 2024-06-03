@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import random
 from typing import Dict
 import numpy as np
 import torch
@@ -35,10 +36,27 @@ def save_metrics_and_params(metrics: Dict[str, float], params: Dict[str, float],
         writer.writerow(result)
 
 
-def set_random_seeds(seed_value=42):
+def set_seeds_and_reproducibility(reproducible=True, seed_value=42):
+    """
+    Set seeds for reproducibility and configure PyTorch for deterministic behavior.
+
+    Parameters:
+    reproducible (bool): Whether to configure the environment for reproducibility.
+    seed_value (int): The base seed value to use for RNGs.
+    """
+    # Set seeds with different offsets to avoid correlations
+    random.seed(seed_value)
     np.random.seed(seed_value + 1)
     torch.manual_seed(seed_value + 2)
     torch.cuda.manual_seed_all(seed_value + 3)
+
+    if reproducible:
+        # Configure PyTorch for deterministic behavior
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    else:
+        # Allow PyTorch to optimize for performance
+        torch.backends.cudnn.benchmark = True
 
 
 def convert_to_serializable(val):
