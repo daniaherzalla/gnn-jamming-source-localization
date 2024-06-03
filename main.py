@@ -2,15 +2,18 @@ import csv
 import torch
 from config import params
 from data_processing import load_data, create_data_loader, load_scaler
-from train import initialize_model, train_epoch, validate, predict_and_evaluate
-from utils import set_random_seeds, save_metrics_and_params
+from train import initialize_model, train, validate, predict_and_evaluate
+from utils import set_seeds_and_reproducibility, save_metrics_and_params
 import logging
 from custom_logging import setup_logging
 
 # Setup custom logging
 setup_logging()
 
-# set_random_seeds()
+set_seeds_and_reproducibility()
+
+# Clear CUDA memory cache
+torch.cuda.empty_cache()
 
 
 def main():
@@ -25,14 +28,18 @@ def main():
     steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
     model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
 
+    # Check model init weights
+    model.print_weights()
+    # quit()
+
     best_val_loss = float('inf')
 
     logging.info("Training and validation loop")
     for epoch in range(params['max_epochs']):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch)
         val_loss = validate(model, val_loader, criterion, device)  # calculate validation loss to determine if the model is improving during training
         scheduler.step(val_loss)
-        logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.5f}, Val Loss: {val_loss:.5f}')
+        logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
