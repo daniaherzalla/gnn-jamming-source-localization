@@ -2,23 +2,23 @@ import gzip
 import os
 import pandas as pd
 import numpy as np
-import ast
 import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from typing import Tuple, List, Any
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 import logging
 import pickle
-from utils import set_random_seeds
+from utils import set_seeds_and_reproducibility
 from custom_logging import setup_logging
+from config import params
 
 setup_logging()
 
-# Set random seed for reproducibility
-set_random_seeds()
+set_seeds_and_reproducibility()
 
 
 def fit_and_save_scaler(data, path='data/scaler.pkl'):
@@ -56,40 +56,56 @@ def load_scaler(path='data/scaler.pkl'):
     return scaler
 
 
-def preprocess_data(data, scaler_path='data/scaler.pkl', inference=False):
+def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
     """
    Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
 
    Args:
+       inference (bool): Performing hyperparameter tuning or inference
        data (pd.DataFrame): The input data containing columns to be processed.
        scaler_path (str): The path to save/load the scaler for normalization.
 
    Returns:
        pd.DataFrame: The preprocessed data with transformed features.
    """
-    # TODO: add more graph related node features
     logging.info("Preprocessing data...")
-    for col in ['drone_positions', 'states', 'drones_rssi']:
-        data[col] = data[col].apply(safe_convert_list)
 
-    if not inference:
-        data['jammer_position'] = data['jammer_position'].apply(lambda x: [float(i) for i in x.strip('[]').split()])
+    # Apply the function to each column with its specific data type
+    data['drone_positions'] = data['drone_positions'].apply(lambda x: safe_convert_list(x, 'drones_pos'))
+    data['jammer_position'] = data['jammer_position'].apply(lambda x: safe_convert_list(x, 'jammer_pos'))
+    data['states'] = data['states'].apply(lambda x: safe_convert_list(x, 'states'))
+    data['drones_rssi'] = data['drones_rssi'].apply(lambda x: safe_convert_list(x, 'drones_rssi'))
 
+    logging.info("Fitting scaler")
     if not os.path.exists(scaler_path):
-        scaler = fit_and_save_scaler(data, ['drone_positions', 'jammer_position'], scaler_path)
+        scaler = fit_and_save_scaler(data, scaler_path)
     else:
         scaler = load_scaler(scaler_path)
 
-    data['drone_positions'] = data['drone_positions'].apply(lambda x: scaler.transform(x).tolist())
+    # Apply scaler
     if not inference:
         data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([x])[0].tolist())
+    data['drone_positions'] = data['drone_positions'].apply(lambda x: scaler.transform(x).tolist())
 
+    logging.info("Calculating node features")
+    # Calculate centroid and other features
     data['centroid'] = data['drone_positions'].apply(lambda positions: np.mean(positions, axis=0))
-    data['distance_to_centroid'] = data.apply(lambda row: [np.linalg.norm(np.array(pos) - row['centroid']) for pos in row['drone_positions']], axis=1)
+    data['distance_to_centroid'] = data.apply(lambda row: [np.linalg.norm(pos - row['centroid']) for pos in row['drone_positions']], axis=1)
 
+    # Including 3D angle calculations for azimuth and elevation
+    data['azimuth_angle'] = data.apply(lambda row: [np.arctan2(pos[1] - row['centroid'][1], pos[0] - row['centroid'][0]) for pos in row['drone_positions']], axis=1)
+    data['elevation_angle'] = data.apply(lambda row: [np.arcsin((pos[2] - row['centroid'][2]) / np.linalg.norm(pos - row['centroid'])) for pos in row['drone_positions']], axis=1)
+
+    # Sample connectivity
+    data['sample_connectivity'] = data['drone_positions'].apply(lambda positions: euclidean_distances(positions, positions))
+
+    # Normalizing RSSI values
     rssi_values = np.concatenate(data['drones_rssi'].tolist())
     min_rssi, max_rssi = rssi_values.min(), rssi_values.max()
     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: [(val - min_rssi) / (max_rssi - min_rssi) for val in x])
+
+    # Relative RSSI calculation
+    data['relative_rssi'] = data.apply(lambda row: [rssi - np.mean(row['drones_rssi']) for rssi in row['drones_rssi']], axis=1)
 
     return data
 
@@ -151,8 +167,8 @@ def load_data(dataset_path: str, train_path: str, val_path: str, test_path: str)
             test_dataset = pickle.load(f)
     else:
         data = pd.read_csv(dataset_path)
-        data.drop(columns=['random_seed', 'num_drones', 'num_jammed_drones', 'num_rssi_vals_with_noise', 'drones_rssi_sans_noise'], inplace=True)
-        data = preprocess_data(data)
+        data.drop(columns=['random_seed', 'num_drones', 'num_jammed_drones', 'num_rssi_vals_with_noise', 'drones_rssi_sans_noise', 'jammer_type', 'jammer_power', 'pl_exp', 'sigma'], inplace=True)
+        data = preprocess_data(data, inference=params['inference'])
         train_dataset, val_dataset, test_dataset = save_datasets(data, train_path, val_path, test_path)
     return train_dataset, val_dataset, test_dataset
 
@@ -176,20 +192,36 @@ def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int
     return train_loader, val_loader, test_loader
 
 
-def safe_convert_list(row: str) -> List[Any]:
+def safe_convert_list(row: str, data_type: str) -> List[Any]:
     """
-    Safely convert a string representation of a list to an actual list.
+    Safely convert a string representation of a list to an actual list,
+    with type conversion tailored to specific data types including handling
+    for 'states' which are extracted and stripped of surrounding quotes.
 
     Args:
         row (str): String representation of a list.
+        data_type (str): The type of data to convert ('jammer_pos', 'drones_pos', 'drones_rssi', 'states').
 
     Returns:
         List: Converted list or an empty list if conversion fails.
     """
     try:
-        return ast.literal_eval(row)
-    except (ValueError, SyntaxError):
-        return []
+        if data_type == 'jammer_pos':
+            result = row.strip('[').strip(']').split()
+            return [float(pos) for pos in result]
+        elif data_type == 'drones_pos':
+            result = row.strip('[').strip(']').split('], [')
+            return [[float(num) for num in elem.split(', ')] for elem in result]
+        elif data_type == 'drones_rssi':
+            result = row.strip('[').strip(']').split(', ')
+            return [float(rssi) for rssi in result]
+        elif data_type == 'states':
+            result = row.strip('][').split(', ')
+            return [state.strip("'") for state in result]
+        else:
+            raise ValueError("Unknown data type")
+    except (ValueError, SyntaxError, TypeError) as e:
+        return []  # Return an empty list if there's an error
 
 
 def create_torch_geo_data(row: pd.Series) -> Data:
@@ -204,11 +236,22 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     """
 
     # prepare node features and convert to Tensor
-    node_features = [pos + [1 if state == 'jammed' else 0, rssi, dist] for pos, state, rssi, dist in
-                     zip(row['drone_positions'], row['states'], row['drones_rssi'], row['distance_to_centroid'])]
+    node_features = [
+        pos + [1 if state == 'jammed' else 0, rssi, dist, azi, ele, rel_rssi]
+        for pos, state, rssi, dist, azi, ele, rel_rssi in
+        zip(
+            row['drone_positions'],
+            row['states'],
+            row['drones_rssi'],
+            row['distance_to_centroid'],
+            row['azimuth_angle'],
+            row['elevation_angle'],
+            row['relative_rssi']
+        )
+    ]
     node_features = torch.tensor(node_features, dtype=torch.float32)  # Use float32 directly
 
-    # Preparing edges and weights using KNN
+    # # Preparing edges and weights using KNN
     # positions = np.array(row['drone_positions'])
     # k = 5  # num of neighbors
     # nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
