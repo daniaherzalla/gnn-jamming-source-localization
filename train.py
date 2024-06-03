@@ -1,21 +1,20 @@
 import math
 import torch
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from model import GraphAttentionNetwork
+from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
+from model import GNN
 from typing import Tuple
 from sklearn.metrics import mean_squared_error
 import logging
 from custom_logging import setup_logging
-from utils import set_random_seeds
+from utils import set_seeds_and_reproducibility
 
-set_random_seeds()
+set_seeds_and_reproducibility()
 
-# Setup custom logging
 setup_logging()
 
 
-def initialize_model(device: torch.device, params: dict) -> Tuple[GraphAttentionNetwork, optim.Optimizer, ReduceLROnPlateau, torch.nn.Module]:
+def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -> Tuple[GNN, optim.Optimizer, ReduceLROnPlateau, torch.nn.Module]:
     """
     Initialize the model, optimizer, scheduler, and loss criterion.
 
@@ -24,15 +23,16 @@ def initialize_model(device: torch.device, params: dict) -> Tuple[GraphAttention
         params (dict): Dictionary of model parameters.
 
     Returns:
-        model (GraphAttentionNetwork): Initialized model.
+        model (GNN): Initialized model.
         optimizer (optim.Optimizer): Optimizer for the model.
         scheduler (ReduceLROnPlateau): Learning rate scheduler.
         criterion (torch.nn.Module): Loss criterion.
     """
     logging.info("Initializing model...")
-    model = GraphAttentionNetwork(params["dropout_rate"], params["num_heads"]).to(device)
+    model = GNN(params["dropout_rate"], params["num_heads"]).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=params['patience'], verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, verbose=True)
+    # scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.3, anneal_strategy='linear')
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
 
@@ -60,8 +60,40 @@ def train_epoch(model: torch.nn.Module, train_loader: torch.utils.data.DataLoade
         loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
+        # add OneCycleLR step here
         total_loss += data.num_graphs * loss.item()
     return total_loss / len(train_loader.dataset)
+
+
+def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, device: torch.device, steps_per_epoch: int) -> float:
+    """
+    Train the model for one epoch.
+
+    Args:
+        model (torch.nn.Module): The model to train.
+        train_loader (torch.utils.data.DataLoader): DataLoader for training data.
+        optimizer (torch.optim.Optimizer): Optimizer for the model.
+        criterion (torch.nn.Module): Loss criterion.
+        device (torch.device): Device to run the model on.
+
+    Returns:
+        float: Average loss for the epoch.
+    """
+    model.train()
+    total_loss = 0
+    num_steps = 0
+    while True:
+        for data in train_loader:
+            data = data.to(device)
+            optimizer.zero_grad()
+            output = model(data)
+            loss = criterion(output, data.y)
+            loss.backward()
+            optimizer.step()
+            num_steps += 1
+            total_loss += data.num_graphs * loss.item()
+            if num_steps == steps_per_epoch:
+                return total_loss / len(train_loader.dataset)
 
 
 def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, criterion: torch.nn.Module, device: torch.device) -> float:

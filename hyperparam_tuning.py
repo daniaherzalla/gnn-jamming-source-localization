@@ -25,8 +25,8 @@ def objective(hyperparameters, train_dataset, val_dataset, test_dataset):
     Returns:
         float: The validation loss after training with the given hyperparameters.
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # device = torch.device('cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
 
     # Create DataLoaders inside the objective function using current hyperparameters for batch size
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, hyperparameters['batch_size'])
@@ -60,13 +60,14 @@ def map_indices_to_values(hyperparameters):
     return {key: actual_values[key][hyperparameters[key][0]] if key in actual_values else hyperparameters[key][0] for key in hyperparameters}
 
 
-def save_results(trials, best_hyperparams, filename='hyperparam_tuning_results_test.json'):
+def save_results(trials, best_hyperparams, best_loss, filename='hyperparam_tuning_results.json'):
     """
-    Save the results of the hyperparameter tuning process.
+    Save the results of the hyperparameter tuning process along with the associated best validation loss.
 
     Args:
         trials (hyperopt.Trials): The trials object containing information about all the trial runs.
         best_hyperparams (dict): The best hyperparameters found during the tuning process.
+        best_loss (float): The validation loss associated with the best hyperparameters.
         filename (str): The file path to save the results to.
 
     Returns:
@@ -74,6 +75,7 @@ def save_results(trials, best_hyperparams, filename='hyperparam_tuning_results_t
     """
     results = {
         'best_hyperparameters': convert_to_serializable(best_hyperparams),
+        'best_loss': convert_to_serializable(best_loss),
         'trials': [
             {
                 'hyperparameters': map_indices_to_values(trial['misc']['vals']),
@@ -104,13 +106,14 @@ def main():
         fn=lambda hyperparameters: objective(hyperparameters, train_dataset, val_dataset, test_dataset),
         space=hyperparameter_space,
         algo=tpe.suggest,
-        max_evals=3,
+        max_evals=50,
         trials=trials
     )
     best_hyperparams = space_eval(hyperparameter_space, best_hyperparameters)
+    best_loss = min([trial['result']['loss'] for trial in trials.trials if trial['result']['status'] == 'ok'])
 
-    # Save both results and best hyperparameters
-    save_results(trials, best_hyperparams)
+    # Save both results and best hyperparameters along with the best loss
+    save_results(trials, best_hyperparams, best_loss)
 
 
 if __name__ == "__main__":
