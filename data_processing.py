@@ -22,6 +22,25 @@ setup_logging()
 set_seeds_and_reproducibility()
 
 
+# def fit_and_save_scaler(data, path='data/scaler.pkl'):
+#     """
+#     Fits a MinMaxScaler to the specified features of the data and saves the scaler to a file.
+#
+#     Args:
+#         data (DataFrame): Pandas DataFrame containing the features to scale.
+#         path (str): Path to save the scaler object.
+#     """
+#     scaler = MinMaxScaler(feature_range=(0, 1))
+#     # Prepare the features by exploding and then vertically stacking them
+#     # Ensure the columns you want to explode are actually lists of lists if not, adjust preprocessing
+#     drone_positions = np.vstack(data['drone_positions'].explode().tolist())
+#     jammer_positions = np.vstack(data['jammer_position'].apply(lambda x: [x]).explode().tolist())
+#     combined_features = np.vstack([drone_positions, jammer_positions])
+#     scaler.fit(combined_features)
+#     with open(path, 'wb') as f:
+#         pickle.dump(scaler, f)
+#     return scaler
+
 def fit_and_save_scaler(data, path='data/scaler.pkl'):
     """
     Fits a MinMaxScaler to the specified features of the data and saves the scaler to a file.
@@ -142,7 +161,9 @@ def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
     data['drone_positions'] = data['drone_positions'].apply(lambda x: scaler.transform(x).tolist())
 
     # Convert drone positions from Cartesian to polar coordinates
-    data['polar_coordinates'] = data['drone_positions'].apply(cartesian_to_polar)
+    if params['feats'] == 'polar':
+        data['polar_coordinates'] = data['drone_positions'].apply(lambda x: cartesian_to_polar(x, 'drone_pos'))
+        data['jammer_position'] = data['jammer_position'].apply(lambda x: cartesian_to_polar(x, 'jammer_pos'))
 
     # Normalizing RSSI values
     rssi_values = np.concatenate(data['drones_rssi'].tolist())
@@ -150,6 +171,58 @@ def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: [(val - min_rssi) / (max_rssi - min_rssi) for val in x])
 
     return data
+
+
+# def preprocess_data(data, inference):
+#     """
+#    Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
+#
+#    Args:
+#        inference (bool): Performing hyperparameter tuning or inference
+#        data (pd.DataFrame): The input data containing columns to be processed.
+#        scaler_path (str): The path to save/load the scaler for normalization.
+#
+#    Returns:
+#        pd.DataFrame: The preprocessed data with transformed features.
+#    """
+#     logging.info("Preprocessing data...")
+#
+#     # Apply the function to each column with its specific data type
+#     data['drone_positions'] = data['drone_positions'].apply(lambda x: safe_convert_list(x, 'drones_pos'))
+#     data['jammer_position'] = data['jammer_position'].apply(lambda x: safe_convert_list(x, 'jammer_pos'))
+#     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: safe_convert_list(x, 'drones_rssi'))
+#
+#     # Cartesian to polar
+#     if params['feats'] == 'polar':
+#         data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar)
+#         data['drone_positions'] = data['drone_positions'].apply(cartesian_to_polar)
+#
+#         logging.info("Fitting polar scaler")
+#         polar_scaler_path = 'data/polar_scaler.pkl'
+#         if not os.path.exists(polar_scaler_path):
+#             scaler = fit_and_save_scaler(data, polar_scaler_path)
+#         else:
+#             scaler = load_scaler(polar_scaler_path)
+#     else:
+#         logging.info("Fitting cartesian scaler")
+#         cartesian_scaler_path = 'data/cartesian_scaler.pkl'
+#         if not os.path.exists(cartesian_scaler_path):
+#             scaler = fit_and_save_scaler(data, cartesian_scaler_path)
+#         else:
+#             scaler = load_scaler(cartesian_scaler_path)
+#
+#     # Apply scaler
+#     if not inference:
+#         # data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([x]).tolist())
+#         data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([np.concatenate(x)]).tolist())
+#     data['drone_positions'] = data['drone_positions'].apply(lambda x: scaler.transform(x).tolist())
+#
+#     # Normalizing RSSI values
+#     rssi_values = np.concatenate(data['drones_rssi'].tolist())
+#     min_rssi, max_rssi = rssi_values.min(), rssi_values.max()
+#     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: [(val - min_rssi) / (max_rssi - min_rssi) for val in x])
+#
+#     return data
 
 
 def save_datasets(data, train_path, val_path, test_path):
@@ -166,12 +239,14 @@ def save_datasets(data, train_path, val_path, test_path):
         Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
         The train, validation, and test datasets.
     """
+    logging.info('Creating edges')
     torch_geo_dataset = [create_torch_geo_data(row) for _, row in data.iterrows()]
 
     # Shuffle the dataset
     random.seed(params['seed'])
     random.shuffle(torch_geo_dataset)
 
+    logging.info('Creating train-test split')
     train_size = int(0.7 * len(torch_geo_dataset))
     val_size = int(0.1 * len(torch_geo_dataset))
     test_size = len(torch_geo_dataset) - train_size - val_size
@@ -217,6 +292,8 @@ def load_data(dataset_path: str, train_path: str, val_path: str, test_path: str)
     data.drop(columns=['random_seed', 'num_drones', 'num_jammed_drones', 'num_rssi_vals_with_noise', 'drones_rssi_sans_noise', 'jammer_type', 'jammer_power', 'pl_exp', 'sigma'], inplace=True)
     data = preprocess_data(data, inference=params['inference'])
     train_dataset, val_dataset, test_dataset = save_datasets(data, train_path, val_path, test_path)
+
+    print("train_dataset[0]: ", train_dataset[0])
 
     return train_dataset, val_dataset, test_dataset
 
@@ -328,6 +405,14 @@ def create_torch_geo_data(row: pd.Series) -> Data:
                 edge_weight.extend([dist, dist])
 
     elif params['edges'] == 'proximity':
+
+        # # Get distance of 1 m normalized
+        # scaler = load_scaler()
+        # proximity_threshold = np.array([[1.0, 1.0, 1.0]])  # Distance of 1 meter
+        # normalized_prox_threshold = scaler.transform(proximity_threshold)
+        # print("normalized_prox_threshold: ", normalized_prox_threshold)
+        # quit()
+
         # Preparing edges and weights using geographical proximity
         edge_index, edge_weight = [], []
         num_nodes = len(row['drone_positions'])
