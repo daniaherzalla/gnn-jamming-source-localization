@@ -29,40 +29,14 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
         criterion (torch.nn.Module): Loss criterion.
     """
     logging.info("Initializing model...")
-    model = GNN(params["dropout_rate"], params["num_heads"]).to(device)
+    model = GNN().to(device)
+    # model = GNN(num_heads_first_two=4, num_heads_final=6, features_per_head_first_two=256, features_per_head_final=121).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, verbose=True)
-    # scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.3, anneal_strategy='linear')
+    # optimizer = optim.Adam(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
+    # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, verbose=True)
+    scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
-
-
-def train_epoch(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, device: torch.device) -> float:
-    """
-    Train the model for one epoch.
-
-    Args:
-        model (torch.nn.Module): The model to train.
-        train_loader (torch.utils.data.DataLoader): DataLoader for training data.
-        optimizer (torch.optim.Optimizer): Optimizer for the model.
-        criterion (torch.nn.Module): Loss criterion.
-        device (torch.device): Device to run the model on.
-
-    Returns:
-        float: Average loss for the epoch.
-    """
-    model.train()
-    total_loss = 0
-    for data in train_loader:
-        data = data.to(device)
-        optimizer.zero_grad()
-        output = model(data)
-        loss = criterion(output, data.y)
-        loss.backward()
-        optimizer.step()
-        # add OneCycleLR step here
-        total_loss += data.num_graphs * loss.item()
-    return total_loss / len(train_loader.dataset)
 
 
 def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, device: torch.device, steps_per_epoch: int) -> float:
@@ -82,18 +56,21 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
     model.train()
     total_loss = 0
     num_steps = 0
-    while True:
-        for data in train_loader:
-            data = data.to(device)
-            optimizer.zero_grad()
-            output = model(data)
-            loss = criterion(output, data.y)
-            loss.backward()
-            optimizer.step()
-            num_steps += 1
-            total_loss += data.num_graphs * loss.item()
-            if num_steps == steps_per_epoch:
-                return total_loss / len(train_loader.dataset)
+    # steps_per_epoch = None
+    for data in train_loader:
+        if steps_per_epoch is not None and num_steps >= steps_per_epoch:
+            break
+        data = data.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = criterion(output, data.y)
+        loss.backward()
+        optimizer.step()
+        num_steps += 1
+        total_loss += loss.item() * data.num_graphs
+    # Clear CUDA cache
+    torch.cuda.empty_cache()
+    return total_loss / len(train_loader.dataset)
 
 
 def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, criterion: torch.nn.Module, device: torch.device) -> float:

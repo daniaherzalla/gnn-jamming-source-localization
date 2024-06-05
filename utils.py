@@ -1,26 +1,28 @@
 import csv
 import json
 import os
+import pickle
 import random
 from typing import Dict
 import numpy as np
 import torch
+from config import params
 
 
-def save_metrics_and_params(metrics: Dict[str, float], params: Dict[str, float], filename: str = 'results/model_metrics_and_params.csv') -> None:
+def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, float], filename: str = 'results/model_metrics_and_params.csv') -> None:
     """
     Save metrics and parameters to a JSON file.
 
     Args:
         metrics (Dict[str, float]): Dictionary of metrics.
-        params (Dict[str, float]): Dictionary of parameters.
+        param_dict (Dict[str, float]): Dictionary of parameters.
         filename (str): Filename for the JSON file. Default is 'model_metrics_and_params.json'.
     """
     # Remove certain keys from params
-    [params.pop(key, None) for key in ['dataset_path', 'train_path', 'val_path', 'test_path']]
+    [param_dict.pop(key, None) for key in ['dataset_path', 'train_path', 'val_path', 'test_path']]
 
-    # Create a dictionary to store both metrics and params
-    result = {**metrics, **params}
+    # Create a dictionary to store both metrics and param_dict
+    result = {**metrics, **param_dict}
 
     file_exists = os.path.isfile(filename)
 
@@ -36,7 +38,22 @@ def save_metrics_and_params(metrics: Dict[str, float], params: Dict[str, float],
         writer.writerow(result)
 
 
-def set_seeds_and_reproducibility(reproducible=True, seed_value=42):
+def save_epochs(epoch_data, filename: str = 'results/epoch_metrics.csv') -> None:
+    file_exists = os.path.isfile(filename)
+
+    # Open the CSV file in append mode
+    with open(filename, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=epoch_data.keys())
+
+        # Write the header only if the file didn't exist before
+        if not file_exists:
+            writer.writeheader()
+
+        # Write the data
+        writer.writerow(epoch_data)
+
+
+def set_seeds_and_reproducibility(reproducible=True, seed_value=params['seed']):
     """
     Set seeds for reproducibility and configure PyTorch for deterministic behavior.
 
@@ -69,3 +86,14 @@ def convert_to_serializable(val):
     elif isinstance(val, dict):
         return {k: convert_to_serializable(v) for k, v in val.items()}
     return val
+
+
+# Function to convert Cartesian to polar coordinates
+def cartesian_to_polar(coords):
+    polar_coords = []
+    for x, y, z in coords:
+        r = np.sqrt(x**2 + y**2 + z**2)
+        theta = np.arctan2(y, x)
+        phi = np.arcsin(z / r)
+        polar_coords.append([r, theta, phi])
+    return polar_coords
