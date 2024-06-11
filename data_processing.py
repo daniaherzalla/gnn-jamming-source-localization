@@ -1,4 +1,5 @@
 import gzip
+import json
 import os
 import pandas as pd
 import numpy as np
@@ -55,7 +56,7 @@ def fit_and_save_scaler(data, feature, path='data/scaler.pkl'):
     return scaler
 
 
-def load_scaler(path='data/scaler.pkl'):
+def load_scaler(path):
     """
     Loads a MinMaxScaler from a file.
 
@@ -81,6 +82,33 @@ def angle_to_cyclical(positions):
         cos_phi = np.cos(phi)
         transformed_positions.append([r, sin_theta, cos_theta, sin_phi, cos_phi])
     return transformed_positions
+
+
+def cyclical_to_angular(output):
+    """
+    Convert cyclical coordinates (sin and cos) back to angular coordinates (theta and phi).
+
+    Args:
+        output (list): List of lists containing [r, sin(theta), cos(theta), sin(phi), cos(phi)] for each point.
+
+    Returns:
+        list: Updated list with [r, theta, phi] for each point.
+    """
+    result = []
+    for point in output:
+        r = point[0]
+        sin_theta = point[1]
+        cos_theta = point[2]
+        sin_phi = point[3]
+        cos_phi = point[4]
+
+        # Compute the original angles using arctan2
+        theta = np.arctan2(sin_theta, cos_theta)
+        phi = np.arctan2(sin_phi, cos_phi)
+
+        # Append the original coordinates [r, theta, phi]
+        result.append([r, theta, phi])
+    return result
 
 
 def standardize_values(values):
@@ -131,6 +159,14 @@ def standardize_data(data):
         apply_min_max_normalization(data)
 
 
+def save_mean_std_json(data, file_path='zscore_mean_std.json'):
+    # Write the dictionary to a JSON file
+    with open(file_path, 'w') as json_file:
+        json.dump(data, json_file, indent=4)
+
+    print("Data saved to JSON successfully.")
+
+
 def apply_z_score_normalization(data):
     """Apply Z-score normalization."""
     logging.info("Applying z-score normalization")
@@ -142,6 +178,14 @@ def apply_z_score_normalization(data):
                 all_radii.append(position[0])  # Extract all radii
 
         standardized_radii, radii_mean, radii_std = standardize_values(all_radii)  # Standardize the radii
+
+        # Structure the data into a dictionary
+        data_to_save = {
+            "radii_means": radii_mean.tolist(),
+            "radii_stds": radii_std.tolist()
+        }
+
+        save_mean_std_json(data_to_save)
 
         # Replace original radii with standardized ones
         radius_index = 0
@@ -156,6 +200,14 @@ def apply_z_score_normalization(data):
         # Compute mean and standard deviation for each coordinate (x, y, z) separately
         position_means = np.mean(all_positions, axis=0)
         position_stds = np.std(all_positions, axis=0)
+
+        # Structure the data into a dictionary
+        data_to_save = {
+            "position_means": position_means.tolist(),
+            "position_stds": position_stds.tolist()
+        }
+
+        save_mean_std_json(data_to_save)
 
         # Standardize the drone positions for each scenario
         standardized_positions = []
@@ -233,126 +285,60 @@ def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
     # quit()
     return data
 
-#
-# def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
-#     """
-#    Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
-#
-#    Args:
-#        inference (bool): Performing hyperparameter tuning or inference
-#        data (pd.DataFrame): The input data containing columns to be processed.
-#        scaler_path (str): The path to save/load the scaler for normalization.
-#
-#    Returns:
-#        pd.DataFrame: The preprocessed data with transformed features.
-#    """
-#     logging.info("Preprocessing data...")
-#
-#     # Convert from str to required data type
-#     data['drone_positions'] = data['drone_positions'].apply(lambda x: safe_convert_list(x, 'drones_pos'))
-#     data['jammer_position'] = data['jammer_position'].apply(lambda x: safe_convert_list(x, 'jammer_pos'))
-#     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: safe_convert_list(x, 'drones_rssi'))
-#
-#     print("Pre-centering: ", data['drone_positions'][0])
-#
-#     # Centering coordinates
-#     data['drone_positions'] = data['drone_positions'].apply(lambda x: center_coordinates(x))
-#     data['jammer_position'] = data['jammer_position'].apply(lambda x: center_coordinates(x))
-#
-#     print("Post-centering: ", data['drone_positions'][0])
-#
-#     # Convert drones and jammer position from Cartesian to polar coordinates
-#     if params['feats'] == 'polar':
-#         data['polar_coordinates'] = data['drone_positions'].apply(lambda x: cartesian_to_polar(x, 'drone_pos'))
-#         print("Pre-cyclical: ", data['polar_coordinates'][0])
-#         data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
-#         print("Post-cyclical: ", data['polar_coordinates'][0])
-#
-#     # Z-score standardization
-#     if params['norm'] == 'zscore':
-#         logging.info("Applying z-score normalization")
-#
-#         # Polar coordinates
-#         if params['feats'] == 'polar':
-#             all_radii = []
-#             for positions in data['polar_coordinates']:
-#                 for position in positions:
-#                     all_radii.append(position[0])  # Extract all radii
-#
-#             standardized_radii, radii_mean, radii_std = standardize_values(all_radii)  # Standardize the radii
-#
-#             # Replace original radii with standardized ones
-#             radius_index = 0
-#             for positions in data['polar_coordinates']:
-#                 for position in positions:
-#                     position[0] = standardized_radii[radius_index]
-#                     radius_index += 1
-#         else:
-#             # Concatenate all drone positions from all scenarios
-#             all_positions = np.concatenate(data['drone_positions'].tolist())
-#
-#             # Compute mean and standard deviation for each coordinate (x, y, z) separately
-#             position_means = np.mean(all_positions, axis=0)
-#             position_stds = np.std(all_positions, axis=0)
-#
-#             # Standardize the drone positions for each scenario
-#             standardized_positions = []
-#
-#             for positions_scenario in data['drone_positions']:
-#                 standardized_positions_scenario = []
-#                 for position in positions_scenario:
-#                     standardized_position = (np.array(position) - position_means) / position_stds
-#                     standardized_positions_scenario.append(standardized_position)
-#                 standardized_positions.append(standardized_positions_scenario)
-#
-#             # Replace the original drone positions in each row of the DataFrame with the standardized values
-#             data['drone_positions'] = standardized_positions
-#
-#         # print("Post-standardization: ", data['polar_coordinates'][0])
-#
-#         # Normalize RSSI
-#         # Concatenate all RSSI values from all scenarios
-#         all_rssi_values = np.concatenate(data['drones_rssi'].tolist())
-#
-#         # Compute mean and standard deviation using all RSSI values
-#         rssi_mean = np.mean(all_rssi_values)
-#         rssi_std = np.std(all_rssi_values)
-#
-#         # Standardize the RSSI values using the mean and standard deviation computed from all scenarios combined
-#         standardized_rssi_values = []
-#
-#         for rssi_scenario in data['drones_rssi']:
-#             standardized_rssi_scenario = (np.array(rssi_scenario) - rssi_mean) / rssi_std
-#             standardized_rssi_values.append(standardized_rssi_scenario)
-#
-#         # Replace the original RSSI values in each row of the DataFrame with the standardized values
-#         data['drones_rssi'] = standardized_rssi_values
-#
-#     # Min-max normalization
-#     elif params['norm'] == 'minmax':
-#         logging.info("Fitting min-max scaler")
-#
-#         coords_scaler = fit_and_save_scaler(data, 'coords')
-#         if params['feats'] == 'polar':
-#             # data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: scaler.transform(x).tolist())
-#             # Apply min-max scaler to radius values only
-#             # data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: [[coords_scaler.transform([pos[0]])[0][0]] + pos[1:] for pos in x])
-#             data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: [[coords_scaler.transform([[pos[0]]])[0][0]] + pos[1:] for pos in x])
-#
-#         else:
-#             data['drone_positions'] = data['drone_positions'].apply(lambda x: coords_scaler.transform(x).tolist())
-#
-#         # Normalizing RSSI values
-#         rssi_scaler = fit_and_save_scaler(data, 'rssi')
-#         data['drones_rssi'] = data['drones_rssi'].apply(lambda x: rssi_scaler.transform(np.array(x).reshape(-1, 1)).tolist())
-#
-#         # rssi_values = np.concatenate(data['drones_rssi'].tolist())
-#         # min_rssi, max_rssi = rssi_values.min(), rssi_values.max()
-#         # data['drones_rssi'] = data['drones_rssi'].apply(lambda x: [(val - min_rssi) / (max_rssi - min_rssi) for val in x])
-#
-#     quit()
-#
-#     return data
+
+def polar_to_cartesian(data):
+    """
+    Convert polar coordinates back to Cartesian coordinates.
+
+    Args:
+        data (list): List of lists containing [r, theta, phi] for each point.
+
+    Returns:
+        list: Updated list with [x, y, z] for each point.
+    """
+    result = []
+    for point in data:
+        r = point[0]
+        theta = point[1]
+        phi = point[2]
+
+        # Compute the Cartesian coordinates
+        x = r * np.sin(phi) * np.cos(theta)
+        y = r * np.sin(phi) * np.sin(theta)
+        z = r * np.cos(phi)
+
+        # Append the Cartesian coordinates [x, y, z]
+        result.append([x, y, z])
+    return result
+
+def convert_output(output, device):
+    if params['feats'] == 'cartesian':
+        if params['norm'] == 'zscore':
+            with open('zscore_mean_std.json', 'r') as json_file:
+                data_loaded = json.load(json_file)
+                position_means = torch.tensor(data_loaded['position_means'], dtype=torch.float32, device=device)
+                position_stds = torch.tensor(data_loaded['position_stds'], dtype=torch.float32, device=device)
+
+            converted_output = output * position_stds + position_means
+        elif params['norm'] == 'minmax':
+            scaler = load_scaler('data/coords_scaler.pkl')
+            converted_output = torch.tensor(scaler.inverse_transform(output.cpu().numpy()), device=device)
+    elif params['feats'] == 'polar':
+        polar_coords = cyclical_to_angular(output)
+        if params['norm'] == 'zscore':
+            with open('zscore_mean_std.json', 'r') as json_file:
+                data_loaded = json.load(json_file)
+                radii_mean = np.array(data_loaded['radii_mean'])
+                radii_std = np.array(data_loaded['radii_std'])
+            print("position_means: ", radii_mean)
+            print("position_std: ", radii_std)
+            polar_coords[0] = polar_coords[0] * radii_std + radii_mean
+            converted_output = polar_to_cartesian(polar_coords)
+        elif params['norm'] == 'minmax':
+            scaler = load_scaler('data/coords_scaler.pkl')
+            polar_coords[0] = torch.tensor(scaler.inverse_transform(polar_coords[0].cpu().numpy().reshape(-1, 1)), device=device)
+            converted_output = polar_to_cartesian(polar_coords)
+    return converted_output
 
 
 def save_datasets(data, train_path, val_path, test_path):
@@ -491,27 +477,18 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     """
 
     # prepare node features and convert to Tensor
-    # node_features = [
-    #     pos + [1 if state == 'jammed' else 0, rssi, dist, azi, ele, rel_rssi]
-    #     for pos, state, rssi, dist, azi, ele, rel_rssi in
-    #     zip(
-    #         row['drone_positions'],
-    #         row['states'],
-    #         row['drones_rssi'],
-    #         row['distance_to_centroid'],
-    #         row['azimuth_angle'],
-    #         row['elevation_angle'],
-    #         row['relative_rssi']
-    #     )
-    # ]
+    # logging.info(f"row['drone_positions']: {row['drone_positions'][0]}")
+    # logging.info(f"row['drones_rssi']: {row['drones_rssi'][0]}")
+
     if params['feats'] == 'polar':
-        node_features = [pos + [rssi] for pos, rssi in zip(row['polar_coordinates'], row['drones_rssi'])]
+        node_features = [list(pos) + [rssi] for pos, rssi in zip(row['polar_coordinates'], row['drones_rssi'])]
     elif params['feats'] == 'cartesian':
-        node_features = [pos + [rssi] for pos, rssi in zip(row['drone_positions'], row['drones_rssi'])]
-    elif params['feats'] == 'polar_cartesian':
-        node_features = [pos_cartesian + pos_polar + [rssi] for pos_cartesian, pos_polar, rssi in zip(row['drone_positions'], row['polar_coordinates'], row['drones_rssi'])]
+        node_features = [list(pos) + [rssi] for pos, rssi in zip(row['drone_positions'], row['drones_rssi'])]
     else:
         raise ValueError
+
+    # logging.info(f"node_features: {node_features}")
+    # quit()
 
     node_features = torch.tensor(node_features, dtype=torch.float32)  # Use float32 directly
 

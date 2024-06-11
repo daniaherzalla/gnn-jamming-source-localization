@@ -8,6 +8,7 @@ from sklearn.metrics import mean_squared_error
 import logging
 from custom_logging import setup_logging
 from utils import set_seeds_and_reproducibility
+from data_processing import convert_output
 
 set_seeds_and_reproducibility()
 
@@ -34,12 +35,13 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     # optimizer = optim.Adam(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, verbose=True)
+    print("steps per epoch one cycle lr: ", steps_per_epoch)
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
 
 
-def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, device: torch.device, steps_per_epoch: int) -> float:
+def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, device: torch.device, steps_per_epoch: int, scheduler) -> float:
     """
     Train the model for one epoch.
 
@@ -63,9 +65,11 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         data = data.to(device)
         optimizer.zero_grad()
         output = model(data)
+        output = convert_output(output, device)
         loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
+        scheduler.step()
         num_steps += 1
         total_loss += loss.item() * data.num_graphs
     # Clear CUDA cache
@@ -92,6 +96,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         for data in validate_loader:
             data = data.to(device)
             output = model(data)
+            output = convert_output(output, device)
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
     return total_loss / len(validate_loader.dataset)

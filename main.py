@@ -21,12 +21,15 @@ def main():
     """
     Main function to run the training and evaluation.
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     print("device: ", device)
 
     train_dataset, val_dataset, test_dataset = load_data(params['dataset_path'], params['train_path'], params['val_path'], params['test_path'])
+    # quit()
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
     steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
+    print("steps per epoch: ", steps_per_epoch)
     model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
 
     # # Check model init weights
@@ -38,9 +41,8 @@ def main():
     logging.info("Training and validation loop")
     epoch_info = []
     for epoch in range(params['max_epochs']):
-        train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch)
+        train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
         val_loss = validate(model, val_loader, criterion, device)  # calculate validation loss to determine if the model is improving during training
-        scheduler.step(val_loss)
         logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
         epoch_info.append(f'Epoch: {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
 
