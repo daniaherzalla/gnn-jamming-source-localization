@@ -22,55 +22,36 @@ setup_logging()
 set_seeds_and_reproducibility()
 
 
-# def fit_and_save_scaler(data, path='data/scaler.pkl'):
-#     """
-#     Fits a MinMaxScaler to the specified features of the data and saves the scaler to a file.
-#
-#     Args:
-#         data (DataFrame): Pandas DataFrame containing the features to scale.
-#         path (str): Path to save the scaler object.
-#     """
-#     scaler = MinMaxScaler(feature_range=(0, 1))
-#     # Prepare the features by exploding and then vertically stacking them
-#     # Ensure the columns you want to explode are actually lists of lists if not, adjust preprocessing
-#     drone_positions = np.vstack(data['drone_positions'].explode().tolist())
-#     jammer_positions = np.vstack(data['jammer_position'].apply(lambda x: [x]).explode().tolist())
-#     combined_features = np.vstack([drone_positions, jammer_positions])
-#     scaler.fit(combined_features)
-#     with open(path, 'wb') as f:
-#         pickle.dump(scaler, f)
-#     return scaler
-
-def fit_and_save_scaler(data, path='data/scaler.pkl'):
+def fit_and_save_scaler(data, feature, path='data/scaler.pkl'):
     """
     Fits a MinMaxScaler to the specified features of the data and saves the scaler to a file.
 
     Args:
         data (DataFrame): Pandas DataFrame containing the features to scale.
+        feature (str): The feature type ('rssi' or 'coords') to apply scaling to.
         path (str): Path to save the scaler object.
     """
     scaler = MinMaxScaler(feature_range=(-1, 1))
 
-    if params['feats'] == 'polar':
-        # Extract radius values from 'drone_positions' (assume positions are lists of lists)
-        drone_radii = np.array([pos[0] for sublist in data['polar_coordinates'] for pos in sublist])
+    if feature == 'rssi':
+        # Extract all RSSI values from 'drones_rssi'
+        all_rssi = np.concatenate(data['drones_rssi'].values)
+        # Fit the scaler to the RSSI values, reshaping for compatibility
+        scaler.fit(all_rssi.reshape(-1, 1))
+    elif feature == 'coords':
+        if params['feats'] == 'polar':
+            # Extract radius values from 'polar_coordinates'
+            drone_radii = np.array([pos[0] for sublist in data['polar_coordinates'] for pos in sublist])
+            # Fit the scaler to the radius values, reshaping for compatibility
+            scaler.fit(drone_radii.reshape(-1, 1))
+        else:
+            drone_positions = np.vstack(data['drone_positions'].explode().tolist())
+            scaler.fit(drone_positions)
 
-        # Combine all radius values
-        # all_radii = np.concatenate([drone_radii]).reshape(-1, 1)
-
-        # Fit the scaler to the radius values
-        scaler.fit(drone_radii)
-    else:
-        # Prepare the features by exploding and then vertically stacking them
-        # Ensure the columns you want to explode are actually lists of lists if not, adjust preprocessing
-        drone_positions = np.vstack(data['drone_positions'].explode().tolist())
-        # jammer_positions = np.vstack(data['jammer_position'].apply(lambda x: [x]).explode().tolist())
-        # combined_features = np.vstack([drone_positions, jammer_positions])
-        # combined_features = np.vstack([drone_positions])
-        scaler.fit(drone_positions)
-
+    # Save the scaler object to a file
     with open(path, 'wb') as f:
         pickle.dump(scaler, f)
+
     return scaler
 
 
@@ -89,69 +70,6 @@ def load_scaler(path='data/scaler.pkl'):
     return scaler
 
 
-# def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
-#     """
-#    Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
-#
-#    Args:
-#        inference (bool): Performing hyperparameter tuning or inference
-#        data (pd.DataFrame): The input data containing columns to be processed.
-#        scaler_path (str): The path to save/load the scaler for normalization.
-#
-#    Returns:
-#        pd.DataFrame: The preprocessed data with transformed features.
-#    """
-#     logging.info("Preprocessing data...")
-#
-#     # Apply the function to each column with its specific data type
-#     data['drone_positions'] = data['drone_positions'].apply(lambda x: safe_convert_list(x, 'drones_pos'))
-#     data['jammer_position'] = data['jammer_position'].apply(lambda x: safe_convert_list(x, 'jammer_pos'))
-#     data['states'] = data['states'].apply(lambda x: safe_convert_list(x, 'states'))
-#     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: safe_convert_list(x, 'drones_rssi'))
-#
-#     logging.info("Fitting scaler")
-#     if not os.path.exists(scaler_path):
-#         scaler = fit_and_save_scaler(data, scaler_path)
-#     else:
-#         scaler = load_scaler(scaler_path)
-#
-#     # Apply scaler
-#     if not inference:
-#         data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([x])[0].tolist())
-#     data['drone_positions'] = data['drone_positions'].apply(lambda x: scaler.transform(x).tolist())
-#
-#     logging.info("Calculating node features")
-#     # Calculate centroid and other features
-#     data['centroid'] = data['drone_positions'].apply(lambda positions: np.mean(positions, axis=0))
-#     data['distance_to_centroid'] = data.apply(lambda row: [np.linalg.norm(pos - row['centroid']) for pos in row['drone_positions']], axis=1)
-#
-#     # Including 3D angle calculations for azimuth and elevation
-#     data['azimuth_angle'] = data.apply(lambda row: [np.arctan2(pos[1] - row['centroid'][1], pos[0] - row['centroid'][0]) for pos in row['drone_positions']], axis=1)
-#     data['elevation_angle'] = data.apply(lambda row: [np.arcsin((pos[2] - row['centroid'][2]) / np.linalg.norm(pos - row['centroid'])) for pos in row['drone_positions']], axis=1)
-#
-#     # Sample connectivity
-#     data['sample_connectivity'] = data['drone_positions'].apply(lambda positions: euclidean_distances(positions, positions))
-#
-#     # Normalizing RSSI values
-#     rssi_values = np.concatenate(data['drones_rssi'].tolist())
-#     min_rssi, max_rssi = rssi_values.min(), rssi_values.max()
-#     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: [(val - min_rssi) / (max_rssi - min_rssi) for val in x])
-#
-#     # Relative RSSI calculation
-#     data['relative_rssi'] = data.apply(lambda row: [rssi - np.mean(row['drones_rssi']) for rssi in row['drones_rssi']], axis=1)
-#
-#     return data
-
-
-# def cartesian_to_polar(coords):
-#     """Convert array of Cartesian coordinates to polar coordinates."""
-#     x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
-#     r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
-#     theta = np.arctan2(y, x)  # Azimuthal angle
-#     phi = np.arccos(z / r)  # Polar angle
-#     return r, theta, phi
-
-
 def angle_to_cyclical(positions):
     """Convert a list of positions from polar to cyclical coordinates."""
     transformed_positions = []
@@ -167,13 +85,16 @@ def angle_to_cyclical(positions):
 
 def standardize_values(values):
     """Standardize values using z-score normalization."""
+    # values = np.array(values)  # Convert values to numpy array
+    if len(values) == 0:
+        raise ValueError("Cannot calculate standard deviation for an empty array")
+    values = np.array(values)
     mean = np.mean(values)
     std = np.std(values)
     standardized_values = (values - mean) / std
     return standardized_values, mean, std
 
 
-# Function to reverse standardization applied
 def reverse_standardization(standardized_values, mean, std):
     """Reverse standardization of values using stored mean and standard deviation."""
     original_values = standardized_values * std + mean
@@ -192,6 +113,100 @@ def center_coordinates(coords):
     return centered_coords
 
 
+def center_and_convert_coordinates(data):
+    """Center and convert drone positions."""
+    logging.info("Centering coords")
+    data['drone_positions'] = data['drone_positions'].apply(center_coordinates)
+    data['jammer_position'] = data['jammer_position'].apply(center_coordinates)
+    if params['feats'] == 'polar':
+        data['polar_coordinates'] = data['drone_positions'].apply(cartesian_to_polar)
+        data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
+
+
+def standardize_data(data):
+    """Apply z-score or min-max normalization based on the feature type."""
+    if params['norm'] == 'zscore':
+        apply_z_score_normalization(data)
+    elif params['norm'] == 'minmax':
+        apply_min_max_normalization(data)
+
+
+def apply_z_score_normalization(data):
+    """Apply Z-score normalization."""
+    logging.info("Applying z-score normalization")
+    # Drone Positions
+    if params['feats'] == 'polar':
+        all_radii = []
+        for positions in data['polar_coordinates']:
+            for position in positions:
+                all_radii.append(position[0])  # Extract all radii
+
+        standardized_radii, radii_mean, radii_std = standardize_values(all_radii)  # Standardize the radii
+
+        # Replace original radii with standardized ones
+        radius_index = 0
+        for positions in data['polar_coordinates']:
+            for position in positions:
+                position[0] = standardized_radii[radius_index]
+                radius_index += 1
+    else:
+        # Concatenate all drone positions from all scenarios
+        all_positions = np.concatenate(data['drone_positions'].tolist())
+
+        # Compute mean and standard deviation for each coordinate (x, y, z) separately
+        position_means = np.mean(all_positions, axis=0)
+        position_stds = np.std(all_positions, axis=0)
+
+        # Standardize the drone positions for each scenario
+        standardized_positions = []
+
+        for positions_scenario in data['drone_positions']:
+            standardized_positions_scenario = []
+            for position in positions_scenario:
+                standardized_position = (np.array(position) - position_means) / position_stds
+                standardized_positions_scenario.append(standardized_position)
+            standardized_positions.append(standardized_positions_scenario)
+
+        # Replace the original drone positions in each row of the DataFrame with the standardized values
+        data['drone_positions'] = standardized_positions
+
+    # RSSI
+    all_rssi_values = np.concatenate(data['drones_rssi'].tolist())
+
+    # Compute mean and standard deviation using all RSSI values
+    rssi_mean = np.mean(all_rssi_values)
+    rssi_std = np.std(all_rssi_values)
+
+    # Standardize the RSSI values using the mean and standard deviation computed from all scenarios combined
+    standardized_rssi_values = []
+
+    for rssi_scenario in data['drones_rssi']:
+        standardized_rssi_scenario = (np.array(rssi_scenario) - rssi_mean) / rssi_std
+        standardized_rssi_values.append(standardized_rssi_scenario)
+
+    # Replace the original RSSI values in each row of the DataFrame with the standardized values
+    data['drones_rssi'] = standardized_rssi_values
+
+
+def apply_min_max_normalization(data):
+    """Apply Min-Max normalization."""
+    logging.info("Fitting min-max scaler")
+    coords_scaler = fit_and_save_scaler(data, 'coords', 'data/coords_scaler.pkl')
+    if params['feats'] == 'polar':
+        data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: [[coords_scaler.transform([[pos[0]]])[0][0]] + pos[1:] for pos in x])
+    else:
+        data['drone_positions'] = data['drone_positions'].apply(lambda x: coords_scaler.transform(x).tolist())
+    rssi_scaler = fit_and_save_scaler(data, 'rssi', 'data/rssi_scaler.pkl')
+    data['drones_rssi'] = [rssi_scaler.transform(np.array(rssi).reshape(-1, 1)).tolist() for rssi in data['drones_rssi']]
+
+
+def convert_data_type(data):
+    # Convert from str to required data type
+    data['drone_positions'] = data['drone_positions'].apply(lambda x: safe_convert_list(x, 'drones_pos'))
+    data['jammer_position'] = data['jammer_position'].apply(lambda x: safe_convert_list(x, 'jammer_pos'))
+    data['drones_rssi'] = data['drones_rssi'].apply(lambda x: safe_convert_list(x, 'drones_rssi'))
+
+
 def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
     """
    Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
@@ -206,77 +221,20 @@ def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
    """
     logging.info("Preprocessing data...")
 
-    # Convert from str to required data type
-    data['drone_positions'] = data['drone_positions'].apply(lambda x: safe_convert_list(x, 'drones_pos'))
-    data['jammer_position'] = data['jammer_position'].apply(lambda x: safe_convert_list(x, 'jammer_pos'))
-    data['drones_rssi'] = data['drones_rssi'].apply(lambda x: safe_convert_list(x, 'drones_rssi'))
-
-    print("Pre-centering: ", data['drone_positions'][0])
-
-    # Centering coordinates
-    data['drone_positions'] = data['drone_positions'].apply(lambda x: center_coordinates(x))
-    data['jammer_position'] = data['jammer_position'].apply(lambda x: center_coordinates(x))
-
-    print("Post-centering: ", data['drone_positions'][0])
-
-    # Convert drones and jammer position from Cartesian to polar coordinates
-    if params['feats'] == 'polar':
-        data['polar_coordinates'] = data['drone_positions'].apply(lambda x: cartesian_to_polar(x, 'drone_pos'))
-        # data['jammer_position'] = data['jammer_position'].apply(lambda x: cartesian_to_polar(x, 'jammer_pos'))
-        data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
-
-    # Normalize coordinates and RSSI values
-    if params['norm'] == 'zscore':
-        logging.info("Applying z-score normalization")
-
-        if params['feats'] == 'polar':
-            # Standardize radius
-            # Step 1: Extract all radii
-            all_radii = []
-            for positions in data['polar_coordinates']:
-                for position in positions:
-                    all_radii.append(position[0])
-
-            # Step 2: Standardize the radii
-            standardized_radii, radii_mean, radii_std = standardize_values(np.array(all_radii))
-
-            # Step 3: Replace original radii with standardized ones
-            radius_index = 0
-            for positions in data['polar_coordinates']:
-                for position in positions:
-                    position[0] = standardized_radii[radius_index]
-                    radius_index += 1
-        else:
-            data['drone_positions'] = data['drone_positions'].apply(lambda x: standardize_values(x))
-
-        # Normalize RSSI
-        data['drones_rssi'], rssi_mean, rssi_std = standardize_values(data['drones_rssi'])
-
-    elif params['norm'] == 'minmax':
-        logging.info("Fitting min-max scaler")
-        scaler = fit_and_save_scaler(data) if not os.path.exists(scaler_path) else scaler = load_scaler(scaler_path)
-
-        if params['feats'] == 'polar':
-            # Normalizing coordinates
-            data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: scaler.transform(x).tolist())
-            # if not inference:
-            #     data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([x])[0].tolist())
-
-        else:
-            # Normalizing coordinates
-            data['drone_positions'] = data['drone_positions'].apply(lambda x: scaler.transform(x).tolist())
-            # if not inference:
-            #     data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([x])[0].tolist())
-
-        # Normalizing RSSI values
-        rssi_values = np.concatenate(data['drones_rssi'].tolist())
-        min_rssi, max_rssi = rssi_values.min(), rssi_values.max()
-        data['drones_rssi'] = data['drones_rssi'].apply(lambda x: [(val - min_rssi) / (max_rssi - min_rssi) for val in x])
-
+    # Conversion from string to list type
+    convert_data_type(data)
+    center_and_convert_coordinates(data)
+    standardize_data(data)
+    # if params['feats'] == 'polar':
+    #     print("Polar coords: ", data['polar_coordinates'][0])
+    # else:
+    #     print("Drone positions: ", data['drone_positions'][0])
+    # print("RSSI: ", data['drones_rssi'])
+    # quit()
     return data
 
-
-# def preprocess_data(data, inference):
+#
+# def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
 #     """
 #    Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
 #
@@ -290,40 +248,109 @@ def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
 #    """
 #     logging.info("Preprocessing data...")
 #
-#     # Apply the function to each column with its specific data type
+#     # Convert from str to required data type
 #     data['drone_positions'] = data['drone_positions'].apply(lambda x: safe_convert_list(x, 'drones_pos'))
 #     data['jammer_position'] = data['jammer_position'].apply(lambda x: safe_convert_list(x, 'jammer_pos'))
 #     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: safe_convert_list(x, 'drones_rssi'))
 #
-#     # Cartesian to polar
+#     print("Pre-centering: ", data['drone_positions'][0])
+#
+#     # Centering coordinates
+#     data['drone_positions'] = data['drone_positions'].apply(lambda x: center_coordinates(x))
+#     data['jammer_position'] = data['jammer_position'].apply(lambda x: center_coordinates(x))
+#
+#     print("Post-centering: ", data['drone_positions'][0])
+#
+#     # Convert drones and jammer position from Cartesian to polar coordinates
 #     if params['feats'] == 'polar':
-#         data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar)
-#         data['drone_positions'] = data['drone_positions'].apply(cartesian_to_polar)
+#         data['polar_coordinates'] = data['drone_positions'].apply(lambda x: cartesian_to_polar(x, 'drone_pos'))
+#         print("Pre-cyclical: ", data['polar_coordinates'][0])
+#         data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
+#         print("Post-cyclical: ", data['polar_coordinates'][0])
 #
-#         logging.info("Fitting polar scaler")
-#         polar_scaler_path = 'data/polar_scaler.pkl'
-#         if not os.path.exists(polar_scaler_path):
-#             scaler = fit_and_save_scaler(data, polar_scaler_path)
+#     # Z-score standardization
+#     if params['norm'] == 'zscore':
+#         logging.info("Applying z-score normalization")
+#
+#         # Polar coordinates
+#         if params['feats'] == 'polar':
+#             all_radii = []
+#             for positions in data['polar_coordinates']:
+#                 for position in positions:
+#                     all_radii.append(position[0])  # Extract all radii
+#
+#             standardized_radii, radii_mean, radii_std = standardize_values(all_radii)  # Standardize the radii
+#
+#             # Replace original radii with standardized ones
+#             radius_index = 0
+#             for positions in data['polar_coordinates']:
+#                 for position in positions:
+#                     position[0] = standardized_radii[radius_index]
+#                     radius_index += 1
 #         else:
-#             scaler = load_scaler(polar_scaler_path)
-#     else:
-#         logging.info("Fitting cartesian scaler")
-#         cartesian_scaler_path = 'data/cartesian_scaler.pkl'
-#         if not os.path.exists(cartesian_scaler_path):
-#             scaler = fit_and_save_scaler(data, cartesian_scaler_path)
+#             # Concatenate all drone positions from all scenarios
+#             all_positions = np.concatenate(data['drone_positions'].tolist())
+#
+#             # Compute mean and standard deviation for each coordinate (x, y, z) separately
+#             position_means = np.mean(all_positions, axis=0)
+#             position_stds = np.std(all_positions, axis=0)
+#
+#             # Standardize the drone positions for each scenario
+#             standardized_positions = []
+#
+#             for positions_scenario in data['drone_positions']:
+#                 standardized_positions_scenario = []
+#                 for position in positions_scenario:
+#                     standardized_position = (np.array(position) - position_means) / position_stds
+#                     standardized_positions_scenario.append(standardized_position)
+#                 standardized_positions.append(standardized_positions_scenario)
+#
+#             # Replace the original drone positions in each row of the DataFrame with the standardized values
+#             data['drone_positions'] = standardized_positions
+#
+#         # print("Post-standardization: ", data['polar_coordinates'][0])
+#
+#         # Normalize RSSI
+#         # Concatenate all RSSI values from all scenarios
+#         all_rssi_values = np.concatenate(data['drones_rssi'].tolist())
+#
+#         # Compute mean and standard deviation using all RSSI values
+#         rssi_mean = np.mean(all_rssi_values)
+#         rssi_std = np.std(all_rssi_values)
+#
+#         # Standardize the RSSI values using the mean and standard deviation computed from all scenarios combined
+#         standardized_rssi_values = []
+#
+#         for rssi_scenario in data['drones_rssi']:
+#             standardized_rssi_scenario = (np.array(rssi_scenario) - rssi_mean) / rssi_std
+#             standardized_rssi_values.append(standardized_rssi_scenario)
+#
+#         # Replace the original RSSI values in each row of the DataFrame with the standardized values
+#         data['drones_rssi'] = standardized_rssi_values
+#
+#     # Min-max normalization
+#     elif params['norm'] == 'minmax':
+#         logging.info("Fitting min-max scaler")
+#
+#         coords_scaler = fit_and_save_scaler(data, 'coords')
+#         if params['feats'] == 'polar':
+#             # data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: scaler.transform(x).tolist())
+#             # Apply min-max scaler to radius values only
+#             # data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: [[coords_scaler.transform([pos[0]])[0][0]] + pos[1:] for pos in x])
+#             data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: [[coords_scaler.transform([[pos[0]]])[0][0]] + pos[1:] for pos in x])
+#
 #         else:
-#             scaler = load_scaler(cartesian_scaler_path)
+#             data['drone_positions'] = data['drone_positions'].apply(lambda x: coords_scaler.transform(x).tolist())
 #
-#     # Apply scaler
-#     if not inference:
-#         # data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([x]).tolist())
-#         data['jammer_position'] = data['jammer_position'].apply(lambda x: scaler.transform([np.concatenate(x)]).tolist())
-#     data['drone_positions'] = data['drone_positions'].apply(lambda x: scaler.transform(x).tolist())
+#         # Normalizing RSSI values
+#         rssi_scaler = fit_and_save_scaler(data, 'rssi')
+#         data['drones_rssi'] = data['drones_rssi'].apply(lambda x: rssi_scaler.transform(np.array(x).reshape(-1, 1)).tolist())
 #
-#     # Normalizing RSSI values
-#     rssi_values = np.concatenate(data['drones_rssi'].tolist())
-#     min_rssi, max_rssi = rssi_values.min(), rssi_values.max()
-#     data['drones_rssi'] = data['drones_rssi'].apply(lambda x: [(val - min_rssi) / (max_rssi - min_rssi) for val in x])
+#         # rssi_values = np.concatenate(data['drones_rssi'].tolist())
+#         # min_rssi, max_rssi = rssi_values.min(), rssi_values.max()
+#         # data['drones_rssi'] = data['drones_rssi'].apply(lambda x: [(val - min_rssi) / (max_rssi - min_rssi) for val in x])
+#
+#     quit()
 #
 #     return data
 
