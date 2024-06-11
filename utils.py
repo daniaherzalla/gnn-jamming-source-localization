@@ -89,7 +89,7 @@ def convert_to_serializable(val):
 
 
 # Function to convert Cartesian to polar coordinates
-def cartesian_to_polar(coords, type):
+def cartesian_to_polar(coords):
     if len(coords) == 3 and isinstance(coords[0], (int, float)):
         coords = [coords]
 
@@ -99,7 +99,5 @@ def cartesian_to_polar(coords, type):
         theta = np.arctan2(y, x)
         phi = np.arcsin(z / r)
         polar_coords.append([r, theta, phi])
-    if type == 'jammer_pos':
-        return polar_coords[0]
-    else:
-        return polar_coords
+    return polar_coords
+
