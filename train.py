@@ -8,7 +8,7 @@ from sklearn.metrics import mean_squared_error
 import logging
 from custom_logging import setup_logging
 from utils import set_seeds_and_reproducibility
-from data_processing import convert_output
+# from data_processing import convert_output
 
 set_seeds_and_reproducibility()
 
@@ -65,7 +65,7 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         data = data.to(device)
         optimizer.zero_grad()
         output = model(data)
-        output = convert_output(output, device)
+        # output = convert_output(output, device)
         loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
@@ -96,7 +96,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         for data in validate_loader:
             data = data.to(device)
             output = model(data)
-            output = convert_output(output, device)
+            # output = convert_output(output, device)
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
     return total_loss / len(validate_loader.dataset)

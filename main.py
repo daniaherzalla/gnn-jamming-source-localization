@@ -21,8 +21,8 @@ def main():
     """
     Main function to run the training and evaluation.
     """
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    device = torch.device('cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cpu')
     print("device: ", device)
 
     train_dataset, val_dataset, test_dataset = load_data(params['dataset_path'], params['train_path'], params['val_path'], params['test_path'])
@@ -50,7 +50,7 @@ def main():
             best_val_loss = val_loss
             best_model_state = model.state_dict()
 
-    combination = params['feats'] + ' and ' + params['edges']
+    combination = params['feats'] + ' ' + params['edges'] + ' ' + params['norm']
     epoch_data = {
         'trial': 'trial_' + str(params['trial_num']),
         'combination': combination,

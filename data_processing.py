@@ -43,11 +43,15 @@ def fit_and_save_scaler(data, feature, path='data/scaler.pkl'):
         if params['feats'] == 'polar':
             # Extract radius values from 'polar_coordinates'
             drone_radii = np.array([pos[0] for sublist in data['polar_coordinates'] for pos in sublist])
+            jammer_radii = np.array([pos[0] for sublist in data['jammer_position'] for pos in sublist])
+            all_radii = np.concatenate([drone_radii, jammer_radii])
             # Fit the scaler to the radius values, reshaping for compatibility
-            scaler.fit(drone_radii.reshape(-1, 1))
+            scaler.fit(all_radii.reshape(-1, 1))
         else:
             drone_positions = np.vstack(data['drone_positions'].explode().tolist())
-            scaler.fit(drone_positions)
+            jammer_positions = np.vstack(data['jammer_position'])
+            all_positions = np.vstack([drone_positions, jammer_positions])
+            scaler.fit(all_positions)
 
     # Save the scaler object to a file
     with open(path, 'wb') as f:
@@ -120,7 +124,7 @@ def standardize_values(values):
     mean = np.mean(values)
     std = np.std(values)
     standardized_values = (values - mean) / std
-    return standardized_values, mean, std
+    return standardized_values
 
 
 def reverse_standardization(standardized_values, mean, std):
@@ -150,6 +154,9 @@ def center_and_convert_coordinates(data):
         data['polar_coordinates'] = data['drone_positions'].apply(cartesian_to_polar)
         data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
 
+        data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar)
+        data['jammer_position'] = data['jammer_position'].apply(angle_to_cyclical)
+
 
 def standardize_data(data):
     """Apply z-score or min-max normalization based on the feature type."""
@@ -170,32 +177,54 @@ def save_mean_std_json(data, file_path='zscore_mean_std.json'):
 def apply_z_score_normalization(data):
     """Apply Z-score normalization."""
     logging.info("Applying z-score normalization")
+
     # Drone Positions
     if params['feats'] == 'polar':
         all_radii = []
+        drones_radii = []
+        jammer_radii = []
         for positions in data['polar_coordinates']:
             for position in positions:
-                all_radii.append(position[0])  # Extract all radii
+                drones_radii.append(position[0])  # Extract all radii
 
-        standardized_radii, radii_mean, radii_std = standardize_values(all_radii)  # Standardize the radii
+        for positions in data['jammer_position']:
+            for position in positions:
+                jammer_radii.append(position[0])
+
+        all_radii = drones_radii + jammer_radii
+
+        # Compute mean and standard deviation for each coordinate (x, y, z) separately
+        radii_mean = np.mean(all_radii, axis=0)
+        radii_std = np.std(all_radii, axis=0)
+
+        standardized_drones_radii = (np.array(drones_radii) - radii_mean) / radii_std
+        standardized_jammer_radii = (np.array(jammer_radii) - radii_mean) / radii_std
 
         # Structure the data into a dictionary
         data_to_save = {
             "radii_means": radii_mean.tolist(),
             "radii_stds": radii_std.tolist()
         }
-
         save_mean_std_json(data_to_save)
 
-        # Replace original radii with standardized ones
+        # Replace original radii with standardized ones for drones
         radius_index = 0
         for positions in data['polar_coordinates']:
             for position in positions:
-                position[0] = standardized_radii[radius_index]
+                position[0] = standardized_drones_radii[radius_index]
+                radius_index += 1
+
+        # Replace original radii with standardized ones for jammer
+        radius_index = 0
+        for positions in data['jammer_position']:
+            for position in positions:
+                position[0] = standardized_jammer_radii[radius_index]
                 radius_index += 1
     else:
         # Concatenate all drone positions from all scenarios
-        all_positions = np.concatenate(data['drone_positions'].tolist())
+        all_drone_positions = np.concatenate(data['drone_positions'].tolist())
+        all_jammer_positions = np.array(data['jammer_position'].tolist())
+        all_positions = np.vstack([all_drone_positions, all_jammer_positions])
 
         # Compute mean and standard deviation for each coordinate (x, y, z) separately
         position_means = np.mean(all_positions, axis=0)
@@ -206,7 +235,6 @@ def apply_z_score_normalization(data):
             "position_means": position_means.tolist(),
             "position_stds": position_stds.tolist()
         }
-
         save_mean_std_json(data_to_save)
 
         # Standardize the drone positions for each scenario
@@ -218,11 +246,19 @@ def apply_z_score_normalization(data):
                 standardized_position = (np.array(position) - position_means) / position_stds
                 standardized_positions_scenario.append(standardized_position)
             standardized_positions.append(standardized_positions_scenario)
+        data['drone_positions'] = standardized_positions  # Replace the original drone positions in each row with the standardized values
 
-        # Replace the original drone positions in each row of the DataFrame with the standardized values
-        data['drone_positions'] = standardized_positions
+        # Standardize the jammer positions for each scenario
+        standardized_positions = []
 
-    # RSSI
+        for position in data['jammer_position']:
+            standardized_positions_scenario = []
+            standardized_position = (np.array(position) - position_means) / position_stds
+            standardized_positions_scenario.append(standardized_position)
+            standardized_positions.append(standardized_positions_scenario)
+        data['jammer_position'] = standardized_positions
+
+    # Normalizing RSSI
     all_rssi_values = np.concatenate(data['drones_rssi'].tolist())
 
     # Compute mean and standard deviation using all RSSI values
@@ -246,10 +282,17 @@ def apply_min_max_normalization(data):
     coords_scaler = fit_and_save_scaler(data, 'coords', 'data/coords_scaler.pkl')
     if params['feats'] == 'polar':
         data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: [[coords_scaler.transform([[pos[0]]])[0][0]] + pos[1:] for pos in x])
+        # Normalize jammer_position using the same scaler
+        data['jammer_position'] = data['jammer_position'].apply(lambda x: [[coords_scaler.transform([[pos[0]]])[0][0]] + pos[1:] for pos in x])
+        # data['jammer_position'] = data['jammer_position'].apply(lambda x: [coords_scaler.transform([[x[0]]])[0][0]] + x[1:])
     else:
         data['drone_positions'] = data['drone_positions'].apply(lambda x: coords_scaler.transform(x).tolist())
+        # Normalize jammer_position using the same scaler
+        data['jammer_position'] = data['jammer_position'].apply(lambda x: coords_scaler.transform(np.array(x).reshape(1, -1)).tolist())
+
+    # Apply normalization to RSSI values
     rssi_scaler = fit_and_save_scaler(data, 'rssi', 'data/rssi_scaler.pkl')
-    data['drones_rssi'] = [rssi_scaler.transform(np.array(rssi).reshape(-1, 1)).tolist() for rssi in data['drones_rssi']]
+    data['drones_rssi'] = [np.squeeze(rssi_scaler.transform(np.array(rssi).reshape(-1, 1))).tolist() for rssi in data['drones_rssi']]
 
 
 def convert_data_type(data):
@@ -277,12 +320,6 @@ def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
     convert_data_type(data)
     center_and_convert_coordinates(data)
     standardize_data(data)
-    # if params['feats'] == 'polar':
-    #     print("Polar coords: ", data['polar_coordinates'][0])
-    # else:
-    #     print("Drone positions: ", data['drone_positions'][0])
-    # print("RSSI: ", data['drones_rssi'])
-    # quit()
     return data
 
 
@@ -311,34 +348,35 @@ def polar_to_cartesian(data):
         result.append([x, y, z])
     return result
 
-def convert_output(output, device):
-    if params['feats'] == 'cartesian':
-        if params['norm'] == 'zscore':
-            with open('zscore_mean_std.json', 'r') as json_file:
-                data_loaded = json.load(json_file)
-                position_means = torch.tensor(data_loaded['position_means'], dtype=torch.float32, device=device)
-                position_stds = torch.tensor(data_loaded['position_stds'], dtype=torch.float32, device=device)
 
-            converted_output = output * position_stds + position_means
-        elif params['norm'] == 'minmax':
-            scaler = load_scaler('data/coords_scaler.pkl')
-            converted_output = torch.tensor(scaler.inverse_transform(output.cpu().numpy()), device=device)
-    elif params['feats'] == 'polar':
-        polar_coords = cyclical_to_angular(output)
-        if params['norm'] == 'zscore':
-            with open('zscore_mean_std.json', 'r') as json_file:
-                data_loaded = json.load(json_file)
-                radii_mean = np.array(data_loaded['radii_mean'])
-                radii_std = np.array(data_loaded['radii_std'])
-            print("position_means: ", radii_mean)
-            print("position_std: ", radii_std)
-            polar_coords[0] = polar_coords[0] * radii_std + radii_mean
-            converted_output = polar_to_cartesian(polar_coords)
-        elif params['norm'] == 'minmax':
-            scaler = load_scaler('data/coords_scaler.pkl')
-            polar_coords[0] = torch.tensor(scaler.inverse_transform(polar_coords[0].cpu().numpy().reshape(-1, 1)), device=device)
-            converted_output = polar_to_cartesian(polar_coords)
-    return converted_output
+# def convert_output(output, device):
+#     if params['feats'] == 'cartesian':
+#         if params['norm'] == 'zscore':
+#             with open('zscore_mean_std.json', 'r') as json_file:
+#                 data_loaded = json.load(json_file)
+#                 position_means = torch.tensor(data_loaded['position_means'], dtype=torch.float32, device=device)
+#                 position_stds = torch.tensor(data_loaded['position_stds'], dtype=torch.float32, device=device)
+#
+#             converted_output = output * position_stds + position_means
+#         elif params['norm'] == 'minmax':
+#             scaler = load_scaler('data/coords_scaler.pkl')
+#             converted_output = torch.tensor(scaler.inverse_transform(output.cpu().numpy()), device=device)
+#     elif params['feats'] == 'polar':
+#         polar_coords = cyclical_to_angular(output)
+#         if params['norm'] == 'zscore':
+#             with open('zscore_mean_std.json', 'r') as json_file:
+#                 data_loaded = json.load(json_file)
+#                 radii_mean = np.array(data_loaded['radii_mean'])
+#                 radii_std = np.array(data_loaded['radii_std'])
+#             print("position_means: ", radii_mean)
+#             print("position_std: ", radii_std)
+#             polar_coords[0] = polar_coords[0] * radii_std + radii_mean
+#             converted_output = polar_to_cartesian(polar_coords)
+#         elif params['norm'] == 'minmax':
+#             scaler = load_scaler('data/coords_scaler.pkl')
+#             polar_coords[0] = torch.tensor(scaler.inverse_transform(polar_coords[0].cpu().numpy().reshape(-1, 1)), device=device)
+#             converted_output = polar_to_cartesian(polar_coords)
+#     return converted_output
 
 
 def save_datasets(data, train_path, val_path, test_path):
@@ -479,6 +517,8 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     # prepare node features and convert to Tensor
     # logging.info(f"row['drone_positions']: {row['drone_positions'][0]}")
     # logging.info(f"row['drones_rssi']: {row['drones_rssi'][0]}")
+    # logging.info(f"row['jammer_position']: {row['jammer_position'][0]}")
+    # quit()
 
     if params['feats'] == 'polar':
         node_features = [list(pos) + [rssi] for pos, rssi in zip(row['polar_coordinates'], row['drones_rssi'])]
@@ -487,9 +527,8 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     else:
         raise ValueError
 
-    # logging.info(f"node_features: {node_features}")
+    # print("node features: ", node_features)
     # quit()
-
     node_features = torch.tensor(node_features, dtype=torch.float32)  # Use float32 directly
 
     # Preparing edges and weights using KNN
@@ -545,6 +584,8 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     edge_weight = torch.tensor(edge_weight, dtype=torch.float) if edge_weight else torch.empty(0, dtype=torch.float)
 
     # Target variable preparation
-    y = torch.tensor(row['jammer_position'], dtype=torch.float).unsqueeze(0)
+    # print("row['jammer_position']: ", row['jammer_position'])
+    # quit()
+    y = torch.tensor(row['jammer_position'][0], dtype=torch.float).unsqueeze(0)
 
     return Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight, y=y)

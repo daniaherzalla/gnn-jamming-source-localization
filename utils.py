@@ -38,7 +38,7 @@ def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, flo
         writer.writerow(result)
 
 
-def save_epochs(epoch_data, filename: str = 'results/epoch_metrics.csv') -> None:
+def save_epochs(epoch_data, filename: str = 'results/epoch_metrics_latest.csv') -> None:
     file_exists = os.path.isfile(filename)
 
     # Open the CSV file in append mode
