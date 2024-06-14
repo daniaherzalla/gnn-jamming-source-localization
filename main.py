@@ -26,7 +26,6 @@ def main():
     print("device: ", device)
 
     train_dataset, val_dataset, test_dataset = load_data(params['dataset_path'], params['train_path'], params['val_path'], params['test_path'])
-    # quit()
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
     steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
     print("steps per epoch: ", steps_per_epoch)
@@ -61,27 +60,26 @@ def main():
         'best_val_loss': best_val_loss,
         'epochs_trained': epoch
     }
-
-    save_epochs(epoch_data)
     save_metrics_and_params(metrics, params)
 
     # # Save the trained model
     # torch.save(model.state_dict(), 'results/trained_model.pth')
     #
     # # Evaluate the model on the test set
-    # model.load_state_dict(best_model_state)
-    # scaler = load_scaler()
-    # predictions, actuals = predict_and_evaluate(model, test_loader, device, scaler)
+    model.load_state_dict(best_model_state)
+    predictions, actuals, err_metrics = predict_and_evaluate(model, test_loader, device)
+    trial_data = {**epoch_data, **err_metrics}
+    save_epochs(trial_data)
 
-    # if len(predictions) != len(actuals):
-    #     raise ValueError("Predictions and actuals lists must have the same length")
+    if len(predictions) != len(actuals):
+        raise ValueError("Predictions and actuals lists must have the same length")
 
-    # # Save predictions and actuals to a CSV file
-    # with open('results/predictions.csv', 'w', newline='') as f:
-    #     writer = csv.writer(f)
-    #     writer.writerow(['Prediction', 'Actual'])
-    #     for pred, act in zip(predictions, actuals):
-    #         writer.writerow([pred, act])  # prediction-actual pair
+    # Save predictions and actuals to a CSV file
+    with open('results/predictions.csv', 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Prediction', 'Actual'])
+        for pred, act in zip(predictions, actuals):
+            writer.writerow([pred, act])  # prediction-actual pair
 
 
 if __name__ == "__main__":

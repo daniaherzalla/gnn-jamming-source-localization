@@ -1,14 +1,18 @@
+import csv
 import math
+import os
+
+import numpy as np
 import torch
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
 from model import GNN
 from typing import Tuple
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 import logging
 from custom_logging import setup_logging
 from utils import set_seeds_and_reproducibility
-# from data_processing import convert_output
+from data_processing import convert_output
 
 set_seeds_and_reproducibility()
 
@@ -102,7 +106,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
     return total_loss / len(validate_loader.dataset)
 
 
-def predict_and_evaluate(model, loader, device, scaler):
+def predict_and_evaluate(model, loader, device):
     """
     Evaluate the model and compute performance metrics.
 
@@ -117,22 +121,52 @@ def predict_and_evaluate(model, loader, device, scaler):
             - predictions (list): The predicted values after denormalization.
             - actuals (list): The actual values after denormalization.
     """
+    # need to save that data in new file to plot as well after 3 trials
     model.eval()
     predictions, actuals = [], []
     with torch.no_grad():
         for data in loader:
             data = data.to(device)
             output = model(data)
-            # Apply inverse transformation to the model output (denormalize)
-            predicted_coords = scaler.inverse_transform(output.cpu().numpy())
-            actual_coords = scaler.inverse_transform(data.y.cpu().numpy())
+            # Apply inverse transformation to the model output
+            predicted_coords = convert_output(output.cpu().numpy(), device)
+            actual_coords = convert_output(data.y.cpu().numpy(), device)
+
+            # predicted_coords = scaler.inverse_transform(output.cpu().numpy())
+            # actual_coords = scaler.inverse_transform(data.y.cpu().numpy())
 
             predictions.extend(predicted_coords)
             actuals.extend(actual_coords)
 
+    predictions = np.concatenate([np.array(pred).flatten() for pred in predictions])
+    actuals = np.concatenate([np.array(act).flatten() for act in actuals])
+
     # calculate metrics MSE, RMSE using predictions and actuals
+    mae = mean_absolute_error(actuals, predictions)
     mse = mean_squared_error(actuals, predictions)
     print(f'Mean Squared Error: {mse}')
     rmse = math.sqrt(mse)
     print(f'Root Mean Squared Error: {rmse}')
-    return predictions, actuals
+
+    err_metrics = {
+        'mae': mae,
+        'mse': mse,
+        'rmse': rmse
+    }
+
+    return predictions, actuals, err_metrics
+
+
+def save_err_metrics(data, filename: str = 'results/error_metrics.csv') -> None:
+    file_exists = os.path.isfile(filename)
+
+    # Open the CSV file in append mode
+    with open(filename, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=data.keys())
+
+        # Write the header only if the file didn't exist before
+        if not file_exists:
+            writer.writeheader()
+
+        # Write the data
+        writer.writerow(data)

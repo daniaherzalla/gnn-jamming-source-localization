@@ -99,6 +99,7 @@ def cyclical_to_angular(output):
         list: Updated list with [r, theta, phi] for each point.
     """
     result = []
+    # print("output: ", output)
     for point in output:
         r = point[0]
         sin_theta = point[1]
@@ -142,6 +143,16 @@ def center_coordinates(coords):
 
     midpoint = (lower_bound + upper_bound) / 2
     centered_coords = coords - midpoint
+
+    data_to_save = {
+        "lower_bound": lower_bound.tolist(),
+        "upper_bound": upper_bound.tolist()
+    }
+
+    # Write the dictionary to a JSON file
+    with open('centering_vars.json', 'w') as json_file:
+        json.dump(data_to_save, json_file, indent=4)
+
     return centered_coords
 
 
@@ -349,34 +360,58 @@ def polar_to_cartesian(data):
     return result
 
 
-# def convert_output(output, device):
-#     if params['feats'] == 'cartesian':
-#         if params['norm'] == 'zscore':
-#             with open('zscore_mean_std.json', 'r') as json_file:
-#                 data_loaded = json.load(json_file)
-#                 position_means = torch.tensor(data_loaded['position_means'], dtype=torch.float32, device=device)
-#                 position_stds = torch.tensor(data_loaded['position_stds'], dtype=torch.float32, device=device)
-#
-#             converted_output = output * position_stds + position_means
-#         elif params['norm'] == 'minmax':
-#             scaler = load_scaler('data/coords_scaler.pkl')
-#             converted_output = torch.tensor(scaler.inverse_transform(output.cpu().numpy()), device=device)
-#     elif params['feats'] == 'polar':
-#         polar_coords = cyclical_to_angular(output)
-#         if params['norm'] == 'zscore':
-#             with open('zscore_mean_std.json', 'r') as json_file:
-#                 data_loaded = json.load(json_file)
-#                 radii_mean = np.array(data_loaded['radii_mean'])
-#                 radii_std = np.array(data_loaded['radii_std'])
-#             print("position_means: ", radii_mean)
-#             print("position_std: ", radii_std)
-#             polar_coords[0] = polar_coords[0] * radii_std + radii_mean
-#             converted_output = polar_to_cartesian(polar_coords)
-#         elif params['norm'] == 'minmax':
-#             scaler = load_scaler('data/coords_scaler.pkl')
-#             polar_coords[0] = torch.tensor(scaler.inverse_transform(polar_coords[0].cpu().numpy().reshape(-1, 1)), device=device)
-#             converted_output = polar_to_cartesian(polar_coords)
-#     return converted_output
+def undo_center_coordinates(centered_coords, lower_bound, upper_bound):
+    """Revert the centering of coordinates to their original location."""
+    # print("centered_coords: ", centered_coords)
+    midpoint = (lower_bound + upper_bound) / 2
+    # print("midpoint: ", midpoint)
+    original_coords = [coords + midpoint for coords in centered_coords]
+    return original_coords
+
+
+def convert_output(output, device):
+    with open('centering_vars.json', 'r') as json_file:
+        data_loaded = json.load(json_file)
+        lower_bound = np.array(data_loaded['lower_bound'])
+        upper_bound = np.array(data_loaded['upper_bound'])
+
+    if params['feats'] == 'cartesian':
+        if params['norm'] == 'zscore':
+            with open('zscore_mean_std.json', 'r') as json_file:
+                data_loaded = json.load(json_file)
+                position_means = np.array(data_loaded['position_means'])
+                position_stds = np.array(data_loaded['position_stds'])
+
+            converted_output = output * position_stds + position_means
+            converted_output = undo_center_coordinates(converted_output, lower_bound, upper_bound)
+
+        elif params['norm'] == 'minmax':
+            scaler = load_scaler('data/coords_scaler.pkl')
+            converted_output = scaler.inverse_transform(output)
+            converted_output = undo_center_coordinates(converted_output, lower_bound, upper_bound)
+
+    elif params['feats'] == 'polar':
+        polar_coords = cyclical_to_angular(output)
+        if params['norm'] == 'zscore':
+            with open('zscore_mean_std.json', 'r') as json_file:
+                data_loaded = json.load(json_file)
+                radii_mean = np.array(data_loaded['radii_means'])
+                radii_std = np.array(data_loaded['radii_stds'])
+            print("position_means: ", radii_mean)
+            print("position_std: ", radii_std)
+            polar_coords[0] = polar_coords[0] * radii_std + radii_mean
+            converted_output = polar_to_cartesian(polar_coords)
+            converted_output = undo_center_coordinates(converted_output, lower_bound, upper_bound)
+
+        elif params['norm'] == 'minmax':
+            scaler = load_scaler('data/coords_scaler.pkl')
+            # Convert list to numpy array and reshape
+            radii_array = np.array(polar_coords[0]).reshape(-1, 1)
+            polar_coords[0] = scaler.inverse_transform(radii_array)
+            converted_output = polar_to_cartesian(polar_coords)
+            converted_output = undo_center_coordinates(converted_output, lower_bound, upper_bound)
+
+    return converted_output
 
 
 def save_datasets(data, train_path, val_path, test_path):
@@ -397,7 +432,6 @@ def save_datasets(data, train_path, val_path, test_path):
     torch_geo_dataset = [create_torch_geo_data(row) for _, row in data.iterrows()]
 
     # Shuffle the dataset
-    random.seed(params['seed'])
     random.shuffle(torch_geo_dataset)
 
     logging.info('Creating train-test split')
