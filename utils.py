@@ -9,7 +9,7 @@ import torch
 from config import params
 
 
-def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, float], filename: str = 'results/model_metrics_and_params.csv') -> None:
+def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, float], filename: str = 'results/model_metrics_and_params_converted.csv') -> None:
     """
     Save metrics and parameters to a JSON file.
 
@@ -38,7 +38,7 @@ def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, flo
         writer.writerow(result)
 
 
-def save_epochs(epoch_data, filename: str = 'results/epoch_metrics_latest.csv') -> None:
+def save_epochs(epoch_data, filename: str = 'results/epoch_metrics_converted.csv') -> None:
     file_exists = os.path.isfile(filename)
 
     # Open the CSV file in append mode
@@ -96,8 +96,8 @@ def cartesian_to_polar(coords):
     polar_coords = []
     for x, y, z in coords:
         r = np.sqrt(x**2 + y**2 + z**2)
-        theta = np.arctan2(y, x)
-        phi = np.arcsin(z / r)
-        polar_coords.append([r, theta, phi])
+        theta = np.arccos(z / r) if r != 0 else 0  # Polar angle from the positive z-axis (colatitude)
+        phi = np.arctan2(y, x)  # Azimuthal angle in the xy-plane from the positive x-axis
+        # polar_coords.append([r, theta, phi])
+        polar_coords.append([1, theta, phi])
     return polar_coords
-

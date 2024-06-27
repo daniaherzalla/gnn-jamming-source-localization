@@ -1,4 +1,5 @@
 import csv
+import json
 import math
 import os
 
@@ -12,11 +13,15 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import logging
 from custom_logging import setup_logging
 from utils import set_seeds_and_reproducibility
-from data_processing import convert_output
+from data_processing import convert_output, convert_output_eval
 
 set_seeds_and_reproducibility()
 
 setup_logging()
+
+# Load midpoints once
+with open('midpoints.json', 'r') as f:
+    midpoints = json.load(f)
 
 
 def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -> Tuple[GNN, optim.Optimizer, ReduceLROnPlateau, torch.nn.Module]:
@@ -55,30 +60,37 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         optimizer (torch.optim.Optimizer): Optimizer for the model.
         criterion (torch.nn.Module): Loss criterion.
         device (torch.device): Device to run the model on.
+        steps_per_epoch (int): Max number of steps per epoch to run training for.
 
     Returns:
         float: Average loss for the epoch.
     """
     model.train()
     total_loss = 0
-    num_steps = 0
-    # steps_per_epoch = None
+    num_batches = 0  # Use this to correctly compute average loss
     for data in train_loader:
-        if steps_per_epoch is not None and num_steps >= steps_per_epoch:
+        if steps_per_epoch is not None and num_batches >= steps_per_epoch:
             break
         data = data.to(device)
         optimizer.zero_grad()
         output = model(data)
-        # output = convert_output(output, device)
+        output = output * 2
+        # output[:, 0] = output[:, 0] * torch.sqrt(torch.tensor(3.0))
+        # Multiply all the radii (1st column) by sqrt(3)
+        # print(output.shape)
+        # quit()
+        output = convert_output(output, 'prediction')  # Ensure output conversion uses PyTorch and remains on the GPU
         loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
         scheduler.step()
-        num_steps += 1
-        total_loss += loss.item() * data.num_graphs
-    # Clear CUDA cache
+        total_loss += loss.item() * data.num_graphs  # Ensure data.num_graphs or equivalent is valid
+        num_batches += 1
+
+    # Clear CUDA cache if necessary (usually not required every batch)
     torch.cuda.empty_cache()
-    return total_loss / len(train_loader.dataset)
+
+    return total_loss / sum(data.num_graphs for data in train_loader)  # This assumes each batch might have a different size
 
 
 def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, criterion: torch.nn.Module, device: torch.device) -> float:
@@ -96,14 +108,19 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
     """
     model.eval()
     total_loss = 0
+    total_graphs = 0  # Use this to correctly compute average loss if batch sizes vary
     with torch.no_grad():
         for data in validate_loader:
             data = data.to(device)
             output = model(data)
-            # output = convert_output(output, device)
+            output = output * 2
+            # output[:, 0] = output[:, 0] * torch.sqrt(torch.tensor(3.0))
+            output = convert_output(output, 'prediction')  # Ensure this function is suitable for validation context
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
-    return total_loss / len(validate_loader.dataset)
+            total_graphs += data.num_graphs  # Accumulate the total number of graphs or samples processed
+
+    return total_loss / total_graphs  # Use total_graphs for a more accurate average if batch sizes are not uniform
 
 
 def predict_and_evaluate(model, loader, device):
@@ -121,25 +138,48 @@ def predict_and_evaluate(model, loader, device):
             - predictions (list): The predicted values after denormalization.
             - actuals (list): The actual values after denormalization.
     """
-    # need to save that data in new file to plot as well after 3 trials
     model.eval()
     predictions, actuals = [], []
+
     with torch.no_grad():
         for data in loader:
-            data = data.to(device)
-            output = model(data)
-            # Apply inverse transformation to the model output
-            predicted_coords = convert_output(output.cpu().numpy(), device)
-            actual_coords = convert_output(data.y.cpu().numpy(), device)
+            ids = data.id  # This will be a tensor with batch_size elements
 
-            # predicted_coords = scaler.inverse_transform(output.cpu().numpy())
-            # actual_coords = scaler.inverse_transform(data.y.cpu().numpy())
+            for i in range(len(ids)):
+                id_ = ids[i].item()  # Extract the id for each item in the batch
 
-            predictions.extend(predicted_coords)
-            actuals.extend(actual_coords)
+                # Process individual data items
+                data_item = data[i].to(device)
+                output = model(data_item)
+                # output[:, 0] = output[:, 0] * torch.sqrt(torch.tensor(3.0))
+                output = output * 2
+                # print("output: ", output)
 
+                # Convert and uncenter using the index to retrieve the correct midpoint
+                predicted_coords = convert_output_eval(output, 'prediction', device, id_, midpoints)
+                actual_coords = data_item.y  # convert_output_eval(data_item.y, 'target', device, id_, midpoints)
+
+                predictions.append(predicted_coords.cpu().numpy())
+                print("prediction: ", predicted_coords.cpu().numpy())
+                actuals.append(actual_coords.cpu().numpy())
+
+    # quit()
     predictions = np.concatenate([np.array(pred).flatten() for pred in predictions])
     actuals = np.concatenate([np.array(act).flatten() for act in actuals])
+    print("predictions: ", predictions)
+    print("actuals: ", actuals)
+
+    import matplotlib.pyplot as plt
+
+    # Assuming `predictions` and `actuals` are your arrays of predicted and actual values
+    plt.figure(figsize=(10, 6))
+    plt.scatter(actuals, predictions, alpha=0.5)
+    plt.title('Predictions vs. Actuals')
+    plt.xlabel('Actual Values')
+    plt.ylabel('Predicted Values')
+    plt.plot([actuals.min(), actuals.max()], [actuals.min(), actuals.max()], 'k--', lw=2)  # Line showing perfect predictions
+    # plt.savefig(f'results/graphs/polar_knn_minmax_trial2.png')
+    plt.show()
 
     # calculate metrics MSE, RMSE using predictions and actuals
     mae = mean_absolute_error(actuals, predictions)
@@ -149,6 +189,8 @@ def predict_and_evaluate(model, loader, device):
     print(f'Root Mean Squared Error: {rmse}')
 
     err_metrics = {
+        'actuals': actuals,
+        'predictions': predictions,
         'mae': mae,
         'mse': mse,
         'rmse': rmse
@@ -157,7 +199,7 @@ def predict_and_evaluate(model, loader, device):
     return predictions, actuals, err_metrics
 
 
-def save_err_metrics(data, filename: str = 'results/error_metrics.csv') -> None:
+def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv') -> None:
     file_exists = os.path.isfile(filename)
 
     # Open the CSV file in append mode

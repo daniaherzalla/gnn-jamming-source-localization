@@ -23,7 +23,7 @@ params = {
     'dropout_rate': 0.6,
     'num_heads': 8,
     'max_epochs': 200,
-    'seed': 23,  # opts: 42, 1, 23
+    'seed': 42,  # opts: 42, 1, 23
     'feats': 'cartesian',  # opts: 'polar', 'cartesian'
     'in_channels': 4,  # 4 drone pos (x, y, z) + rssi # 6 (r, sin(theta), cos(theta), sin(phi), cos(phi)) + rssi
     'num_layers': 4,
@@ -37,7 +37,7 @@ params = {
     'val_path': 'data/validation.gzip',
     'test_path': 'data/test.gzip',
     'inference': False,
-    'trial_num': 3
+    'trial_num': 1
 }
 
 # CHECK: did you update...

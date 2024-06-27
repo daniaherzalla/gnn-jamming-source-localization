@@ -37,7 +37,11 @@ class GNN(torch.nn.Module):
         self.attention_pool = AttentionalAggregation(gate_nn=Linear(out_channels, 1))
         self.regressor = Linear(out_channels, out_features)
         self.dropout = torch.nn.Dropout(dropout_rate)
-
+        if params['feats'] == 'cartesian':
+            self.output_act = torch.nn.Tanh()
+        elif params['feats'] == 'polar':
+            self.output_act_radius = torch.nn.Sigmoid()  # For radius, ensure outputs are [0, 1]
+            self.output_act_angles = torch.nn.Tanh()  # For angles, handle outputs in [-1, 1]
         # Initialize weights
         init_weights(self)
 
@@ -58,7 +62,24 @@ class GNN(torch.nn.Module):
         x = self.attention_pool(x, data.batch)  # Apply attention pooling to get a single vector for the graph
         # x = global_mean_pool(x, data.batch)  # Pooling to predict a single output per graph
         x = self.dropout(x)  # apply dropout last layer
-        x = self.regressor(x)  # Predict the jammer's coordinates
+        # print("x: ", x)
+        if params['feats'] == 'cartesian':
+            x = self.output_act(self.regressor(x))  # Predict the jammer's coordinates
+        elif params['feats'] == 'polar':
+            # Apply sigmoid activation to r
+            x_all = self.regressor(x)
+            x_radius = self.output_act_radius(x_all[:, 0].unsqueeze(1))  # Radius: first feature, reshaped to keep two dimensions
+            x_angles = self.output_act_angles(x_all[:, 1:])  # Angles: remaining features
+
+            # Do Not apply activation to r
+            # x_all = self.regressor(x)
+            # x_radius = x_all[:, 0].unsqueeze(1)  # Directly use the output without activation for radius
+            # x_angles = torch.tanh(x_all[:, 1:])  # Apply tanh for angle components
+
+            # print(f"x_radius shape: {x_radius.shape}")
+            # print(f"x_angles shape: {x_angles.shape}")
+
+            x = torch.cat((x_radius, x_angles), dim=1)  # Combine back into one tensor
         return x
 
     def print_weights(self):

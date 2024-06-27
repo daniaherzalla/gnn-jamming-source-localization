@@ -40,10 +40,14 @@ def main():
     logging.info("Training and validation loop")
     epoch_info = []
     for epoch in range(params['max_epochs']):
+        # for batch in train_loader:
+        #     print("Batch Jammer Positions:", batch.y)
+        #     break  # Only print the first batch
+        # quit()
         train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
         val_loss = validate(model, val_loader, criterion, device)  # calculate validation loss to determine if the model is improving during training
-        logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
-        epoch_info.append(f'Epoch: {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
+        logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
+        epoch_info.append(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -62,20 +66,22 @@ def main():
     }
     save_metrics_and_params(metrics, params)
 
-    # # Save the trained model
-    # torch.save(model.state_dict(), 'results/trained_model.pth')
-    #
-    # # Evaluate the model on the test set
+    # Save the trained model
+    experiment_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num'])
+    torch.save(model.state_dict(), f'{experiment_path}/trained_model_{combination}.pth')
+
+    # Evaluate the model on the test set
     model.load_state_dict(best_model_state)
     predictions, actuals, err_metrics = predict_and_evaluate(model, test_loader, device)
+    # quit()
     trial_data = {**epoch_data, **err_metrics}
-    save_epochs(trial_data)
+    # save_epochs(trial_data)
 
     if len(predictions) != len(actuals):
         raise ValueError("Predictions and actuals lists must have the same length")
 
     # Save predictions and actuals to a CSV file
-    with open('results/predictions.csv', 'w', newline='') as f:
+    with open(f'{experiment_path}/predictions.csv', 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['Prediction', 'Actual'])
         for pred, act in zip(predictions, actuals):
