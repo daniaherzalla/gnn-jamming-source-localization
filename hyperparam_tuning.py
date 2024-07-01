@@ -25,8 +25,8 @@ def objective(hyperparameters, train_dataset, val_dataset, test_dataset):
     Returns:
         float: The validation loss after training with the given hyperparameters.
     """
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    device = torch.device('cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cpu')
 
     # Create DataLoaders inside the objective function using current hyperparameters for batch size
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, hyperparameters['batch_size'])
@@ -54,13 +54,13 @@ def map_indices_to_values(hyperparameters):
     """
     actual_values = {
         "num_heads": [2, 4, 8],
-        "batch_size": [32, 64, 128],
+        "batch_size": [32, 64],
         "max_epochs": [100, 150, 200]
     }
     return {key: actual_values[key][hyperparameters[key][0]] if key in actual_values else hyperparameters[key][0] for key in hyperparameters}
 
 
-def save_results(trials, best_hyperparams, best_loss, filename='hyperparam_tuning_results.json'):
+def save_results(trials, best_hyperparams, best_loss, filename='hyperparam_tuning_results_gatv2_knn_9feat.json'):
     """
     Save the results of the hyperparameter tuning process along with the associated best validation loss.
 
@@ -95,10 +95,10 @@ def main():
     hyperparameter_space = {
         'dropout_rate': hp.uniform('dropout_rate', 0.1, 0.5),
         'num_heads': hp.choice('num_heads', [2, 4, 8]),
-        'batch_size': hp.choice('batch_size', [32, 64, 128]),
+        'batch_size': hp.choice('batch_size', [32, 64]),
         'learning_rate': hp.uniform('learning_rate', 0.0001, 0.01),
         'weight_decay': hp.loguniform('weight_decay', -6, -1),
-        'max_epochs': hp.choice('max_epochs', [100, 150, 200])
+        'max_epochs': hp.choice('max_epochs', [150, 200])
     }
 
     trials = Trials()

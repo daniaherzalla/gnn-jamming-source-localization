@@ -79,7 +79,7 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         # Multiply all the radii (1st column) by sqrt(3)
         # print(output.shape)
         # quit()
-        output = convert_output(output, 'prediction')  # Ensure output conversion uses PyTorch and remains on the GPU
+        output = convert_output(output, device)  # Ensure output conversion uses PyTorch and remains on the GPU
         loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
@@ -115,7 +115,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
             output = model(data)
             output = output * 2
             # output[:, 0] = output[:, 0] * torch.sqrt(torch.tensor(3.0))
-            output = convert_output(output, 'prediction')  # Ensure this function is suitable for validation context
+            output = convert_output(output, device)  # Ensure this function is suitable for validation context
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
             total_graphs += data.num_graphs  # Accumulate the total number of graphs or samples processed
@@ -157,10 +157,10 @@ def predict_and_evaluate(model, loader, device):
 
                 # Convert and uncenter using the index to retrieve the correct midpoint
                 predicted_coords = convert_output_eval(output, 'prediction', device, id_, midpoints)
-                actual_coords = data_item.y  # convert_output_eval(data_item.y, 'target', device, id_, midpoints)
+                actual_coords = convert_output_eval(data_item.y, 'target', device, id_, midpoints)
 
                 predictions.append(predicted_coords.cpu().numpy())
-                print("prediction: ", predicted_coords.cpu().numpy())
+                # print("prediction: ", predicted_coords.cpu().numpy())
                 actuals.append(actual_coords.cpu().numpy())
 
     # quit()
