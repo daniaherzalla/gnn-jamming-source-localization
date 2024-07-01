@@ -1,20 +1,3 @@
-# params = {
-#     'description': '9 features, prox. edges, attention pooling, dropout last layer',
-#     'learning_rate': 0.009939984895945914,
-#     'weight_decay': 0.017519805495758278,
-#     'batch_size': 32,
-#     'dropout_rate': 0.20035699277586444,
-#     'num_heads': 4,
-#     'patience': 30,
-#     'max_epochs': 200,
-#     'dataset_path': 'data/static_swarm_3d.csv',
-#     'train_path': 'data/train.gzip',
-#     'val_path': 'data/validation.gzip',
-#     'test_path': 'data/test.gzip',
-#     'inference': False
-# }
-
-
 params = {
     'model': 'GATv2',
     'learning_rate': 0.005,
@@ -32,7 +15,7 @@ params = {
     'out_features': 3,  # 3 jammer pos (x, y, z) # 5 (r, sin(theta), cos(theta), sin(phi), cos(phi))
     'edges': 'knn',  # opts: 'knn', 'proximity'
     'norm': 'minmax',  # opts: 'zscore', 'minmax'
-    'dataset_path': 'data/static_swarm_3d.csv',
+    'dataset_path': 'data/random.csv',  # static_swarm_3d
     'train_path': 'data/train.gzip',
     'val_path': 'data/validation.gzip',
     'test_path': 'data/test.gzip',

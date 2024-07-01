@@ -75,7 +75,7 @@ def main():
     predictions, actuals, err_metrics = predict_and_evaluate(model, test_loader, device)
     # quit()
     trial_data = {**epoch_data, **err_metrics}
-    # save_epochs(trial_data)
+    save_epochs(trial_data)
 
     if len(predictions) != len(actuals):
         raise ValueError("Predictions and actuals lists must have the same length")
