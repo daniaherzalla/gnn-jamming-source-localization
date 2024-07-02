@@ -31,24 +31,19 @@ def fit_and_save_scaler(data, feature, path='data/scaler.pkl'):
         feature (str): The feature type ('rssi' or 'coords') to apply scaling to.
         path (str): Path to save the scaler object.
     """
-    scaler = MinMaxScaler(feature_range=(-1, 1))
-
     if feature == 'rssi':
-        # Extract all RSSI values from 'drones_rssi'
-        all_rssi = np.concatenate(data['drones_rssi'].values)
+        # Extract all RSSI values from 'node_noise'
+        all_rssi = np.concatenate(data['node_noise'].values)
 
-        # Define the theoretical min and max RSSI values
-        min_rssi = -100  # Adjust this value as needed
-        max_rssi = -30  # Adjust this value as needed
+        # Fit the scaler to the RSSI values, reshaping for compatibility
+        rssi_scaler = MinMaxScaler(feature_range=(0, 1))
+        rssi_scaler.fit(all_rssi.reshape(-1, 1))
 
-        # Normalize the RSSI values
-        normalized_rssi = (all_rssi - min_rssi) / (max_rssi - min_rssi)
+        # Save the scaler object to a file
+        with open(path, 'wb') as f:
+            pickle.dump(rssi_scaler, f)
 
-        # Ensure the values are between 0 and 1
-        normalized_rssi = np.clip(normalized_rssi, 0, 1)
-
-        # # Fit the scaler to the RSSI values, reshaping for compatibility
-        # scaler.fit(all_rssi.reshape(-1, 1))
+        return rssi_scaler
     elif feature == 'coords':
         # if params['feats'] == 'polar':
         #     # Extract radius values from 'polar_coordinates'
@@ -59,15 +54,14 @@ def fit_and_save_scaler(data, feature, path='data/scaler.pkl'):
         #     scaler.fit(all_radii.reshape(-1, 1))
         # else:
         node_positions = np.vstack(data['node_positions'].explode().tolist())
-        # jammer_positions = np.vstack(data['jammer_position'])
-        # all_positions = np.vstack([node_positions, jammer_positions])
-        scaler.fit(node_positions)
+        coords_scaler = MinMaxScaler(feature_range=(-1, 1))
+        coords_scaler.fit(node_positions)
 
-    # Save the scaler object to a file
-    with open(path, 'wb') as f:
-        pickle.dump(scaler, f)
+        # Save the scaler object to a file
+        with open(path, 'wb') as f:
+            pickle.dump(coords_scaler, f)
 
-    return scaler
+        return coords_scaler
 
 
 def load_scaler(path):
@@ -109,33 +103,6 @@ def angle_to_cyclical(positions):
     return transformed_positions
 
 
-# def cyclical_to_angular(output):
-#     """
-#     Convert cyclical coordinates (sin and cos) back to angular coordinates (theta and phi).
-#
-#     Args:
-#         output (list): List of lists containing [r, sin(theta), cos(theta), sin(phi), cos(phi)] for each point.
-#
-#     Returns:
-#         list: Updated list with [r, theta, phi] for each point.
-#     """
-#     result = []
-#     for point in output:
-#         r = point[0]
-#         sin_theta = point[1]
-#         cos_theta = point[2]
-#         sin_phi = point[3]
-#         cos_phi = point[4]
-#
-#         # Compute the original angles using arctan2
-#         theta = np.arctan2(sin_theta, cos_theta)
-#         phi = np.arctan2(sin_phi, cos_phi)
-#
-#         # Append the original coordinates [r, theta, phi]
-#         result.append([r, theta, phi])
-#     return result
-
-
 def cyclical_to_angular(output):
     """
     Convert cyclical coordinates (sin and cos) back to angular coordinates (theta and phi) using PyTorch.
@@ -149,8 +116,8 @@ def cyclical_to_angular(output):
     Returns:
         Tensor: Updated tensor with [r, theta, phi] for each point.
     """
-    print('output: ', output)
-    print('r: ', output[:, 0])
+    # print('output: ', output)
+    # print('r: ', output[:, 0])
     r = output[:, 0]
     sin_theta = output[:, 1]
     cos_theta = output[:, 2]
@@ -163,98 +130,47 @@ def cyclical_to_angular(output):
     return torch.stack([r, theta, phi], dim=1)
 
 
-def standardize_values(values):
-    """Standardize values using z-score normalization."""
-    # values = np.array(values)  # Convert values to numpy array
-    if len(values) == 0:
-        raise ValueError("Cannot calculate standard deviation for an empty array")
-    values = np.array(values)
-    mean = np.mean(values)
-    std = np.std(values)
-    standardized_values = (values - mean) / std
-    return standardized_values
-
-
 def reverse_standardization(standardized_values, mean, std):
     """Reverse standardization of values using stored mean and standard deviation."""
     original_values = standardized_values * std + mean
     return original_values
 
 
-def center_coordinates(coords, center=None):
+def mean_centering(coords):
     """Center coordinates using given or calculated bounds."""
     # Calculate the geometric center
     center = np.mean(coords, axis=0)
     centered_coords = coords - center
-    # print("cetnered coords: ", centered_coords)
     return centered_coords, center
 
 
-def center_and_convert_coordinates(data):
+def center_coordinates(data):
     """Center and convert drone and jammer positions using shared bounds for each row, and save midpoints."""
     logging.info("Centering coordinates")
 
-    midpoints = {}
+    # midpoints = {}
     # Initialize columns for storing min and max coordinates
-    data['min_x'] = np.nan
-    data['max_x'] = np.nan
-    data['min_y'] = np.nan
-    data['max_y'] = np.nan
-    data['min_z'] = np.nan
-    data['max_z'] = np.nan
-
-    data['drones_pos_center'] = None
+    data['node_positions_center'] = None
 
     for idx, row in data.iterrows():
+        # Center coordinates using the calculated mean
         node_positions = np.vstack(row['node_positions'])
-
-        # Calculate bounds and midpoints
-        _, center = center_coordinates(node_positions)
-        midpoints[row['id']] = center.tolist()  # Save center for this index
-
-        # Save min and max coordinates for x, y, and z
-        data.at[idx, 'min_x'] = np.min(node_positions[:, 0])
-        data.at[idx, 'max_x'] = np.max(node_positions[:, 0])
-        data.at[idx, 'min_y'] = np.min(node_positions[:, 1])
-        data.at[idx, 'max_y'] = np.max(node_positions[:, 1])
-        data.at[idx, 'min_z'] = np.min(node_positions[:, 2])
-        data.at[idx, 'max_z'] = np.max(node_positions[:, 2])
-
-        # Center coordinates using the calculated midpoint
-        centered_node_positions = node_positions - center
+        centered_node_positions, center = mean_centering(node_positions)
         data.at[idx, 'node_positions'] = centered_node_positions.tolist()
 
-        # Optionally, you can store the center in the DataFrame as well
-        # print("center: ", center)
-        data.at[idx, 'drones_pos_center'] = center
-
-        # # Similar centering for jammer position
+        # Similar centering for jammer position
         jammer_pos = np.array(row['jammer_position'])
         centered_jammer_position = jammer_pos - center
         data.at[idx, 'jammer_position'] = centered_jammer_position.tolist()
 
-    # Save midpoints to a JSON file for later use during uncentering
-    with open('midpoints.json', 'w') as f:
-        json.dump(midpoints, f)
+        # Save center for this row index
+        data.at[idx, 'node_positions_center'] = center
 
-    if params['feats'] == 'polar':
-        data['polar_coordinates'] = data['node_positions'].apply(cartesian_to_polar)
-        # # Extract all 'r' values from 'polar_coordinates'
-        # all_r_values = []
-        # for polar_coords in data['polar_coordinates']:
-        #     r_values = [coord[0] for coord in polar_coords]  # Extract 'r' from each [r, theta, phi]
-        #     all_r_values.extend(r_values)
-        #
-        # # Find the maximum 'r' value
-        # r_max_bound = max(all_r_values)
-        # print("r_max_bound: ", r_max_bound)
-        # quit()
-        # data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
+        # midpoints[row['id']] = center.tolist()
 
-    return data
-
-    # data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar) # !! keep in normalized centered cartesian form
-        # data['jammer_position'] = data['jammer_position'].apply(angle_to_cyclical)
+    # # Save midpoints to a JSON file for later use during uncentering
+    # with open('midpoints.json', 'w') as f:
+    #     json.dump(midpoints, f)
 
 
 def standardize_data(data):
@@ -262,10 +178,10 @@ def standardize_data(data):
     if params['norm'] == 'zscore':
         apply_z_score_normalization(data)
     elif params['norm'] == 'minmax':
-        # print("Range before scaling:", np.min(data['jammer_position']), np.max(data['jammer_position']))
         apply_min_max_normalization(data)
-        # After applying the scaler
-        # print("Range after scaling:", np.min(data['jammer_position']), np.max(data['jammer_position']))
+    elif params['norm'] == 'unit_sphere':
+        apply_min_max_normalization(data)
+        apply_unit_sphere_normalization(data)
 
 
 def save_mean_std_json(data, file_path='zscore_mean_std.json'):
@@ -361,7 +277,7 @@ def apply_z_score_normalization(data):
         data['jammer_position'] = standardized_positions
 
     # Normalizing RSSI
-    all_rssi_values = np.concatenate(data['drones_rssi'].tolist())
+    all_rssi_values = np.concatenate(data['node_noise'].tolist())
 
     # Compute mean and standard deviation using all RSSI values
     rssi_mean = np.mean(all_rssi_values)
@@ -370,57 +286,124 @@ def apply_z_score_normalization(data):
     # Standardize the RSSI values using the mean and standard deviation computed from all scenarios combined
     standardized_rssi_values = []
 
-    for rssi_scenario in data['drones_rssi']:
+    for rssi_scenario in data['node_noise']:
         standardized_rssi_scenario = (np.array(rssi_scenario) - rssi_mean) / rssi_std
         standardized_rssi_values.append(standardized_rssi_scenario)
 
     # Replace the original RSSI values in each row of the DataFrame with the standardized values
-    data['drones_rssi'] = standardized_rssi_values
+    data['node_noise'] = standardized_rssi_values
+
+
+# def apply_min_max_normalization(data):
+#     """Apply Min-Max normalization."""
+#     experiment_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num'])
+#
+#     logging.info("Fitting min-max scaler")
+#
+#     if params['feats'] == 'cartesian':
+#         coords_scaler = fit_and_save_scaler(data, 'coords', f'{experiment_path}/coords_scaler.pkl')
+#
+#         data['node_positions'] = data['node_positions'].apply(lambda x: coords_scaler.transform(x).tolist())
+#         # Normalize jammer_position using the same scaler
+#         data['jammer_position'] = data['jammer_position'].apply(lambda x: coords_scaler.transform(np.array(x).reshape(1, -1)).tolist())
+#
+#     # Apply normalization to RSSI values
+#     rssi_scaler = fit_and_save_scaler(data, 'rssi', f'{experiment_path}/rssi_scaler.pkl')
+#     data['node_noise'] = [np.squeeze(rssi_scaler.transform(np.array(rssi).reshape(-1, 1))).tolist() for rssi in data['node_noise']]
 
 
 def apply_min_max_normalization(data):
-    """Apply Min-Max normalization."""
-    logging.info("Fitting min-max scaler")
-    experiment_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num'])
-    coords_scaler = fit_and_save_scaler(data, 'coords', f'{experiment_path}/coords_scaler.pkl')
-    if params['feats'] == 'polar':
-        data['polar_coordinates'] = data['polar_coordinates'].apply(lambda x: [[coords_scaler.transform([[pos[0]]])[0][0]] + pos[1:] for pos in x])
-        # Normalize jammer_position using the same scaler
-        data['jammer_position'] = data['jammer_position'].apply(lambda x: [[coords_scaler.transform([[pos[0]]])[0][0]] + pos[1:] for pos in x])
-        # data['jammer_position'] = data['jammer_position'].apply(lambda x: [coords_scaler.transform([[x[0]]])[0][0]] + x[1:])
-    # else:
-    data['node_positions'] = data['node_positions'].apply(lambda x: coords_scaler.transform(x).tolist())
-    # Normalize jammer_position using the same scaler
-    # print("data['jammer_position']: ", data['jammer_position'])
-    data['jammer_position'] = data['jammer_position'].apply(lambda x: coords_scaler.transform(np.array(x).reshape(1, -1)).tolist())
+    """Apply custom normalization to position and RSSI data."""
+    logging.info("Applying min-max normalization")
 
-    # Apply normalization to RSSI values
-    # rssi_scaler = fit_and_save_scaler(data, 'rssi', f'{experiment_path}/rssi_scaler.pkl')
-    # data['drones_rssi'] = [np.squeeze(rssi_scaler.transform(np.array(rssi).reshape(-1, 1))).tolist() for rssi in data['drones_rssi']]
-    # Extract all RSSI values from 'drones_rssi'
-    # all_rssi = np.concatenate(data['drones_rssi'].values)
+    # Initialize columns for storing min and max coordinates
+    data['min_coords'] = None
+    data['max_coords'] = None
 
-    # Theoretical RSSI range
-    rssi_min = -100  # Theoretical minimum RSSI value
-    rssi_max = -30  # Theoretical maximum RSSI value
+    # Iterate over each row to apply normalization individually
+    for idx, row in data.iterrows():
+        # Normalize node positions to range [-1, 1]
+        if params['feats'] == 'cartesian':
+            node_positions = np.vstack(row['node_positions'])
+            min_coords = np.min(node_positions, axis=0)
+            max_coords = np.max(node_positions, axis=0)
 
-    # Function to normalize RSSI values
-    def normalize_rssi(rssi_list):
-        return [(value - rssi_min) / (rssi_max - rssi_min) for value in rssi_list]
+            # Save min and max coordinates to the dataframe
+            if params['3d']:
+                data.at[idx, 'min_coords'] = (min_coords[0], min_coords[1], min_coords[2])
+                data.at[idx, 'max_coords'] = (max_coords[0], max_coords[1], max_coords[2])
+            else:
+                data.at[idx, 'min_coords'] = (min_coords[0], min_coords[1])
+                data.at[idx, 'max_coords'] = (max_coords[0], max_coords[1])
 
-    # Apply normalization
-    data['drones_rssi'] = data['drones_rssi'].apply(normalize_rssi)
+            range_coords = np.where(max_coords - min_coords == 0, 1, max_coords - min_coords)
+            normalized_positions = 2 * ((node_positions - min_coords) / range_coords) - 1
+            data.at[idx, 'node_positions'] = normalized_positions.tolist()
 
+            # Normalize jammer position similarly if present
+            if 'jammer_position' in row:
+                jammer_position = np.array(row['jammer_position']).reshape(1, -1)
+                jammer_position = 2 * ((jammer_position - min_coords) / range_coords) - 1
+                data.at[idx, 'jammer_position'] = jammer_position.flatten().tolist()
+
+        # Normalize RSSI values to range [0, 1]
+        if 'node_noise' in row:
+            node_noise = np.array(row['node_noise'])
+            min_rssi = np.min(node_noise)
+            max_rssi = np.max(node_noise)
+
+            range_rssi = max_rssi - min_rssi if max_rssi != min_rssi else 1
+            normalized_rssi = (node_noise - min_rssi) / range_rssi
+            data.at[idx, 'node_noise'] = normalized_rssi.tolist()
+
+
+def apply_unit_sphere_normalization(data):
+    """
+    Apply unit sphere normalization to position data.
+
+    Parameters:
+    data (dict): A dictionary containing 'node_positions', an array of positions.
+
+    Returns:
+    tuple: A tuple containing the normalized positions and the maximum radius.
+    """
+    # TODO: normalize jammer pos too
+
+    # Initialize a column for maximum radius
+    data['max_radius'] = None
+
+    for idx, row in data.iterrows():
+        # Extract positions from the current row
+        positions = np.array(row['node_positions'])
+        jammer_position = np.array(row['jammer_position'])
+
+        # Calculate the maximum radius from the centroid
+        max_radius = np.max(np.linalg.norm(positions, axis=1))
+
+        # Check for zero radius to prevent division by zero
+        if max_radius == 0:
+            raise ValueError("Max radius is zero, normalization cannot be performed.")
+
+        # Normalize the positions uniformly
+        normalized_positions = positions / max_radius
+        normalized_jammer_position = jammer_position / max_radius
+
+        # Update the DataFrame with normalized positions and maximum radius
+        data.at[idx, 'node_positions'] = normalized_positions.tolist()
+        data.at[idx, 'jammer_position'] = normalized_jammer_position.tolist()
+        data.at[idx, 'max_radius'] = max_radius
 
 
 def convert_data_type(data):
     # Convert from str to required data type
     data['node_positions'] = data['node_positions'].apply(lambda x: safe_convert_list(x, 'drones_pos'))
     data['jammer_position'] = data['jammer_position'].apply(lambda x: safe_convert_list(x, 'jammer_pos'))
-    data['drones_rssi'] = data['drones_rssi'].apply(lambda x: safe_convert_list(x, 'drones_rssi'))
+    data['node_noise'] = data['node_noise'].apply(lambda x: safe_convert_list(x, 'node_noise'))
+    data['node_rssi'] = data['node_rssi'].apply(lambda x: safe_convert_list(x, 'node_rssi'))
+    data['node_states'] = data['node_states'].apply(lambda x: safe_convert_list(x, 'node_states'))
 
 
-def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
+def preprocess_data(data):
     """
    Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
 
@@ -436,43 +419,24 @@ def preprocess_data(data, inference, scaler_path='data/scaler.pkl'):
 
     # Conversion from string to list type
     convert_data_type(data)
+    center_coordinates(data)
     standardize_data(data)
-    center_and_convert_coordinates(data)
+    convert_to_polar(data)
     return data
 
 
-# def polar_to_cartesian(data):
-#     """
-#     Convert polar coordinates back to Cartesian coordinates.
-#
-#     Args:
-#         data (list): List of lists containing [r, theta, phi] for each point.
-#
-#     Returns:
-#         list: Updated list with [x, y, z] for each point.
-#     """
-#     result = []
-#     for point in data:
-#         r = point[0]
-#         theta = point[1]
-#         phi = point[2]
-#
-#         # Compute the Cartesian coordinates
-#         x = r * np.sin(phi) * np.cos(theta)
-#         y = r * np.sin(phi) * np.sin(theta)
-#         z = r * np.cos(phi)
-#
-#         # Append the Cartesian coordinates [x, y, z]
-#         result.append([x, y, z])
-#     return result
+def convert_to_polar(data):
+    if params['feats'] == 'polar':
+        data['polar_coordinates'] = data['node_positions'].apply(cartesian_to_polar)
 
 
 def polar_to_cartesian(data):
     """
-    Convert polar coordinates back to Cartesian coordinates using PyTorch.
+    Convert polar coordinates to Cartesian coordinates using only PyTorch operations.
 
     Args:
-        data (Tensor): Tensor containing [r, theta, phi] for each point.
+        data (Tensor): Tensor on the appropriate device (GPU or CPU) containing
+                       [r, theta, phi] for each point.
                        r is the radial distance,
                        theta is the polar angle from the positive z-axis (colatitude),
                        phi is the azimuthal angle in the xy-plane from the positive x-axis.
@@ -482,13 +446,19 @@ def polar_to_cartesian(data):
     """
     r = data[:, 0]
     theta = data[:, 1]  # Polar angle (colatitude)
-    phi = data[:, 2]  # Azimuthal angle
 
-    x = r * torch.sin(theta) * torch.cos(phi)
-    y = r * torch.sin(theta) * torch.sin(phi)
-    z = r * torch.cos(theta)
+    if params['3d']:
+        phi = data[:, 2]  # Azimuthal angle
+        x = r * torch.sin(theta) * torch.cos(phi)
+        y = r * torch.sin(theta) * torch.sin(phi)
+        z = r * torch.cos(theta)
+        cartesian_coords = torch.stack([x, y, z], dim=1)
+    else:
+        x = r * torch.cos(theta)
+        y = r * torch.sin(theta)
+        cartesian_coords = torch.stack([x, y], dim=1)
 
-    return torch.stack([x, y, z], dim=1)
+    return cartesian_coords
 
 
 def undo_center_coordinates(centered_coords, id, midpoints):
@@ -506,33 +476,8 @@ def undo_center_coordinates(centered_coords, id, midpoints):
     midpoint = np.array(midpoints[str(id)])  # Convert index to string if it's an integer
     return centered_coords + midpoint
 
-def scaler_inverse_transform_torch(scaled, scaler, norm_type='minmax'):
-    """
-    Reverse the scaling operation in PyTorch.
 
-    Args:
-        scaled (torch.Tensor): The scaled data.
-        scaler (dict): Dictionary containing scaler parameters ('min', 'max', 'mean', 'std').
-        norm_type (str): Type of normalization ('minmax' or 'zscore').
-
-    Returns:
-        torch.Tensor: The data in its original scale.
-    """
-    if norm_type == 'minmax':
-        # Assuming 'min' and 'max' are stored in the scaler dict
-        min_val = scaler['min']
-        max_val = scaler['max']
-        return min_val + (scaled - 0) * (max_val - min_val) / (1 - 0)
-    elif norm_type == 'zscore':
-        # Assuming 'mean' and 'std' are stored in the scaler dict
-        mean = scaler['mean']
-        std = scaler['std']
-        return scaled * std + mean
-    else:
-        raise ValueError(f"Unknown normalization type: {norm_type}")
-
-
-def convert_output_eval(output, data, device, id, midpoints):
+def convert_output_eval(output, data_batch, data_type, device):
     """
     Convert and evaluate the output coordinates by uncentering them using the stored midpoints.
 
@@ -548,56 +493,57 @@ def convert_output_eval(output, data, device, id, midpoints):
     """
     output = output.to(device)  # Ensure the output tensor is on the right device
 
-    if params['feats'] == 'cartesian' or data == 'target':
-        # output = output.cpu().numpy()
-        converted_output = undo_center_coordinates(output.cpu().numpy(), id, midpoints)
-    if params['feats'] == 'polar' and data == 'prediction':
-        # print("output: ", output)
-        # polar_coords = cyclical_to_angular(output)
-        # print("polar_coords: ", polar_coords)
-        cartesian_output = polar_to_cartesian(output)
-        # output = cartesian_output.cpu().numpy()
-        # print("cartesian_output: ", output)
-        converted_output = undo_center_coordinates(cartesian_output.cpu().numpy(), id, midpoints)
-        # print("undo_center_coordinates: ", converted_output)
+    # 1. Reverse normalization using min_coords and max_coords
+    if params['norm'] == 'minmax':
+        min_coords = data_batch.min_coords.to(device).view(-1, 2)  # Reshape from [32] to [16, 2]
+        max_coords = data_batch.max_coords.to(device).view(-1, 2)
 
-    # Reverse standardization
-    if params['norm'] == 'zscore':
-        with open('zscore_mean_std.json', 'r') as json_file:
-            data_loaded = json.load(json_file)
-            position_means = np.array(data_loaded['position_means'])
-            position_stds = np.array(data_loaded['position_stds'])
-        converted_output = converted_output * position_stds + position_means
+        range_coords = max_coords - min_coords
+        # print('output: ', output)
+        # print('range_coords: ', range_coords)
+        # print('min_coords: ', min_coords)
+        converted_output = (output + 1) / 2 * range_coords + min_coords
 
-    # Reverse min-max normalization
-    elif params['norm'] == 'minmax':
-        experiment_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num'])
-        scaler = load_scaler(f'{experiment_path}/coords_scaler.pkl')
-        # print("Output before inverse transform:", output.min(), output.max(), output.mean())
-        converted_output = scaler.inverse_transform(converted_output)
-        # print("Output after inverse transform:", converted_output.min(), converted_output.max(), converted_output.mean())
+    elif params['norm'] == 'unit_sphere':
+        # 0. Reverse to cartesian
+        if params['feats'] == 'polar' and data_type == 'prediction':
+            cartesian_output = polar_to_cartesian(output)
 
-        # Assuming 'scaler' is already loaded with the training set's parameters
-        # test_points = np.array([[0, 0, 0], [100, 100, 100], [50, 50, 50]])
-        # scaled_points = scaler.transform(test_points)
-        # reversed_points = scaler.inverse_transform(scaled_points)
-        # print("Original points:", test_points)
-        # print("Scaled points:", scaled_points)
-        # print("Reversed points:", reversed_points)
-        # quit()
+        max_radius = data_batch.max_radius.to(device)
+        converted_output = cartesian_output * max_radius
 
-        # print("unormalized: ", converted_output)
-        # print('\n')
+    # 2. Reverse centering using the stored node_positions_center
+    centers = data_batch.node_positions_center.to(device).view(-1, 2)
+    converted_output += centers
+
+    # ###################################################
+    #
+    # if params['feats'] == 'cartesian' or data == 'target':
+    #     converted_output = undo_center_coordinates(output.cpu().numpy(), id, midpoints)
+    # if params['feats'] == 'polar' and data == 'prediction':
+    #     cartesian_output = polar_to_cartesian(output)
+    #     converted_output = undo_center_coordinates(cartesian_output.cpu().numpy(), id, midpoints)
+    #
+    # # Reverse standardization
+    # if params['norm'] == 'zscore':
+    #     with open('zscore_mean_std.json', 'r') as json_file:
+    #         data_loaded = json.load(json_file)
+    #         position_means = np.array(data_loaded['position_means'])
+    #         position_stds = np.array(data_loaded['position_stds'])
+    #     converted_output = converted_output * position_stds + position_means
+    #
+    # # Reverse min-max normalization
+    # elif params['norm'] == 'minmax':
+    #     experiment_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num'])
+    #     scaler = load_scaler(f'{experiment_path}/coords_scaler.pkl')
+    #     converted_output = scaler.inverse_transform(converted_output)
 
     return torch.tensor(converted_output, device=device)
-
 
 
 def convert_output(output, device):
     output = output.to(device)  # Ensure the output is on the correct device
     if params['feats'] == 'polar':
-        # polar_coords = cyclical_to_angular(output)
-
         converted_output = polar_to_cartesian(output)
         return converted_output
     return output  # If not polar, just pass the output through
@@ -669,17 +615,10 @@ def save_datasets(preprocessed_data, data, train_path, val_path, test_path):
     # print("Example Jammer Position in validation dataset:", val_dataset[0].y)
     # print("Example Jammer Position in test dataset:", test_dataset[0].y)
 
-    # logging.info("Saving preprocessed data...")
-    # with gzip.open(train_path, 'wb') as f:
-    #     pickle.dump(train_dataset, f)
-    # with gzip.open(val_path, 'wb') as f:
-    #     pickle.dump(val_dataset, f)
-    # with gzip.open(test_path, 'wb') as f:
-    #     pickle.dump(test_dataset, f)
-
     logging.info("Saving preprocessed data...")
     experiments_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num']) + '/'
 
+    # # Save dataframes before preprocessing
     # train_path = experiments_path + 'train_df.gzip'
     # val_path = experiments_path + 'validation_df.gzip'
     # test_path = experiments_path + 'test_df.gzip'
@@ -690,6 +629,7 @@ def save_datasets(preprocessed_data, data, train_path, val_path, test_path):
     # with gzip.open(test_path, 'wb') as f:
     #     pickle.dump(test_df, f)
     #
+    # # Save graphs
     # train_path = experiments_path + 'train_torch_geo_dataset.gzip'
     # val_path = experiments_path + 'validation_torch_geo_dataset.gzip'
     # test_path = experiments_path + 'test_torch_geo_dataset.gzip'
@@ -738,14 +678,14 @@ def load_data(dataset_path: str, train_path: str, val_path: str, test_path: str)
 
     # Before and after preprocessing:
     # print("Jammer Positions before processing:", data['jammer_position'].head().apply(lambda x: np.array2string(np.array(x), precision=20)))
-    preprocessed_data = preprocess_data(data_to_preprocess, inference=params['inference'])
+    preprocessed_data = preprocess_data(data_to_preprocess)
     # print("Jammer Positions after processing:", data['jammer_position'].head().apply(lambda x: np.array2string(np.array(x), precision=20)))
 
     train_dataset, val_dataset, test_dataset = save_datasets(preprocessed_data, data, train_path, val_path, test_path)
 
     # print("train_dataset[0]: ", train_dataset[0])
 
-    return train_dataset, val_dataset, test_dataset
+    return train_dataset, val_dataset, test_dataset, data
 
 
 def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int):
@@ -775,28 +715,28 @@ def safe_convert_list(row: str, data_type: str) -> List[Any]:
 
     Args:
         row (str): String representation of a list.
-        data_type (str): The type of data to convert ('jammer_pos', 'drones_pos', 'drones_rssi', 'states').
+        data_type (str): The type of data to convert ('jammer_pos', 'drones_pos', 'node_noise', 'states').
 
     Returns:
         List: Converted list or an empty list if conversion fails.
     """
     try:
         if data_type == 'jammer_pos':
-            result = row.strip('[[').strip(']]').split()
+            result = row.strip('[').strip(']').split(', ')
             return [float(pos) for pos in result]
         elif data_type == 'drones_pos':
             result = row.strip('[').strip(']').split('], [')
             result = [[float(num) for num in elem.split(', ')] for elem in result]
-            print('result: ', result)
-            quit()
             return result
-        elif data_type == 'drones_rssi':
-            print('row: ', row)
+        elif data_type == 'node_noise':
+            result = row.strip('[').strip(']').split(', ')
+            return [float(noise) for noise in result]
+        elif data_type == 'node_rssi':
             result = row.strip('[').strip(']').split(', ')
             return [float(rssi) for rssi in result]
-        elif data_type == 'states':
-            result = row.strip('][').split(', ')
-            return [state.strip("'") for state in result]
+        elif data_type == 'node_states':
+            result = row.strip('[').strip(']').split(', ')
+            return [int(state) for state in result]
         else:
             raise ValueError("Unknown data type")
     except (ValueError, SyntaxError, TypeError) as e:
@@ -816,9 +756,9 @@ def create_torch_geo_data(row: pd.Series) -> Data:
 
     # Selecting features based on configuration
     if params['feats'] == 'polar':
-        node_features = [list(pos) + [rssi] for pos, rssi in zip(row['polar_coordinates'], row['drones_rssi'])]
+        node_features = [list(pos) + [rssi] for pos, rssi in zip(row['polar_coordinates'], row['node_noise'])]
     elif params['feats'] == 'cartesian':
-        node_features = [list(pos) + [rssi] for pos, rssi in zip(row['node_positions'], row['drones_rssi'])]
+        node_features = [list(pos) + [rssi] for pos, rssi in zip(row['node_positions'], row['node_noise'])]
     else:
         raise ValueError("Unsupported feature specification")
     node_features = torch.tensor(node_features, dtype=torch.float32)
@@ -832,6 +772,7 @@ def create_torch_geo_data(row: pd.Series) -> Data:
         distances, indices = nbrs.kneighbors(positions)
         edge_index, edge_weight = [], []
 
+        # Add self loop
         for i in range(indices.shape[0]):
             edge_index.extend([[i, i]])
             edge_weight.extend([0.0])
@@ -843,7 +784,7 @@ def create_torch_geo_data(row: pd.Series) -> Data:
         num_nodes = len(row['node_positions'])
         for i in range(num_nodes):
             edge_index.append([i, i])
-            edge_weight.append(0)  # Placeholder for self-loop weight
+            edge_weight.append(0)
             for j in range(i + 1, num_nodes):
                 dist = np.linalg.norm(positions[i] - positions[j])
                 if dist < 0.1:  # Proximity threshold
@@ -856,15 +797,25 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     edge_weight = torch.tensor(edge_weight, dtype=torch.float)
 
     # Target variable
-    y = torch.tensor(row['jammer_position'], dtype=torch.float)
+    # y = torch.tensor(row['jammer_position'], dtype=torch.float)
+    # print("y: ", y)
+
+    jammer_positions = np.array(row['jammer_position']).reshape(-1, 2)  # Assuming this reshaping is valid based on your data structure
+    # print("jammer_positions: ", jammer_positions)
+    y = torch.tensor(jammer_positions, dtype=torch.float)
+    # print("y: ", y)
+
 
     # Create the Data object
     data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight, y=y)
-    data.id = row['id']  # Assign the id from the row to the Data object
 
-    # Store additional geometric information
-    data.min_coords = [row['min_x'], row['min_y'], row['min_z']]
-    data.max_coords = [row['max_x'], row['max_y'], row['max_z']]
-    data.center_coords = row['drones_pos_center']
+    # Convert geometric information to tensors
+    data.id = row['id']  # Assign the id from the row to the Data object
+    data.node_positions_center = torch.tensor(row['node_positions_center'], dtype=torch.float)
+    if params['norm'] == 'minmax':
+        data.min_coords = torch.tensor(row['min_coords'], dtype=torch.float)
+        data.max_coords = torch.tensor(row['max_coords'], dtype=torch.float)
+    elif params['unit_sphere']:
+        data.max_radius = torch.tensor(row['max_radius'], dtype=torch.float)
 
     return data

@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Read the data from the CSV file
-data = pd.read_csv('epoch_metrics_latest.csv')
+data = pd.read_csv('epoch_metrics_converted.csv')
 
 # Prepare a new DataFrame for plotting epoch metrics
 plot_data = pd.DataFrame(columns=['Trial', 'Combination', 'Epoch', 'Val Loss'])
@@ -40,9 +40,9 @@ for label, grp in stats_data.groupby('Combination'):
 ax.set_xlabel('Epoch')
 ax.set_ylabel('Val Loss')
 ax.legend(title='Combination')
-plt.ylim(0, 0.7)
+# plt.ylim(0, 0.7)
 plt.xlim(0, 200)
-plt.savefig('results/epoch_metrics_latest.png', dpi=300)
+plt.savefig('epoch_metrics_converted.png', dpi=300)
 plt.show()
 
 # Plotting mean RMSE, MAE, and MSE comparison with standard deviations
@@ -70,5 +70,5 @@ for i, metric in enumerate(metrics):
 axs[0].legend(title='Combination')
 
 plt.tight_layout()
-plt.savefig('results/err_metrics_comparison.png', dpi=300)
+plt.savefig('err_metrics_comparison_converted.png', dpi=300)
 plt.show()

@@ -90,14 +90,18 @@ def convert_to_serializable(val):
 
 # Function to convert Cartesian to polar coordinates
 def cartesian_to_polar(coords):
-    if len(coords) == 3 and isinstance(coords[0], (int, float)):
-        coords = [coords]
-
     polar_coords = []
-    for x, y, z in coords:
-        r = np.sqrt(x**2 + y**2 + z**2)
-        theta = np.arccos(z / r) if r != 0 else 0  # Polar angle from the positive z-axis (colatitude)
-        phi = np.arctan2(y, x)  # Azimuthal angle in the xy-plane from the positive x-axis
-        # polar_coords.append([r, theta, phi])
-        polar_coords.append([1, theta, phi])
+
+    if params['3d']:
+        for x, y, z in coords:
+            r = np.sqrt(x**2 + y**2 + z**2)
+            phi = np.arccos(z / r) if r != 0 else 0  # Polar angle from the positive z-axis (colatitude)
+            theta = np.arctan2(y, x)  # Azimuthal angle in the xy-plane from the positive x-axis
+            polar_coords.append([r, theta, phi])
+    else:
+        for x, y in coords:
+            r = np.sqrt(x ** 2 + y ** 2)  # Radius
+            theta = np.arctan2(y, x)  # Angle from the positive x-axis
+            polar_coords.append([r, theta])
+
     return polar_coords

@@ -2,8 +2,8 @@ import csv
 import torch
 import pandas as pd
 from config import params
-from data_processing import load_data, create_data_loader, load_scaler
-from train import initialize_model, train, validate, predict_and_evaluate
+from data_processing import load_data, create_data_loader, convert_data_type
+from train import initialize_model, train, validate, predict_and_evaluate, predict_and_evaluate_full, plot_network_with_rssi
 from utils import set_seeds_and_reproducibility, save_metrics_and_params, save_epochs
 import logging
 from custom_logging import setup_logging
@@ -21,31 +21,43 @@ def main():
     """
     Main function to run the training and evaluation.
     """
+    # Experiment params
+    combination = params['feats'] + '_' + params['edges'] + '_' + params['norm']
+    experiment_path = 'experiments/' + combination + '/trial' + str(params['trial_num'])
+    model_path = f'{experiment_path}/trained_model_{combination}.pth'
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # device = torch.device('cpu')
     print("device: ", device)
 
-    train_dataset, val_dataset, test_dataset = load_data(params['dataset_path'], params['train_path'], params['val_path'], params['test_path'])
+    train_dataset, val_dataset, test_dataset, original_dataset = load_data(params['dataset_path'], params['train_path'], params['val_path'], params['test_path'])
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
     steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
-    print("steps per epoch: ", steps_per_epoch)
     model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
 
-    # # Check model init weights
-    # model.print_weights()
-    # quit()
+    # Inference
+    model.load_state_dict(torch.load(model_path))
+    convert_data_type(original_dataset)
+    predictions, actuals, node_details = predict_and_evaluate_full(test_loader, model, device, original_dataset)
+    for idx, val in enumerate(node_details):
+        plot_network_with_rssi(
+            node_positions=node_details[idx]['node_positions'],
+            final_rssi=node_details[idx]['node_rssi'],
+            jammer_position=node_details[idx]['jammer_position'],
+            noise_floor_db=node_details[idx]['node_noise'],
+            jammed=node_details[idx]['node_states'],
+            prediction=predictions[idx]
+        )
+    # sinr_db=node_details[idx]['sinr'],
+    quit()
 
     best_val_loss = float('inf')
 
     logging.info("Training and validation loop")
     epoch_info = []
     for epoch in range(params['max_epochs']):
-        # for batch in train_loader:
-        #     print("Batch Jammer Positions:", batch.y)
-        #     break  # Only print the first batch
-        # quit()
         train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
-        val_loss = validate(model, val_loader, criterion, device)  # calculate validation loss to determine if the model is improving during training
+        val_loss = validate(model, val_loader, criterion, device)  # calculate validation loss
         logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
         epoch_info.append(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
 
@@ -53,7 +65,6 @@ def main():
             best_val_loss = val_loss
             best_model_state = model.state_dict()
 
-    combination = params['feats'] + ' ' + params['edges'] + ' ' + params['norm']
     epoch_data = {
         'trial': 'trial_' + str(params['trial_num']),
         'combination': combination,
@@ -67,7 +78,6 @@ def main():
     save_metrics_and_params(metrics, params)
 
     # Save the trained model
-    experiment_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num'])
     torch.save(model.state_dict(), f'{experiment_path}/trained_model_{combination}.pth')
 
     # Evaluate the model on the test set

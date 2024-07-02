@@ -4,6 +4,7 @@ import math
 import os
 
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
@@ -14,6 +15,7 @@ import logging
 from custom_logging import setup_logging
 from utils import set_seeds_and_reproducibility
 from data_processing import convert_output, convert_output_eval
+from config import params
 
 set_seeds_and_reproducibility()
 
@@ -40,11 +42,9 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
     """
     logging.info("Initializing model...")
     model = GNN().to(device)
-    # model = GNN(num_heads_first_two=4, num_heads_final=6, features_per_head_first_two=256, features_per_head_final=121).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
-    # optimizer = optim.Adam(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, verbose=True)
-    print("steps per epoch one cycle lr: ", steps_per_epoch)
+    print('steps_per_epoch: ', steps_per_epoch)
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
@@ -74,12 +74,17 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         data = data.to(device)
         optimizer.zero_grad()
         output = model(data)
-        output = output * 2
-        # output[:, 0] = output[:, 0] * torch.sqrt(torch.tensor(3.0))
-        # Multiply all the radii (1st column) by sqrt(3)
-        # print(output.shape)
-        # quit()
+        # print(f"output shape: {output.shape}, data.y: {data.y.shape}")
+        if params['feats'] == 'polar':
+            output[:, 0] = output[:, 0] * 2
+        else:
+            output = output * 2
+        # print('output: ', output)
         output = convert_output(output, device)  # Ensure output conversion uses PyTorch and remains on the GPU
+        # print('converted output: ', output)
+        # quit()
+        # print(f"output shape: {output.shape}, data.y: {data.y.shape}")
+
         loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
@@ -113,8 +118,10 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         for data in validate_loader:
             data = data.to(device)
             output = model(data)
-            output = output * 2
-            # output[:, 0] = output[:, 0] * torch.sqrt(torch.tensor(3.0))
+            if params['feats'] == 'polar':
+                output[:, 0] = output[:, 0] * 2
+            else:
+                output = output * 2
             output = convert_output(output, device)  # Ensure this function is suitable for validation context
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
@@ -143,33 +150,28 @@ def predict_and_evaluate(model, loader, device):
 
     with torch.no_grad():
         for data in loader:
-            ids = data.id  # This will be a tensor with batch_size elements
-
-            for i in range(len(ids)):
-                id_ = ids[i].item()  # Extract the id for each item in the batch
-
-                # Process individual data items
-                data_item = data[i].to(device)
-                output = model(data_item)
-                # output[:, 0] = output[:, 0] * torch.sqrt(torch.tensor(3.0))
+            # Process individual data items
+            data = data.to(device)
+            output = model(data)
+            if params['feats'] == 'polar':
+                output[:, 0] = output[:, 0] * 2
+            else:
                 output = output * 2
-                # print("output: ", output)
+            # print("output: ", output)
 
-                # Convert and uncenter using the index to retrieve the correct midpoint
-                predicted_coords = convert_output_eval(output, 'prediction', device, id_, midpoints)
-                actual_coords = convert_output_eval(data_item.y, 'target', device, id_, midpoints)
+            # Convert and uncenter using the index to retrieve the correct midpoint
+            predicted_coords = convert_output_eval(output, data, 'prediction', device)
+            actual_coords = convert_output_eval(data.y, data, 'target', device)
 
-                predictions.append(predicted_coords.cpu().numpy())
-                # print("prediction: ", predicted_coords.cpu().numpy())
-                actuals.append(actual_coords.cpu().numpy())
+            predictions.append(predicted_coords.cpu().numpy())
+            # print("prediction: ", predicted_coords.cpu().numpy())
+            actuals.append(actual_coords.cpu().numpy())
 
     # quit()
     predictions = np.concatenate([np.array(pred).flatten() for pred in predictions])
     actuals = np.concatenate([np.array(act).flatten() for act in actuals])
     print("predictions: ", predictions)
     print("actuals: ", actuals)
-
-    import matplotlib.pyplot as plt
 
     # Assuming `predictions` and `actuals` are your arrays of predicted and actual values
     plt.figure(figsize=(10, 6))
@@ -199,6 +201,62 @@ def predict_and_evaluate(model, loader, device):
     return predictions, actuals, err_metrics
 
 
+def predict_and_evaluate_full(loader, model, device, original_dataset):
+    """
+    Extended evaluation function to gather all required details for plotting, including
+    fetching details using IDs from the data DataFrame.
+
+    Args:
+        loader: DataLoader providing the dataset for evaluation.
+        model: Trained model for evaluation.
+        device: Device to perform computations on.
+        original_dataset: Original DataFrame with additional information.
+
+    Returns:
+        Predictions, actuals, and node details including RSSI and other metrics.
+    """
+    model.eval()
+    predictions, actuals, node_details = [], [], []
+
+    with torch.no_grad():
+        for data_batch in loader:
+            data_batch = data_batch.to(device)
+            output = model(data_batch)
+
+            # Adjust based on whether the features are polar or not, scale as needed
+            if params['feats'] == 'polar':
+                output[:, 0] = output[:, 0] * 2
+            else:
+                output = output * 2
+
+            # Convert and uncenter using the provided conversion function
+            predicted_coords = convert_output_eval(output, data_batch, 'prediction', device)
+            actual_coords = convert_output_eval(data_batch.y, data_batch, 'target', device)
+
+            # Collect predictions and actuals
+            predictions.append(predicted_coords.cpu().numpy())
+            actuals.append(actual_coords.cpu().numpy())
+
+            # Fetch additional data using ID from the original DataFrame
+            ids = data_batch.id.cpu().numpy()
+            batch_details = original_dataset.loc[original_dataset['id'].isin(ids)]
+            for id in ids:
+                row = batch_details[batch_details['id'] == id].iloc[0]
+                node_details.append({
+                    'node_positions': row['node_positions'],
+                    'node_rssi': row['node_rssi'],
+                    'node_noise': row['node_noise'],
+                    'jammer_position': row['jammer_position'],
+                    'node_states': row['node_states']
+                })
+
+    # Flatten predictions and actuals if they are nested lists
+    predictions = np.concatenate(predictions)
+    actuals = np.concatenate(actuals)
+
+    return predictions, actuals, node_details
+
+
 def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv') -> None:
     file_exists = os.path.isfile(filename)
 
@@ -212,3 +270,73 @@ def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv'
 
         # Write the data
         writer.writerow(data)
+
+
+def initial_prediction(model, loader, device):
+    model.eval()  # Set the model to evaluation mode
+    predictions = []
+    actuals = []
+
+    with torch.no_grad():
+        for data in loader:
+            data = data.to(device)
+            output = model(data)  # Get the output
+            if params['feats'] == 'polar':
+                output[:, 0] = output[:, 0] * 2
+            else:
+                output = output * 2
+
+            output = convert_output(output, device)
+
+            # Process each instance in the batch
+            for i in range(data.num_graphs):
+                predictions.append(output[i].cpu().numpy())
+                actuals.append(data.y[i].cpu().numpy())
+            break  # Stop after processing the first batch - for testing
+
+    return predictions, actuals
+
+
+def plot_initial_predictions(predictions, actuals):
+    for i in range(len(predictions)):
+        plt.figure(figsize=(8, 6))
+        plt.scatter(predictions[i][0], predictions[i][1], color='blue', label='Prediction', s=100)
+        plt.scatter(actuals[i][0], actuals[i][1], color='red', label='Actual Position', s=100)
+
+        plt.title(f'Initial Model Prediction vs. Actual Position for Instance {i + 1}')
+        plt.xlabel('X Coordinate')
+        plt.ylabel('Y Coordinate')
+        plt.legend()
+        plt.grid(True)
+        plt.xlim(-1, 1)
+        plt.ylim(-1, 1)
+        plt.show()
+
+
+def plot_network_with_rssi(node_positions, final_rssi, jammer_position, noise_floor_db, jammed, prediction):
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Plot nodes
+    for idx, pos in enumerate(node_positions):
+        color = 'red' if jammed[idx] else 'blue'
+
+        # Check if the node is effectively disconnected based on RSSI
+        node_info = f"Node {idx}\nRSSI: {final_rssi[idx]:.2f} dB\nNoise: {noise_floor_db[idx]:.2f} dB"
+        # node_info = f"Node {idx}\nRSSI: {final_rssi[idx]:.2f} dB\nSINR: {sinr_db[idx]:.2f} dB\nNoise: {noise_floor_db[idx]:.2f} dB"
+        ax.plot(pos[0], pos[1], 'o', color=color)  # Nodes in blue or red depending on jamming status
+        ax.text(pos[0], pos[1], node_info, fontsize=9, ha='right')
+
+    # Plot jammer
+    print('jammer pos: ', jammer_position)
+    ax.plot(jammer_position[0], jammer_position[1], 'r^', markersize=15)  # Jammer in red
+    ax.text(jammer_position[0], jammer_position[1], ' Jammer', verticalalignment='bottom', horizontalalignment='right', color='red', fontsize=15)
+
+    # Plot prediction
+    ax.plot(prediction[0], prediction[1], 'gx', markersize=15)  # Jammer in red
+    ax.text(prediction[0], prediction[1], ' Prediction', verticalalignment='bottom', horizontalalignment='right', color='green', fontsize=15)
+
+    ax.set_title('Network Topology with RSSI, SINR, and Noise Floor', fontsize=11)
+    ax.set_xlabel('X position (m)', fontsize=14)
+    ax.set_ylabel('Y position (m)', fontsize=14)
+    plt.grid(True)
+    plt.show()
