@@ -95,13 +95,20 @@ def angle_to_cyclical(positions):
         list: List of cyclical coordinates [r, sin(theta), cos(theta), sin(phi), cos(phi)] for each point.
     """
     transformed_positions = []
-    for position in positions:
-        r, theta, phi = position
-        sin_theta = np.sin(theta)  # Sine of the polar angle
-        cos_theta = np.cos(theta)  # Cosine of the polar angle
-        sin_phi = np.sin(phi)  # Sine of the azimuthal angle
-        cos_phi = np.cos(phi)  # Cosine of the azimuthal angle
-        transformed_positions.append([r, sin_theta, cos_theta, sin_phi, cos_phi])
+    if params['3d']:
+        for position in positions:
+            r, theta, phi = position
+            sin_theta = np.sin(theta)  # Sine of the polar angle
+            cos_theta = np.cos(theta)  # Cosine of the polar angle
+            sin_phi = np.sin(phi)  # Sine of the azimuthal angle
+            cos_phi = np.cos(phi)  # Cosine of the azimuthal angle
+            transformed_positions.append([r, sin_theta, cos_theta, sin_phi, cos_phi])
+    else:
+        for position in positions:
+            r, theta = position
+            sin_theta = np.sin(theta)  # Sine of the azimuthal angle
+            cos_theta = np.cos(theta)  # Cosine of the azimuthal angle
+            transformed_positions.append([r, sin_theta, cos_theta])
     return transformed_positions
 
 
@@ -381,7 +388,7 @@ def apply_unit_sphere_normalization(data):
         # Normalize the positions uniformly
         normalized_positions = positions / max_radius
         normalized_jammer_position = jammer_position / max_radius
-        print('normalized_jammer_position: ', normalized_jammer_position)
+        # print('normalized_jammer_position: ', normalized_jammer_position)
 
         # Update the DataFrame with normalized positions and maximum radius
         data.at[idx, 'node_positions'] = normalized_positions.tolist()
@@ -423,7 +430,8 @@ def preprocess_data(data):
 
 def convert_to_polar(data):
     data['polar_coordinates'] = data['node_positions'].apply(cartesian_to_polar)
-    print("data['polar_coordinates']: ", data['polar_coordinates'])
+    data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
+    # print("data['polar_coordinates']: ", data['polar_coordinates'][0])
     # quit()
     # data['jammer_position'] = cartesian_to_polar(data['jammer_position'])
 

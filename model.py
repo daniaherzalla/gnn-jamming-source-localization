@@ -64,7 +64,7 @@ class GNN(torch.nn.Module):
         if params['feats'] == 'cartesian':
             x = 2 * self.output_act(self.regressor(x))  # Predict the jammer's coordinates
         elif params['feats'] == 'polar':
-            x = self.regressor(x)
+            x_all = self.regressor(x)
             # if params['3d']:
             #     # Apply different activations to radius and angles
             #     x_radius = 2 * self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))  # Radius
@@ -75,4 +75,15 @@ class GNN(torch.nn.Module):
             #     x_radius = self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))  # Radius
             #     x_theta = torch.pi * self.output_act_tanh(x_all[:, 1].unsqueeze(1))  # Theta, Azimuthal angle [-π, π]
             #     x = torch.cat((x_radius, x_theta), dim=1)
+            if params['3d']:
+                # Apply different activations to radius and angles
+                x_radius = 2 * self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))  # Radius
+                x_theta = torch.pi * self.output_act_tanh(x_all[:, 1].unsqueeze(1))  # Theta, Azimuthal angle [-π, π]
+                x_phi = torch.pi * self.output_act_sigmoid(x_all[:, 2].unsqueeze(1))  # Phi, Polar angle [0, π]
+                x = torch.cat((x_radius, x_theta, x_phi), dim=1)
+            else:
+                x_radius = self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))
+                x_theta_sin = self.output_act_tanh(x_all[:, 1].unsqueeze(1))
+                x_theta_cos = self.output_act_tanh(x_all[:, 2].unsqueeze(1))
+                x = torch.cat((x_radius, x_theta_sin, x_theta_cos), dim=1)
         return x
