@@ -5,6 +5,8 @@ import pandas as pd
 import numpy as np
 import torch
 import random
+import networkx as nx
+import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from typing import Tuple, List, Any
@@ -148,7 +150,6 @@ def center_coordinates(data):
     """Center and convert drone and jammer positions using shared bounds for each row, and save midpoints."""
     logging.info("Centering coordinates")
 
-    # midpoints = {}
     # Initialize columns for storing min and max coordinates
     data['node_positions_center'] = None
 
@@ -161,16 +162,11 @@ def center_coordinates(data):
         # Similar centering for jammer position
         jammer_pos = np.array(row['jammer_position'])
         centered_jammer_position = jammer_pos - center
+        # print('centered_jammer_position: ', centered_jammer_position)
         data.at[idx, 'jammer_position'] = centered_jammer_position.tolist()
 
         # Save center for this row index
         data.at[idx, 'node_positions_center'] = center
-
-        # midpoints[row['id']] = center.tolist()
-
-    # # Save midpoints to a JSON file for later use during uncentering
-    # with open('midpoints.json', 'w') as f:
-    #     json.dump(midpoints, f)
 
 
 def standardize_data(data):
@@ -180,8 +176,8 @@ def standardize_data(data):
     elif params['norm'] == 'minmax':
         apply_min_max_normalization(data)
     elif params['norm'] == 'unit_sphere':
-        apply_min_max_normalization(data)
-        apply_unit_sphere_normalization(data)
+        apply_min_max_normalization(data)  # For RSSI
+        apply_unit_sphere_normalization(data)  # For coordinates
 
 
 def save_mean_std_json(data, file_path='zscore_mean_std.json'):
@@ -316,12 +312,22 @@ def apply_min_max_normalization(data):
     """Apply custom normalization to position and RSSI data."""
     logging.info("Applying min-max normalization")
 
-    # Initialize columns for storing min and max coordinates
-    data['min_coords'] = None
-    data['max_coords'] = None
+    if params['feats'] == 'cartesian':
+        # Initialize columns for storing min and max coordinates
+        data['min_coords'] = None
+        data['max_coords'] = None
 
     # Iterate over each row to apply normalization individually
     for idx, row in data.iterrows():
+        # Normalize RSSI values to range [0, 1]
+        node_noise = np.array(row['node_noise'])
+        min_rssi = np.min(node_noise)
+        max_rssi = np.max(node_noise)
+
+        range_rssi = max_rssi - min_rssi if max_rssi != min_rssi else 1
+        normalized_rssi = (node_noise - min_rssi) / range_rssi
+        data.at[idx, 'node_noise'] = normalized_rssi.tolist()
+
         # Normalize node positions to range [-1, 1]
         if params['feats'] == 'cartesian':
             node_positions = np.vstack(row['node_positions'])
@@ -346,16 +352,6 @@ def apply_min_max_normalization(data):
                 jammer_position = 2 * ((jammer_position - min_coords) / range_coords) - 1
                 data.at[idx, 'jammer_position'] = jammer_position.flatten().tolist()
 
-        # Normalize RSSI values to range [0, 1]
-        if 'node_noise' in row:
-            node_noise = np.array(row['node_noise'])
-            min_rssi = np.min(node_noise)
-            max_rssi = np.max(node_noise)
-
-            range_rssi = max_rssi - min_rssi if max_rssi != min_rssi else 1
-            normalized_rssi = (node_noise - min_rssi) / range_rssi
-            data.at[idx, 'node_noise'] = normalized_rssi.tolist()
-
 
 def apply_unit_sphere_normalization(data):
     """
@@ -367,8 +363,6 @@ def apply_unit_sphere_normalization(data):
     Returns:
     tuple: A tuple containing the normalized positions and the maximum radius.
     """
-    # TODO: normalize jammer pos too
-
     # Initialize a column for maximum radius
     data['max_radius'] = None
 
@@ -387,6 +381,7 @@ def apply_unit_sphere_normalization(data):
         # Normalize the positions uniformly
         normalized_positions = positions / max_radius
         normalized_jammer_position = jammer_position / max_radius
+        print('normalized_jammer_position: ', normalized_jammer_position)
 
         # Update the DataFrame with normalized positions and maximum radius
         data.at[idx, 'node_positions'] = normalized_positions.tolist()
@@ -421,13 +416,16 @@ def preprocess_data(data):
     convert_data_type(data)
     center_coordinates(data)
     standardize_data(data)
-    convert_to_polar(data)
+    if params['feats'] == 'polar':
+        convert_to_polar(data)
     return data
 
 
 def convert_to_polar(data):
-    if params['feats'] == 'polar':
-        data['polar_coordinates'] = data['node_positions'].apply(cartesian_to_polar)
+    data['polar_coordinates'] = data['node_positions'].apply(cartesian_to_polar)
+    print("data['polar_coordinates']: ", data['polar_coordinates'])
+    # quit()
+    # data['jammer_position'] = cartesian_to_polar(data['jammer_position'])
 
 
 def polar_to_cartesian(data):
@@ -507,36 +505,19 @@ def convert_output_eval(output, data_batch, data_type, device):
     elif params['norm'] == 'unit_sphere':
         # 0. Reverse to cartesian
         if params['feats'] == 'polar' and data_type == 'prediction':
-            cartesian_output = polar_to_cartesian(output)
+            output = polar_to_cartesian(output)
 
-        max_radius = data_batch.max_radius.to(device)
-        converted_output = cartesian_output * max_radius
+        # print('cartesian_output: ', cartesian_output)
+        # print('cartesian_output.shape: ', cartesian_output.shape)
+
+        max_radius = data_batch.max_radius.to(device).view(-1, 1)
+        # print('max_radius: ', max_radius)
+        # print('max_radius.shape: ', max_radius.shape)
+        converted_output = output * max_radius
 
     # 2. Reverse centering using the stored node_positions_center
     centers = data_batch.node_positions_center.to(device).view(-1, 2)
     converted_output += centers
-
-    # ###################################################
-    #
-    # if params['feats'] == 'cartesian' or data == 'target':
-    #     converted_output = undo_center_coordinates(output.cpu().numpy(), id, midpoints)
-    # if params['feats'] == 'polar' and data == 'prediction':
-    #     cartesian_output = polar_to_cartesian(output)
-    #     converted_output = undo_center_coordinates(cartesian_output.cpu().numpy(), id, midpoints)
-    #
-    # # Reverse standardization
-    # if params['norm'] == 'zscore':
-    #     with open('zscore_mean_std.json', 'r') as json_file:
-    #         data_loaded = json.load(json_file)
-    #         position_means = np.array(data_loaded['position_means'])
-    #         position_stds = np.array(data_loaded['position_stds'])
-    #     converted_output = converted_output * position_stds + position_means
-    #
-    # # Reverse min-max normalization
-    # elif params['norm'] == 'minmax':
-    #     experiment_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num'])
-    #     scaler = load_scaler(f'{experiment_path}/coords_scaler.pkl')
-    #     converted_output = scaler.inverse_transform(converted_output)
 
     return torch.tensor(converted_output, device=device)
 
@@ -618,27 +599,31 @@ def save_datasets(preprocessed_data, data, train_path, val_path, test_path):
     logging.info("Saving preprocessed data...")
     experiments_path = 'experiments/' + params['feats'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num']) + '/'
 
-    # # Save dataframes before preprocessing
-    # train_path = experiments_path + 'train_df.gzip'
-    # val_path = experiments_path + 'validation_df.gzip'
-    # test_path = experiments_path + 'test_df.gzip'
-    # with gzip.open(train_path, 'wb') as f:
-    #     pickle.dump(train_df, f)
-    # with gzip.open(val_path, 'wb') as f:
-    #     pickle.dump(val_df, f)
-    # with gzip.open(test_path, 'wb') as f:
-    #     pickle.dump(test_df, f)
-    #
-    # # Save graphs
-    # train_path = experiments_path + 'train_torch_geo_dataset.gzip'
-    # val_path = experiments_path + 'validation_torch_geo_dataset.gzip'
-    # test_path = experiments_path + 'test_torch_geo_dataset.gzip'
-    # with gzip.open(train_path, 'wb') as f:
-    #     pickle.dump(train_dataset, f)
-    # with gzip.open(val_path, 'wb') as f:
-    #     pickle.dump(val_dataset, f)
-    # with gzip.open(test_path, 'wb') as f:
-    #     pickle.dump(test_dataset, f)
+    # Save dataframes before preprocessing
+    train_path = experiments_path + 'train_df.gzip'
+    val_path = experiments_path + 'validation_df.gzip'
+    test_path = experiments_path + 'test_df.gzip'
+    with gzip.open(train_path, 'wb') as f:
+        pickle.dump(train_df, f)
+    with gzip.open(val_path, 'wb') as f:
+        pickle.dump(val_df, f)
+    with gzip.open(test_path, 'wb') as f:
+        pickle.dump(test_df, f)
+
+    # Save test dataframe as CSV
+    test_path = experiments_path + 'test_df.csv'  # Change file extension to .csv
+    test_df.to_csv(test_path, index=False)  # Save without row indices
+
+    # Save graphs
+    train_path = experiments_path + 'train_torch_geo_dataset.gzip'
+    val_path = experiments_path + 'validation_torch_geo_dataset.gzip'
+    test_path = experiments_path + 'test_torch_geo_dataset.gzip'
+    with gzip.open(train_path, 'wb') as f:
+        pickle.dump(train_dataset, f)
+    with gzip.open(val_path, 'wb') as f:
+        pickle.dump(val_dataset, f)
+    with gzip.open(test_path, 'wb') as f:
+        pickle.dump(test_dataset, f)
 
     return train_dataset, val_dataset, test_dataset
 
@@ -671,7 +656,7 @@ def load_data(dataset_path: str, train_path: str, val_path: str, test_path: str)
     data['id'] = range(1, len(data) + 1)
     # print("Unique Jammer Positions Initial:", data['jammer_position'].unique())
     # data.drop(columns=['jammer_type', 'jammer_power', 'pl_exp', 'sigma'], inplace=True)
-    data.drop(columns=['jammer_power', 'pl_exp', 'sigma'], inplace=True)
+    # data.drop(columns=['jammer_power', 'pl_exp', 'sigma'], inplace=True)
 
     # Create a deep copy of the DataFrame
     data_to_preprocess = data.copy(deep=True)
@@ -679,6 +664,7 @@ def load_data(dataset_path: str, train_path: str, val_path: str, test_path: str)
     # Before and after preprocessing:
     # print("Jammer Positions before processing:", data['jammer_position'].head().apply(lambda x: np.array2string(np.array(x), precision=20)))
     preprocessed_data = preprocess_data(data_to_preprocess)
+    # print('preprocessed_data.node_positons: ', preprocessed_data.node_positions[0])
     # print("Jammer Positions after processing:", data['jammer_position'].head().apply(lambda x: np.array2string(np.array(x), precision=20)))
 
     train_dataset, val_dataset, test_dataset = save_datasets(preprocessed_data, data, train_path, val_path, test_path)
@@ -743,6 +729,40 @@ def safe_convert_list(row: str, data_type: str) -> List[Any]:
         return []  # Return an empty list if there's an error
 
 
+def plot_graph(positions, edge_index, node_features, edge_weights=None, show_weights=False):
+    G = nx.Graph()
+    for i, (pos, feat) in enumerate(zip(positions, node_features)):
+        G.add_node(i, pos=(pos[0], pos[1]), rssi=feat[-1])  # Storing node data
+
+    for idx, (start, end) in enumerate(edge_index.t().numpy()):
+        weight = edge_weights[idx].item() if edge_weights is not None else None
+        # Only add edges with non-zero weight
+        if weight != 0:
+            G.add_edge(start, end, weight=weight)
+
+    pos = {i: (data['pos'][0], data['pos'][1]) for i, data in G.nodes(data=True)}
+    # Adjusting label positions to be slightly above the nodes
+    label_pos = {i: (pos[i][0], pos[i][1] + 0.05) for i in pos}  # Adjust the offset as needed
+
+    # Extended node labels with position and noise level
+    node_labels = {i: f'({data["pos"][0]:.2f}, {data["pos"][1]:.2f})\nNoise: {data["rssi"]:.2f}' for i, data in G.nodes(data=True)}
+
+    # Draw nodes explicitly without any additional markers
+    nx.draw_networkx_nodes(G, pos, node_size=60, linewidths=0)
+
+    # Draw edges
+    nx.draw_networkx_edges(G, pos, edge_color='k')
+
+    # Draw labels with adjusted positions and extended information
+    nx.draw_networkx_labels(G, label_pos, labels=node_labels, font_size=8, verticalalignment='bottom')
+
+    if show_weights and edge_weights is not None:
+        edge_labels = {(u, v): f'{d["weight"]:.2f}' for u, v, d in G.edges(data=True) if d["weight"] != 0}
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
+
+    plt.show()
+
+
 def create_torch_geo_data(row: pd.Series) -> Data:
     """
     Create a PyTorch Geometric Data object from a row of the dataset.
@@ -805,6 +825,10 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     y = torch.tensor(jammer_positions, dtype=torch.float)
     # print("y: ", y)
 
+    # Plot
+    # positions_plot = np.array(row['node_positions'])
+    # node_features_plot = np.array([list(pos) + [rssi] for pos, rssi in zip(row['node_positions'], row['node_noise'])])
+    # plot_graph(positions=positions_plot[:, :2], edge_index=edge_index, node_features=node_features_plot, edge_weights=edge_weight, show_weights=True)
 
     # Create the Data object
     data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight, y=y)
@@ -815,7 +839,7 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     if params['norm'] == 'minmax':
         data.min_coords = torch.tensor(row['min_coords'], dtype=torch.float)
         data.max_coords = torch.tensor(row['max_coords'], dtype=torch.float)
-    elif params['unit_sphere']:
+    elif params['norm'] == 'unit_sphere':
         data.max_radius = torch.tensor(row['max_radius'], dtype=torch.float)
 
     return data

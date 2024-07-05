@@ -40,7 +40,8 @@ class GNN(torch.nn.Module):
         if params['feats'] == 'cartesian':
             self.output_act = torch.nn.Tanh()
         elif params['feats'] == 'polar':
-            self.output_act = torch.nn.Sigmoid()  # ensure outputs are [0, 1]
+            self.output_act_sigmoid = torch.nn.Sigmoid()  # ensure output within [0, 1]
+            self.output_act_tanh = torch.nn.Tanh()  # ensure output within [-1, 1]
         # Initialize weights
         init_weights(self)
 
@@ -55,33 +56,23 @@ class GNN(torch.nn.Module):
             Tensor: The predicted coordinates of the jammer.
         """
         x, edge_index = data.x, data.edge_index
-        # print('data.x: ', data.x)
 
         # Apply GNN layers
         x = self.gnn(x, edge_index)
         x = self.attention_pool(x, data.batch)  # Apply attention pooling to get a single vector for the graph
-        # x = global_mean_pool(x, data.batch)  # Pooling to predict a single output per graph
         x = self.dropout(x)  # apply dropout last layer
-        # print("x: ", x)
         if params['feats'] == 'cartesian':
-            x = self.output_act(self.regressor(x))  # Predict the jammer's coordinates
+            x = 2 * self.output_act(self.regressor(x))  # Predict the jammer's coordinates
         elif params['feats'] == 'polar':
-            # Apply sigmoid activation to r
-            x_all = self.regressor(x)
-
-            # Apply different activations to radius and angles
-            x_radius = self.output_act(x_all[:, 0].unsqueeze(1))  # Radius
-            x_theta = 2 * torch.pi * self.output_act(x_all[:, 1].unsqueeze(1))  # Theta, Azimuthal angle [0, 2π]
-            if params['3d']:
-                x_phi = torch.pi * self.output_act(x_all[:, 2].unsqueeze(1))  # Phi, Polar angle [0, π]
-                x = torch.cat((x_radius, x_theta, x_phi), dim=1)
-            else:
-                x = torch.cat((x_radius, x_theta), dim=1)
+            x = self.regressor(x)
+            # if params['3d']:
+            #     # Apply different activations to radius and angles
+            #     x_radius = 2 * self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))  # Radius
+            #     x_theta = torch.pi * self.output_act_tanh(x_all[:, 1].unsqueeze(1))  # Theta, Azimuthal angle [-π, π]
+            #     x_phi = torch.pi * self.output_act_sigmoid(x_all[:, 2].unsqueeze(1))  # Phi, Polar angle [0, π]
+            #     x = torch.cat((x_radius, x_theta, x_phi), dim=1)
+            # else:
+            #     x_radius = self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))  # Radius
+            #     x_theta = torch.pi * self.output_act_tanh(x_all[:, 1].unsqueeze(1))  # Theta, Azimuthal angle [-π, π]
+            #     x = torch.cat((x_radius, x_theta), dim=1)
         return x
-
-    def print_weights(self):
-        """
-        Print the weights of the model.
-        """
-        for name, param in self.named_parameters():
-            print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")

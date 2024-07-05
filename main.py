@@ -35,21 +35,25 @@ def main():
     steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
     model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
 
-    # Inference
-    model.load_state_dict(torch.load(model_path))
-    convert_data_type(original_dataset)
-    predictions, actuals, node_details = predict_and_evaluate_full(test_loader, model, device, original_dataset)
-    for idx, val in enumerate(node_details):
-        plot_network_with_rssi(
-            node_positions=node_details[idx]['node_positions'],
-            final_rssi=node_details[idx]['node_rssi'],
-            jammer_position=node_details[idx]['jammer_position'],
-            noise_floor_db=node_details[idx]['node_noise'],
-            jammed=node_details[idx]['node_states'],
-            prediction=predictions[idx]
-        )
-    # sinr_db=node_details[idx]['sinr'],
-    quit()
+    # # Inference
+    # convert_data_type(original_dataset)
+    # cartesian_model.load_state_dict(torch.load(model_path))
+    # cartesian_predictions, cartesian_actuals, node_details = predict_and_evaluate_full(test_loader, cartesian_model, device, original_dataset)
+    #
+    # cartesian_model.load_state_dict(torch.load(model_path))
+    # cartesian_predictions, cartesian_actuals, node_details = predict_and_evaluate_full(test_loader, cartesian_model, device, original_dataset)
+    # # print('actuals: ', actuals)
+    # for idx, val in enumerate(node_details):
+    #     plot_network_with_rssi(
+    #         node_positions=node_details[idx]['node_positions'],
+    #         final_rssi=node_details[idx]['node_rssi'],
+    #         jammer_position=node_details[idx]['jammer_position'],
+    #         noise_floor_db=node_details[idx]['node_noise'],
+    #         jammed=node_details[idx]['node_states'],
+    #         prediction=predictions[idx]
+    #     )
+    # # sinr_db=node_details[idx]['sinr'],
+    # quit()
 
     best_val_loss = float('inf')
 
@@ -82,7 +86,7 @@ def main():
 
     # Evaluate the model on the test set
     model.load_state_dict(best_model_state)
-    predictions, actuals, err_metrics = predict_and_evaluate(model, test_loader, device)
+    predictions, actuals, err_metrics, rmse_list = predict_and_evaluate(model, test_loader, device)
     # quit()
     trial_data = {**epoch_data, **err_metrics}
     save_epochs(trial_data)
@@ -93,9 +97,9 @@ def main():
     # Save predictions and actuals to a CSV file
     with open(f'{experiment_path}/predictions.csv', 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['Prediction', 'Actual'])
-        for pred, act in zip(predictions, actuals):
-            writer.writerow([pred, act])  # prediction-actual pair
+        writer.writerow(['Prediction', 'Actual', 'RMSE'])
+        for pred, act, rmse in zip(predictions, actuals, rmse_list):
+            writer.writerow([pred, act, rmse])  # prediction-actual pair
 
 
 if __name__ == "__main__":

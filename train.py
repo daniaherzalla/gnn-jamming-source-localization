@@ -21,10 +21,6 @@ set_seeds_and_reproducibility()
 
 setup_logging()
 
-# Load midpoints once
-with open('midpoints.json', 'r') as f:
-    midpoints = json.load(f)
-
 
 def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -> Tuple[GNN, optim.Optimizer, ReduceLROnPlateau, torch.nn.Module]:
     """
@@ -74,18 +70,18 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         data = data.to(device)
         optimizer.zero_grad()
         output = model(data)
+        # print('model output: ', output)
         # print(f"output shape: {output.shape}, data.y: {data.y.shape}")
-        if params['feats'] == 'polar':
-            output[:, 0] = output[:, 0] * 2
-        else:
-            output = output * 2
-        # print('output: ', output)
+        # print(output[0], data[0].y)
         output = convert_output(output, device)  # Ensure output conversion uses PyTorch and remains on the GPU
+        # print(output[0], data[0].y)
+
         # print('converted output: ', output)
         # quit()
         # print(f"output shape: {output.shape}, data.y: {data.y.shape}")
 
         loss = criterion(output, data.y)
+
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -118,10 +114,6 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         for data in validate_loader:
             data = data.to(device)
             output = model(data)
-            if params['feats'] == 'polar':
-                output[:, 0] = output[:, 0] * 2
-            else:
-                output = output * 2
             output = convert_output(output, device)  # Ensure this function is suitable for validation context
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
@@ -146,17 +138,13 @@ def predict_and_evaluate(model, loader, device):
             - actuals (list): The actual values after denormalization.
     """
     model.eval()
-    predictions, actuals = [], []
+    predictions, actuals, rmse_list = [], [], []
 
     with torch.no_grad():
         for data in loader:
             # Process individual data items
             data = data.to(device)
             output = model(data)
-            if params['feats'] == 'polar':
-                output[:, 0] = output[:, 0] * 2
-            else:
-                output = output * 2
             # print("output: ", output)
 
             # Convert and uncenter using the index to retrieve the correct midpoint
@@ -166,10 +154,14 @@ def predict_and_evaluate(model, loader, device):
             predictions.append(predicted_coords.cpu().numpy())
             # print("prediction: ", predicted_coords.cpu().numpy())
             actuals.append(actual_coords.cpu().numpy())
+            mse = mean_squared_error(actual_coords.cpu().numpy(), predicted_coords.cpu().numpy())
+            rmse = math.sqrt(mse)
+            rmse_list.append(rmse)
 
     # quit()
     predictions = np.concatenate([np.array(pred).flatten() for pred in predictions])
     actuals = np.concatenate([np.array(act).flatten() for act in actuals])
+    rmse_list = np.concatenate([np.array(rmse_list).flatten() for rmse in rmse_list])
     print("predictions: ", predictions)
     print("actuals: ", actuals)
 
@@ -198,7 +190,7 @@ def predict_and_evaluate(model, loader, device):
         'rmse': rmse
     }
 
-    return predictions, actuals, err_metrics
+    return predictions, actuals, err_metrics, rmse_list
 
 
 def predict_and_evaluate_full(loader, model, device, original_dataset):
@@ -222,12 +214,6 @@ def predict_and_evaluate_full(loader, model, device, original_dataset):
         for data_batch in loader:
             data_batch = data_batch.to(device)
             output = model(data_batch)
-
-            # Adjust based on whether the features are polar or not, scale as needed
-            if params['feats'] == 'polar':
-                output[:, 0] = output[:, 0] * 2
-            else:
-                output = output * 2
 
             # Convert and uncenter using the provided conversion function
             predicted_coords = convert_output_eval(output, data_batch, 'prediction', device)
@@ -272,71 +258,39 @@ def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv'
         writer.writerow(data)
 
 
-def initial_prediction(model, loader, device):
-    model.eval()  # Set the model to evaluation mode
-    predictions = []
-    actuals = []
-
-    with torch.no_grad():
-        for data in loader:
-            data = data.to(device)
-            output = model(data)  # Get the output
-            if params['feats'] == 'polar':
-                output[:, 0] = output[:, 0] * 2
-            else:
-                output = output * 2
-
-            output = convert_output(output, device)
-
-            # Process each instance in the batch
-            for i in range(data.num_graphs):
-                predictions.append(output[i].cpu().numpy())
-                actuals.append(data.y[i].cpu().numpy())
-            break  # Stop after processing the first batch - for testing
-
-    return predictions, actuals
-
-
-def plot_initial_predictions(predictions, actuals):
-    for i in range(len(predictions)):
-        plt.figure(figsize=(8, 6))
-        plt.scatter(predictions[i][0], predictions[i][1], color='blue', label='Prediction', s=100)
-        plt.scatter(actuals[i][0], actuals[i][1], color='red', label='Actual Position', s=100)
-
-        plt.title(f'Initial Model Prediction vs. Actual Position for Instance {i + 1}')
-        plt.xlabel('X Coordinate')
-        plt.ylabel('Y Coordinate')
-        plt.legend()
-        plt.grid(True)
-        plt.xlim(-1, 1)
-        plt.ylim(-1, 1)
-        plt.show()
-
-
 def plot_network_with_rssi(node_positions, final_rssi, jammer_position, noise_floor_db, jammed, prediction):
     fig, ax = plt.subplots(figsize=(10, 8))
 
     # Plot nodes
     for idx, pos in enumerate(node_positions):
         color = 'red' if jammed[idx] else 'blue'
-
-        # Check if the node is effectively disconnected based on RSSI
         node_info = f"Node {idx}\nRSSI: {final_rssi[idx]:.2f} dB\nNoise: {noise_floor_db[idx]:.2f} dB"
-        # node_info = f"Node {idx}\nRSSI: {final_rssi[idx]:.2f} dB\nSINR: {sinr_db[idx]:.2f} dB\nNoise: {noise_floor_db[idx]:.2f} dB"
         ax.plot(pos[0], pos[1], 'o', color=color)  # Nodes in blue or red depending on jamming status
         ax.text(pos[0], pos[1], node_info, fontsize=9, ha='right')
 
     # Plot jammer
-    print('jammer pos: ', jammer_position)
     ax.plot(jammer_position[0], jammer_position[1], 'r^', markersize=15)  # Jammer in red
     ax.text(jammer_position[0], jammer_position[1], ' Jammer', verticalalignment='bottom', horizontalalignment='right', color='red', fontsize=15)
 
     # Plot prediction
-    ax.plot(prediction[0], prediction[1], 'gx', markersize=15)  # Jammer in red
+    ax.plot(prediction[0], prediction[1], 'gx', markersize=15)  # Prediction in green
     ax.text(prediction[0], prediction[1], ' Prediction', verticalalignment='bottom', horizontalalignment='right', color='green', fontsize=15)
 
-    ax.set_title('Network Topology with RSSI, SINR, and Noise Floor', fontsize=11)
+    # Calculate and plot the line between jammer position and prediction
+    line = np.array([jammer_position, prediction])
+    ax.plot(line[:, 0], line[:, 1], 'k--')
+
+    # Calculate RMSE
+    rmse = np.sqrt(np.mean((np.array(jammer_position) - np.array(prediction)) ** 2))
+
+    # Annotate the line with the RMSE
+    mid_point = np.mean(line, axis=0)
+    ax.text(mid_point[0], mid_point[1]-20, f'RMSE: {rmse:.2f}m', fontsize=12, color='black')
+
+    coord_system = params['feats']
+    ax.set_title(f'Network Topology with RSSI, Noise Floor, and {coord_system} Jammer Prediction', fontsize=11)
     ax.set_xlabel('X position (m)', fontsize=14)
     ax.set_ylabel('Y position (m)', fontsize=14)
     plt.grid(True)
+    plt.legend()
     plt.show()

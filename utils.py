@@ -104,4 +104,20 @@ def cartesian_to_polar(coords):
             theta = np.arctan2(y, x)  # Angle from the positive x-axis
             polar_coords.append([r, theta])
 
+    # # Convert to numpy array for easier manipulation
+    # polar_coords = np.array(polar_coords)
+    #
+    # # Check range of theta
+    # min_theta = np.min(polar_coords[:, 1])
+    # max_theta = np.max(polar_coords[:, 1])
+    # print(f"Range of theta: [{min_theta}, {max_theta}]")
+    #
+    # # Check range of radius r
+    # min_r = np.min(polar_coords[:, 0])
+    # max_r = np.max(polar_coords[:, 0])
+    # print(f"Range of radius r: [{min_r}, {max_r}]")
+    #
+    # quit()
+
     return polar_coords
+
