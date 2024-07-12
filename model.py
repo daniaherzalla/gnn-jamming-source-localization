@@ -1,12 +1,12 @@
 import torch
 from torch_geometric.graphgym import init_weights
-from torch_geometric.nn import global_mean_pool, MLP, GCN, GraphSAGE, GIN, GAT, AttentionalAggregation
+from torch_geometric.nn import MLP, GCN, GraphSAGE, GIN, GAT, AttentionalAggregation
 
 from torch.nn import Linear
 from utils import set_seeds_and_reproducibility
 from config import params
 
-set_seeds_and_reproducibility()
+# set_seeds_and_reproducibility()
 
 
 class GNN(torch.nn.Module):
@@ -37,11 +37,7 @@ class GNN(torch.nn.Module):
         self.attention_pool = AttentionalAggregation(gate_nn=Linear(out_channels, 1))
         self.regressor = Linear(out_channels, out_features)
         self.dropout = torch.nn.Dropout(dropout_rate)
-        if params['feats'] == 'cartesian':
-            self.output_act = torch.nn.Tanh()
-        elif params['feats'] == 'polar':
-            self.output_act_sigmoid = torch.nn.Sigmoid()  # ensure output within [0, 1]
-            self.output_act_tanh = torch.nn.Tanh()  # ensure output within [-1, 1]
+        self.output_act_tanh = torch.nn.Tanh()
         # Initialize weights
         init_weights(self)
 
@@ -56,34 +52,13 @@ class GNN(torch.nn.Module):
             Tensor: The predicted coordinates of the jammer.
         """
         x, edge_index = data.x, data.edge_index
+        # print("x[0]: ", x[0])
 
         # Apply GNN layers
         x = self.gnn(x, edge_index)
         x = self.attention_pool(x, data.batch)  # Apply attention pooling to get a single vector for the graph
         x = self.dropout(x)  # apply dropout last layer
-        if params['feats'] == 'cartesian':
-            x = 2 * self.output_act(self.regressor(x))  # Predict the jammer's coordinates
-        elif params['feats'] == 'polar':
-            x_all = self.regressor(x)
-            # if params['3d']:
-            #     # Apply different activations to radius and angles
-            #     x_radius = 2 * self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))  # Radius
-            #     x_theta = torch.pi * self.output_act_tanh(x_all[:, 1].unsqueeze(1))  # Theta, Azimuthal angle [-π, π]
-            #     x_phi = torch.pi * self.output_act_sigmoid(x_all[:, 2].unsqueeze(1))  # Phi, Polar angle [0, π]
-            #     x = torch.cat((x_radius, x_theta, x_phi), dim=1)
-            # else:
-            #     x_radius = self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))  # Radius
-            #     x_theta = torch.pi * self.output_act_tanh(x_all[:, 1].unsqueeze(1))  # Theta, Azimuthal angle [-π, π]
-            #     x = torch.cat((x_radius, x_theta), dim=1)
-            if params['3d']:
-                # Apply different activations to radius and angles
-                x_radius = 2 * self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))  # Radius
-                x_theta = torch.pi * self.output_act_tanh(x_all[:, 1].unsqueeze(1))  # Theta, Azimuthal angle [-π, π]
-                x_phi = torch.pi * self.output_act_sigmoid(x_all[:, 2].unsqueeze(1))  # Phi, Polar angle [0, π]
-                x = torch.cat((x_radius, x_theta, x_phi), dim=1)
-            else:
-                x_radius = self.output_act_sigmoid(x_all[:, 0].unsqueeze(1))
-                x_theta_sin = self.output_act_tanh(x_all[:, 1].unsqueeze(1))
-                x_theta_cos = self.output_act_tanh(x_all[:, 2].unsqueeze(1))
-                x = torch.cat((x_radius, x_theta_sin, x_theta_cos), dim=1)
+        x = self.regressor(x)
+        if params['activation']:
+            x = self.output_act_tanh(x)
         return x

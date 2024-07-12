@@ -17,12 +17,12 @@ from utils import set_seeds_and_reproducibility
 from data_processing import convert_output, convert_output_eval
 from config import params
 
-set_seeds_and_reproducibility()
+# set_seeds_and_reproducibility()
 
 setup_logging()
 
 
-def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -> Tuple[GNN, optim.Optimizer, ReduceLROnPlateau, torch.nn.Module]:
+def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -> Tuple[GNN, optim.Optimizer, OneCycleLR, torch.nn.Module]:
     """
     Initialize the model, optimizer, scheduler, and loss criterion.
 
@@ -37,10 +37,13 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
         criterion (torch.nn.Module): Loss criterion.
     """
     logging.info("Initializing model...")
-    model = GNN().to(device)
+    in_channels = len(params['additional_features']) + len(params['required_features']) + 1
+    # print('params: ', params)
+    print('in_channels: ', in_channels)
+    # print("params['additional_features']: ", params['additional_features'])
+    model = GNN(dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], in_channels=in_channels, hidden_channels=params['hidden_channels'], out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, verbose=True)
-    print('steps_per_epoch: ', steps_per_epoch)
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
@@ -73,7 +76,7 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         # print('model output: ', output)
         # print(f"output shape: {output.shape}, data.y: {data.y.shape}")
         # print(output[0], data[0].y)
-        output = convert_output(output, device)  # Ensure output conversion uses PyTorch and remains on the GPU
+        # output = convert_output(output, device)  # Ensure output conversion uses PyTorch and remains on the GPU
         # print(output[0], data[0].y)
 
         # print('converted output: ', output)
@@ -114,7 +117,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         for data in validate_loader:
             data = data.to(device)
             output = model(data)
-            output = convert_output(output, device)  # Ensure this function is suitable for validation context
+            # output = convert_output(output, device)  # Ensure this function is suitable for validation context
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
             total_graphs += data.num_graphs  # Accumulate the total number of graphs or samples processed
@@ -158,7 +161,6 @@ def predict_and_evaluate(model, loader, device):
             rmse = math.sqrt(mse)
             rmse_list.append(rmse)
 
-    # quit()
     predictions = np.concatenate([np.array(pred).flatten() for pred in predictions])
     actuals = np.concatenate([np.array(act).flatten() for act in actuals])
     rmse_list = np.concatenate([np.array(rmse_list).flatten() for rmse in rmse_list])
@@ -287,7 +289,7 @@ def plot_network_with_rssi(node_positions, final_rssi, jammer_position, noise_fl
     mid_point = np.mean(line, axis=0)
     ax.text(mid_point[0], mid_point[1]-20, f'RMSE: {rmse:.2f}m', fontsize=12, color='black')
 
-    coord_system = params['feats']
+    coord_system = params['coords']
     ax.set_title(f'Network Topology with RSSI, Noise Floor, and {coord_system} Jammer Prediction', fontsize=11)
     ax.set_xlabel('X position (m)', fontsize=14)
     ax.set_ylabel('Y position (m)', fontsize=14)

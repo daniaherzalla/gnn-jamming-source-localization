@@ -22,15 +22,20 @@ def main():
     Main function to run the training and evaluation.
     """
     # Experiment params
-    combination = params['feats'] + '_' + params['edges'] + '_' + params['norm']
+    combination = params['coords'] + '_' + params['edges'] + '_' + params['norm']
     experiment_path = 'experiments/' + combination + '/trial' + str(params['trial_num'])
     model_path = f'{experiment_path}/trained_model_{combination}.pth'
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # device = torch.device('cpu')
-    print("device: ", device)
 
-    train_dataset, val_dataset, test_dataset, original_dataset = load_data(params['dataset_path'], params['train_path'], params['val_path'], params['test_path'])
+    # print(torch.cuda.is_available())
+    # print(torch.cuda.device_count())
+    # print(torch.cuda.get_device_name(0))
+    # print("device: ", device)
+    # quit()
+
+    train_dataset, val_dataset, test_dataset, original_dataset = load_data(params['dataset_path'], params)
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
     steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
     model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
@@ -87,7 +92,6 @@ def main():
     # Evaluate the model on the test set
     model.load_state_dict(best_model_state)
     predictions, actuals, err_metrics, rmse_list = predict_and_evaluate(model, test_loader, device)
-    # quit()
     trial_data = {**epoch_data, **err_metrics}
     save_epochs(trial_data)
 
