@@ -9,6 +9,7 @@ import numpy as np
 # print(torch.cuda.is_available())
 # quit()
 
+
 def objective(hyperparameters):
     """
     Objective function for hyperparameter optimization.
@@ -57,14 +58,16 @@ def map_indices_to_values(hyperparameters):
         "batch_size": [16, 32, 64],
         "max_epochs": [200],
         "num_neighbors": [5, 10, 20, 30],
-        'additional_features': additional_features_evaluated,
-        'required_features': ['node_positions', 'node_noise'],
         "coords": ['cartesian'],
         "edges": ['knn'],
         "norm": ['minmax'],
         "model": ['GATv2']
     }
-    return {key: actual_values[key][hyperparameters[key][0]] if key in actual_values and hyperparameters[key] else hyperparameters[key][0] if hyperparameters[key] else None for key in hyperparameters}
+    # Map the actual values, taking care to handle both choices and pre-evaluated lists
+    mapped_hyperparameters = {key: actual_values[key][hyperparameters[key][0]] if key in actual_values and hyperparameters[key] else hyperparameters[key] for key in hyperparameters}
+    mapped_hyperparameters['required_features'] = ['node_positions', 'node_noise']
+    mapped_hyperparameters['additional_features'] = additional_features_evaluated  # Use the pre-evaluated global list
+    return mapped_hyperparameters
 
 
 def save_results(trials, best_hyperparams, best_loss):
@@ -82,7 +85,7 @@ def save_results(trials, best_hyperparams, best_loss):
         ]
     }
     model_name = best_hyperparams['model']
-    filename = f'hyperparam_results/trial_results_{model_name}.json'
+    filename = f'hyperparam_results/trial_results_{model_name}_TEST.json'
     with open(filename, 'w') as f:
         json.dump(results, f, indent=4)
 
@@ -135,7 +138,7 @@ def main():
         fn=lambda hyperparameters: objective(hyperparameters),
         space=hyperparameter_space,
         algo=tpe.suggest,
-        max_evals=100,
+        max_evals=500,
         trials=trials
     )
     best_hyperparams = space_eval(hyperparameter_space, best_hyperparameters)
