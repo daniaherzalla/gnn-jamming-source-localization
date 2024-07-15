@@ -32,7 +32,7 @@ def main():
     # print(torch.cuda.is_available())
     # print(torch.cuda.device_count())
     # print(torch.cuda.get_device_name(0))
-    # print("device: ", device)
+    print("device: ", device)
     # quit()
 
     train_dataset, val_dataset, test_dataset, original_dataset = load_data(params['dataset_path'], params)

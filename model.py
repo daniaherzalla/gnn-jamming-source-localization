@@ -22,8 +22,9 @@ class GNN(torch.nn.Module):
         super(GNN, self).__init__()
 
         # Model definitions
+        # self.model_type = model_type
         if model_type == 'MLP':
-            self.gnn = MLP(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
+            self.gnn = MLP(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
         elif model_type == 'GCN':
             self.gnn = GCN(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm)
         elif model_type == 'Sage':
