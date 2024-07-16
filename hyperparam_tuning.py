@@ -6,6 +6,12 @@ from train import initialize_model, train, validate
 from data_processing import load_data, create_data_loader
 from config import params
 import numpy as np
+# print("PyTorch Version:", torch.__version__)
+# print("CUDA Version:", torch.version.cuda)
+# print(torch.cuda.is_available())  # Should return True
+# print(torch.cuda.device_count())  # Should list the number of
+# quit()
+
 
 
 def objective(hyperparameters):
@@ -24,7 +30,7 @@ def objective(hyperparameters):
         'clustering_coefficient', 'mean_noise', 'median_noise', 'std_noise', 'range_noise'
     ]
     # Handle azimuth features together
-    if hyperparameters['use_sin_azimuth'] or hyperparameters['use_cos_azimuth']:
+    if hyperparameters['use_sin_azimuth']:
         additional_features.extend(['sin_azimuth', 'cos_azimuth'])
 
     # Add other features if enabled
@@ -122,7 +128,7 @@ def main():
     """
     Main function to run hyperparameter optimization.
     """
-    model_type = 'MLP'
+    model_type = 'GAT'
 
     hyperparameter_space = {
         'dropout_rate': hp.uniform('dropout_rate', 0.2, 0.6),
@@ -143,7 +149,6 @@ def main():
         # Additional features included as binary choices
         'use_dist_to_centroid': hp.choice('use_dist_to_centroid', [True, False]),
         'use_sin_azimuth': hp.choice('use_sin_azimuth', [True, False]),
-        'use_cos_azimuth': hp.choice('use_cos_azimuth', [True, False]),
         'use_relative_noise': hp.choice('use_relative_noise', [True, False]),
         'use_proximity_count': hp.choice('use_proximity_count', [True, False]),
         'use_clustering_coefficient': hp.choice('use_clustering_coefficient', [True, False]),
