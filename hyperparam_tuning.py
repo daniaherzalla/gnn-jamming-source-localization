@@ -128,7 +128,7 @@ def main():
     """
     Main function to run hyperparameter optimization.
     """
-    model_type = 'GAT'
+    model_type = 'GCN'
 
     hyperparameter_space = {
         'dropout_rate': hp.uniform('dropout_rate', 0.2, 0.6),
