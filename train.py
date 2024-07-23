@@ -44,8 +44,7 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
     # print("params['additional_features']: ", params['additional_features'])
     model = GNN(dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], in_channels=in_channels, hidden_channels=params['hidden_channels'], out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, verbose=True)
-    # scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
+    scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
 
@@ -77,7 +76,7 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
-        # scheduler.step()
+        scheduler.step()
         total_loss += loss.item() * data.num_graphs  # Ensure data.num_graphs or equivalent is valid
         num_batches += 1
 
@@ -87,7 +86,7 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
     return total_loss / sum(data.num_graphs for data in train_loader)  # This assumes each batch might have a different size
 
 
-def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, criterion: torch.nn.Module, device: torch.device, scheduler) -> float:
+def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, criterion: torch.nn.Module, device: torch.device) -> float:
     """
     Validate the model on the validation dataset.
 
@@ -102,18 +101,17 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
     """
     model.eval()
     total_loss = 0
-    total_graphs = 0
+    total_graphs = 0  # Use this to correctly compute average loss if batch sizes vary
     with torch.no_grad():
         for data in validate_loader:
             data = data.to(device)
             output = model(data)
+            # output = convert_output(output, device)  # Ensure this function is suitable for validation context
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
-            total_graphs += data.num_graphs
+            total_graphs += data.num_graphs  # Accumulate the total number of graphs or samples processed
 
-    avg_validation_loss = total_loss / total_graphs
-    scheduler.step(avg_validation_loss)
-    return avg_validation_loss
+    return total_loss / total_graphs  # Use total_graphs for a more accurate average if batch sizes are not uniform
 
 
 def predict_and_evaluate(model, loader, device):
