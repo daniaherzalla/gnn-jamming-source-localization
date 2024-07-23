@@ -25,7 +25,8 @@ params = {
     'val_path': 'data/validation.gzip',
     'test_path': 'data/test.gzip',
     'inference': False,
-    'trial_num': 1
+    'trial_num': 1,
+    'reproduce': False
 }
 
 # CHECK: did you update...
