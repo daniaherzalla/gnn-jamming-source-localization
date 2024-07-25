@@ -20,7 +20,8 @@ from config import params
 
 setup_logging()
 
-# set_seeds_and_reproducibility()
+if params['reproduce']:
+    set_seeds_and_reproducibility()
 
 
 def angle_to_cyclical(positions):
@@ -477,8 +478,14 @@ def save_datasets(preprocessed_data, data, params):
         Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
         The train, validation, and test datasets.
     """
-    logging.info('Creating edges')
+
+    logging.info('Creating graphs...')
     torch_geo_dataset = [create_torch_geo_data(row, params) for _, row in preprocessed_data.iterrows()]
+
+    if params['inference']:
+        logging.info("Inference mode: creating test dataset...")
+        test_dataset = torch.utils.data.Subset(torch_geo_dataset, np.arange(len(torch_geo_dataset)))
+        return None, None, test_dataset
 
     # Shuffle the dataset
     indices = np.arange(len(data))
@@ -494,53 +501,50 @@ def save_datasets(preprocessed_data, data, params):
     test_size = len(torch_geo_dataset) - train_size - val_size
     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(torch_geo_dataset, [train_size, val_size, test_size])
 
-    # Function to extract indices from a Subset
-    def get_indices(dataset_subset):
-        return dataset_subset.indices
+    # Saving data
+    if params['save_data']:
+        logging.info("Saving data...")
+        # Extract indices for each split
+        train_indices = train_dataset.indices
+        val_indices = val_dataset.indices
+        test_indices = test_dataset.indices
+        experiments_path = 'experiments/' + params['coords'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num']) + '/'
 
-    # Extract indices for each split
-    train_indices = get_indices(train_dataset)
-    val_indices = get_indices(val_dataset)
-    test_indices = get_indices(test_dataset)
+        # Use these indices to split the DataFrame
+        train_df = data.iloc[train_indices].reset_index(drop=True)
+        val_df = data.iloc[val_indices].reset_index(drop=True)
+        test_df = data.iloc[test_indices].reset_index(drop=True)
 
-    logging.info("Saving preprocessed data...")
-    # experiments_path = 'experiments/' + params['coords'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num']) + '/'
+        # Save raw dataframes before preprocessing
+        train_path = experiments_path + 'train_df.gzip'
+        val_path = experiments_path + 'validation_df.gzip'
+        test_path = experiments_path + 'test_df.gzip'
+        with gzip.open(train_path, 'wb') as f:
+            pickle.dump(train_df, f)
+        with gzip.open(val_path, 'wb') as f:
+            pickle.dump(val_df, f)
+        with gzip.open(test_path, 'wb') as f:
+            pickle.dump(test_df, f)
 
-    # # Use these indices to split the DataFrame
-    # train_df = data.iloc[train_indices].reset_index(drop=True)
-    # val_df = data.iloc[val_indices].reset_index(drop=True)
-    # test_df = data.iloc[test_indices].reset_index(drop=True)
+        # Save test dataframe as CSV
+        test_path = experiments_path + 'test_df.csv'  # Change file extension to .csv
+        test_df.to_csv(test_path, index=False)  # Save without row indices
 
-    # # Save raw dataframes before preprocessing
-    # train_path = experiments_path + 'train_df.gzip'
-    # val_path = experiments_path + 'validation_df.gzip'
-    # test_path = experiments_path + 'test_df.gzip'
-    # with gzip.open(train_path, 'wb') as f:
-    #     pickle.dump(train_df, f)
-    # with gzip.open(val_path, 'wb') as f:
-    #     pickle.dump(val_df, f)
-    # with gzip.open(test_path, 'wb') as f:
-    #     pickle.dump(test_df, f)
-    #
-    # # Save test dataframe as CSV
-    # test_path = experiments_path + 'test_df.csv'  # Change file extension to .csv
-    # test_df.to_csv(test_path, index=False)  # Save without row indices
-    #
-    # # Save graphs
-    # train_path = experiments_path + 'train_torch_geo_dataset.gzip'
-    # val_path = experiments_path + 'validation_torch_geo_dataset.gzip'
-    # test_path = experiments_path + 'test_torch_geo_dataset.gzip'
-    # with gzip.open(train_path, 'wb') as f:
-    #     pickle.dump(train_dataset, f)
-    # with gzip.open(val_path, 'wb') as f:
-    #     pickle.dump(val_dataset, f)
-    # with gzip.open(test_path, 'wb') as f:
-    #     pickle.dump(test_dataset, f)
+        # Save graphs
+        train_path = experiments_path + 'train_torch_geo_dataset.gzip'
+        val_path = experiments_path + 'validation_torch_geo_dataset.gzip'
+        test_path = experiments_path + 'test_torch_geo_dataset.gzip'
+        with gzip.open(train_path, 'wb') as f:
+            pickle.dump(train_dataset, f)
+        with gzip.open(val_path, 'wb') as f:
+            pickle.dump(val_dataset, f)
+        with gzip.open(test_path, 'wb') as f:
+            pickle.dump(test_dataset, f)
 
     return train_dataset, val_dataset, test_dataset
 
 
-def load_data(dataset_path: str, params):
+def load_data(dataset_path: str, params, data=None):
     """
     Load the data from the given paths, or preprocess and save it if not already done.
 
@@ -551,17 +555,8 @@ def load_data(dataset_path: str, params):
         Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
         The train, validation, and test datasets.
     """
-    # if all(os.path.exists(path) for path in [train_path, val_path, test_path]):
-    #     logging.info("Loading preprocessed data...")
-    #     # Load compressed datasets
-    #     with gzip.open(train_path, 'rb') as f:
-    #         train_dataset = pickle.load(f)
-    #     with gzip.open(val_path, 'rb') as f:
-    #         val_dataset = pickle.load(f)
-    #     with gzip.open(test_path, 'rb') as f:
-    #         test_dataset = pickle.load(f)
-    # else:
-    data = pd.read_csv(dataset_path)
+    if data is None:
+        data = pd.read_csv(dataset_path)
     data['id'] = range(1, len(data) + 1)
     data.drop(columns=['jammer_power', 'pl_exp', 'sigma'], inplace=True)
 
@@ -585,11 +580,16 @@ def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int
         test_loader (DataLoader): DataLoader for the testing dataset.
     """
     logging.info("Creating DataLoader objects...")
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=False, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    if not params['inference']:
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=False, num_workers=1)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    return train_loader, val_loader, test_loader
+        return train_loader, val_loader, test_loader
+    else:
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+        return None, None, test_loader
 
 
 def safe_convert_list(row: str, data_type: str) -> List[Any]:
@@ -648,13 +648,20 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, show_wei
         G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2])
 
     # Convert edge_index to a usable format if it's a tensor or similar
+    print("edge_index: ", edge_index)
     if isinstance(edge_index, torch.Tensor):
         edge_index = edge_index.numpy()
 
     # Add edges
-    for start, end in edge_index.T:  # Ensure edge_index is transposed correctly
-        weight = edge_weights[start, end] if edge_weights is not None else None
-        G.add_edge(start, end, weight=weight)
+    if edge_weights is not None:
+        edge_weights = edge_weights.numpy() if isinstance(edge_weights, torch.Tensor) else edge_weights
+        for idx, (start, end) in enumerate(edge_index.T):  # Ensure edge_index is transposed correctly
+            weight = edge_weights[idx]
+            if weight != 0:  # Check if weight is not zero
+                G.add_edge(start, end, weight=weight)
+    else:
+        for start, end in edge_index.T:
+            G.add_edge(start, end)
 
     # Position for drawing
     pos = {i: (p[0], p[1]) for i, p in enumerate(positions)}
@@ -721,9 +728,7 @@ def create_torch_geo_data(row: pd.Series, params) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
-
     # Selecting features based on configuration
-
     all_features = ensure_complementary_features(params)
     # additional_features = list(params['additional_features'])
     # all_features = ['node_positions', 'node_noise'] + additional_features

@@ -234,6 +234,39 @@ def predict_and_evaluate_full(loader, model, device, original_dataset):
     return predictions, actuals, node_details
 
 
+def predict(loader, model, device):
+    """
+    Extended evaluation function to gather all required details for plotting, including
+    fetching details using IDs from the data DataFrame.
+
+    Args:
+        loader: DataLoader providing the dataset for evaluation.
+        model: Trained model for evaluation.
+        device: Device to perform computations on.
+
+    Returns:
+        Predictions, actuals, and node details including RSSI and other metrics.
+    """
+    model.eval()
+    predictions = []
+
+    with torch.no_grad():
+        for data_batch in loader:
+            data_batch = data_batch.to(device)
+            output = model(data_batch)
+
+            # Convert and uncenter using the provided conversion function
+            predicted_coords = convert_output_eval(output, data_batch, 'prediction', device)
+
+            # Collect predictions and actuals
+            predictions.append(predicted_coords.cpu().numpy())
+
+    # Flatten predictions and actuals if they are nested lists
+    predictions = np.concatenate(predictions)
+
+    return predictions
+
+
 def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv') -> None:
     file_exists = os.path.isfile(filename)
 

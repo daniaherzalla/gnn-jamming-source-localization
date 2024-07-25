@@ -11,7 +11,8 @@ from custom_logging import setup_logging
 # Setup custom logging
 setup_logging()
 
-set_seeds_and_reproducibility()
+if params['reproduce']:
+    set_seeds_and_reproducibility()
 
 # Clear CUDA memory cache
 torch.cuda.empty_cache()
@@ -28,37 +29,36 @@ def main():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # device = torch.device('cpu')
-
-    # print(torch.cuda.is_available())
-    # print(torch.cuda.device_count())
-    # print(torch.cuda.get_device_name(0))
     print("device: ", device)
-    # quit()
 
     train_dataset, val_dataset, test_dataset, original_dataset = load_data(params['dataset_path'], params)
     train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
+
+    # Inference
+    if params['inference']:
+        steps_per_epoch = len(test_loader)  # Calculate steps per epoch based on the training data loader
+        model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
+        # Change from str to suitable data type
+        convert_data_type(original_dataset)
+        # Load trained model
+        model.load_state_dict(torch.load(model_path))
+        # Predict jammer position
+        predictions, actuals, node_details = predict_and_evaluate_full(test_loader, model, device, original_dataset)
+        # Plot network
+        for idx, val in enumerate(node_details):
+            plot_network_with_rssi(
+                node_positions=node_details[idx]['node_positions'],
+                final_rssi=node_details[idx]['node_rssi'],
+                jammer_position=node_details[idx]['jammer_position'],
+                noise_floor_db=node_details[idx]['node_noise'],
+                jammed=node_details[idx]['node_states'],
+                prediction=predictions[idx]
+            )
+        return predictions
+
+    # Initialize model
     steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
     model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
-
-    # # Inference
-    # convert_data_type(original_dataset)
-    # cartesian_model.load_state_dict(torch.load(model_path))
-    # cartesian_predictions, cartesian_actuals, node_details = predict_and_evaluate_full(test_loader, cartesian_model, device, original_dataset)
-    #
-    # cartesian_model.load_state_dict(torch.load(model_path))
-    # cartesian_predictions, cartesian_actuals, node_details = predict_and_evaluate_full(test_loader, cartesian_model, device, original_dataset)
-    # # print('actuals: ', actuals)
-    # for idx, val in enumerate(node_details):
-    #     plot_network_with_rssi(
-    #         node_positions=node_details[idx]['node_positions'],
-    #         final_rssi=node_details[idx]['node_rssi'],
-    #         jammer_position=node_details[idx]['jammer_position'],
-    #         noise_floor_db=node_details[idx]['node_noise'],
-    #         jammed=node_details[idx]['node_states'],
-    #         prediction=predictions[idx]
-    #     )
-    # # sinr_db=node_details[idx]['sinr'],
-    # quit()
 
     best_val_loss = float('inf')
 
