@@ -3,6 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import random
 from tqdm import tqdm
 
 # Constants
@@ -13,8 +14,9 @@ REFERENCE_SINR = 10  # Typical SINR in dB under normal conditions
 NOISE_THRESHOLD = -55  # A jamming attack is deemed successful if the floor noise > NOISE_THRESHOLD
 RSSI_THRESHOLD = -80  # Minimum RSSI threshold (represents the point where communication is effectively non-functional)
 MESH_NETWORK = True  # Set to True for mesh network, False for AP-client network
+JAMMER_OUTSIDE_SAMPLE = True
 PLOT = True
-POS_SAMPLING_STRAT = 'random'
+POS_SAMPLING_STRAT = 'combined'
 
 
 def dbm_to_linear(dbm):
@@ -52,9 +54,6 @@ def sample_path_jamming(node_pos_i, node_pos_j, jammer_pos, loss_func, n, sigma,
     for point in line_points:
         # Calculate distance from this point to the jammer
         dist_to_jammer = np.linalg.norm(point - jammer_pos)
-        latitude = jammer_pos[1]  # Assuming second coordinate is latitude
-        degrees_lat, degrees_lon = meters_to_degrees(dist_to_jammer, latitude)
-
         # Compute jamming power at this point using path loss model
         if loss_func == log_distance_path_loss:
             jamming_power_dbm = P_tx_jammer + G_tx_jammer + G_rx - loss_func(dist_to_jammer, n=n, sigma=sigma)
@@ -142,163 +141,197 @@ def get_position(n_nodes, size, placement='random'):
     return positions
 
 
-def meters_to_degrees(distance_meters, latitude):
-    """Convert distance in meters to degrees latitude and longitude."""
-    # Convert meters to degrees latitude
-    degrees_latitude = distance_meters / 111320
-    # Convert meters to degrees longitude, considering the latitude
-    degrees_longitude = distance_meters / (111320 * np.cos(np.radians(latitude)))
-    return degrees_latitude, degrees_longitude
+# Generate new position outside the range
+# def random_position_outside_sample(region, sampled_region):
+#     (x1, y1, x2, y2) = region  # Main rectangle coordinates
+#     (sx1, sy1, sx2, sy2) = sampled_region  # Sampled region coordinates
+#
+#     print("generating random pos outside sample...")
+#
+#     while True:
+#         # Generate a random point within the main rectangle
+#         rand_x = random.uniform(x1, x2)
+#         rand_y = random.uniform(y1, y2)
+#
+#         # Check if the point is outside the sampled region
+#         if not (sx1 <= rand_x <= sx2 and sy1 <= rand_y <= sy2):
+#             return (rand_x, rand_y)
 
-
-# np.random.seed(42)
 
 # Initialize DataFrame to collect data
 columns = ["num_samples", "node_positions", "node_rssi", "node_noise", "node_states", "jammer_position", "jammer_power", "jammer_gain", "pl_exp", "sigma"]
 data_collection = pd.DataFrame(columns=columns)
 
 # Node information
-instance_count, num_instances = 0, 333
-loss_func = log_distance_path_loss
+instance_count, num_instances = 0, 500
+# loss_func = log_distance_path_loss
+loss_func = free_space_path_loss
 
-for instance_count in tqdm(range(num_instances)):
-    # Path loss variables for simulation of environment where the conditions are predominantly open with minimal obstructions
-    n = np.random.uniform(2.0, 3.5)  # Random path loss exponent between 2.0 and 2.5
-    sigma = np.random.uniform(2, 6)  # Random shadow fading between 2 dB and 6 dB
 
-    size = np.random.randint(500, 1500)  # Area size in meters [500, 1500]
-    lb_nodes = calculate_node_bounds(size)
-    ub_nodes = 8 * lb_nodes
-    beta_values = np.random.beta(2, 8)
-    n_nodes = math.ceil(beta_values * (ub_nodes - lb_nodes) + lb_nodes)
+if loss_func == log_distance_path_loss:
+    folder_path = "log_distance"
+else:
+    folder_path = "fspl"
 
-    # Radio parammeters
-    P_tx = np.random.randint(15, 30)  # Transmit power in dBm [15, 30]
-    G_tx = 0  # Transmitting antenna gain in dBi [0, 5]
-    G_rx = 0  # Receiving antenna gain in dBi [0, 5]
-    P_tx_jammer = np.random.randint(20, 50)  # Jammer transmit power in dBm [25, 50]
-    G_tx_jammer = np.random.randint(0, 5)  # Jammer transmitting antenna gain in dBi [0, 5]
 
-    # Node positions
-    node_positions = get_position(n_nodes, size, placement=POS_SAMPLING_STRAT)
+node_placement_strategy = ['random', 'rectangle', 'triangle', 'circle']
+for placement_strategy in node_placement_strategy:
+    instance_count = 0
+    data_collection = pd.DataFrame(columns=columns)
+    # for instance_count in tqdm(range(num_instances)):
+    while instance_count < num_instances:
+        # Path loss variables for simulation of environment where the conditions are predominantly open with minimal obstructions
+        n = np.random.uniform(2.0, 3.5)  # Random path loss exponent between 2.0 and 2.5
+        sigma = np.random.uniform(1, 6)  # Random shadow fading between 1 dB and 6 dB # TODO: sigma range up to 10 wireless comm outdoor
 
-    # Random jammer position
-    jammer_position = np.random.rand(1, 2) * size
+        size = np.random.randint(500, 1500)  # Area size in meters [500, 1500]
+        # jammer_size = size * 1.5  # Jammer has a 50% larger area to operate in
+        lb_nodes = calculate_node_bounds(size)
+        ub_nodes = 8 * lb_nodes
+        beta_values = np.random.beta(2, 8)
+        n_nodes = math.ceil(beta_values * (ub_nodes - lb_nodes) + lb_nodes)
 
-    # Convert positions to degrees relative to a reference point (e.g., equator for simplicity)
-    ref_latitude = 0  # Assuming a reference latitude, adjust as necessary
-    node_positions_deg = np.array([meters_to_degrees(pos, ref_latitude) for pos in node_positions])
-    jammer_position_deg = meters_to_degrees(jammer_position[0], ref_latitude)
+        # Radio parammeters
+        P_tx = np.random.randint(15, 30)  # Transmit power in dBm [15, 30]
+        G_tx = 0  # Transmitting antenna gain in dBi [0, 5]
+        G_rx = 0  # Receiving antenna gain in dBi [0, 5]
+        P_tx_jammer = np.random.randint(20, 60)  # Jammer transmit power in dBm [25, 50]
+        G_tx_jammer = np.random.randint(0, 5)  # Jammer transmitting antenna gain in dBi [0, 5]
 
-    config = {
-        'size': size,
-        'n_nodes': n_nodes,
-        'P_tx': P_tx,
-        'G_tx': G_tx,
-        'G_rx': G_rx,
-        'P_tx_jammer': P_tx_jammer,
-        'G_tx_jammer': G_tx_jammer
-    }
+        # Node positions
+        node_positions = get_position(n_nodes, size, placement=placement_strategy)
 
-    # Distance calculations
-    dist_matrix = np.linalg.norm(node_positions_deg[:, np.newaxis, :] - node_positions_deg[np.newaxis, :, :], axis=2)
-    jammer_dist = np.linalg.norm(node_positions_deg - jammer_position_deg, axis=1)
+        # # Get the min and max values for x and y
+        # min_x, min_y = np.min(node_positions, axis=0)
+        # max_x, max_y = np.max(node_positions, axis=0)
+        #
+        # # Define the region and sampled region based on the min and max values of node positions
+        # region = (0, 0, size, size)
+        # sampled_region = (min_x, min_y, max_x, max_y)
+        # print("sampled_region: ", sampled_region)
 
-    # Path loss calculations
-    if loss_func == log_distance_path_loss:
-        path_loss = loss_func(dist_matrix, n=n, sigma=sigma)
-        path_loss_jammer = loss_func(jammer_dist, n=n, sigma=sigma)
-    else:
-        path_loss = loss_func(dist_matrix)
-        path_loss_jammer = loss_func(jammer_dist)
+        # Random jammer position
+        if JAMMER_OUTSIDE_SAMPLE:
+            # jammer_position = random_position_outside_sample(region, sampled_region)
+            scale = 1.5
+            jammer_position = np.random.rand(1, 2) * (scale - 1) * size + size  # Generate two random numbers between 0 and 1, then scale them to be between size and 1.5*size
+        else:
+            jammer_position = np.random.rand(1, 2) * size  # Generate jammer within sampled region
 
-    # RSSI calculations
-    rssi_matrix = P_tx + G_tx + G_rx - path_loss
-    rssi_jammer = P_tx_jammer + G_tx_jammer + G_rx - path_loss_jammer
-
-    # Precompute maximum jammer RSSI for each pair using broadcasting
-    # Sample alongwith path (i,j) and take the highest jamming power from those points to represent power at (i,j)
-    max_jammer_rssi_matrix = np.full((n_nodes, n_nodes), -np.inf)  # Initialize with low values
-    for i in range(n_nodes):
-        for j in range(i + 1, n_nodes):  # Only fill upper triangle, the matrix is symmetric
-            # Sample path and compute maximum jamming power
-            max_jamming_power_dbm = sample_path_jamming(node_positions[i], node_positions[j], jammer_position[0], loss_func, n, sigma)
-            max_jammer_rssi_matrix[i, j] = max_jamming_power_dbm
-            max_jammer_rssi_matrix[j, i] = max_jamming_power_dbm
-
-    # Convert maximum jammer RSSI to linear scale for the entire matrix
-    jammer_power_linear_matrix = dbm_to_linear(max_jammer_rssi_matrix)
-
-    # Compute the noise floor for all pairs
-    noise_floor_matrix = dbm_to_linear(NOISE_LEVEL) + jammer_power_linear_matrix
-
-    # Convert RSSI values of the original matrix to linear scale
-    rssi_linear_matrix = dbm_to_linear(rssi_matrix)
-
-    # Compute SINR for all pairs
-    sinr_matrix = rssi_linear_matrix / noise_floor_matrix
-
-    # Convert SINR back to dB for the entire matrix
-    sinr_db_matrix = linear_to_db(sinr_matrix)
-
-    # Adjust the RSSI matrix
-    rssi_affected_matrix = np.minimum(rssi_matrix, rssi_matrix - (REFERENCE_SINR - sinr_db_matrix))
-    rssi_affected_matrix = np.maximum(rssi_affected_matrix, RSSI_THRESHOLD)
-
-    # Ignore self-comparisons
-    np.fill_diagonal(rssi_matrix, np.nan)
-    np.fill_diagonal(rssi_affected_matrix, np.nan)
-
-    # Calculate normal RSSI as the mean/max of the valid signals
-    affected_rssi = np.nanmax(rssi_affected_matrix, axis=1)
-
-    # Reference to disconnected nodes
-    disconnected = affected_rssi == np.nan
-    # Calculate normal RSSI as the mean/max of the valid signals
-    affected_rssi = np.nan_to_num(affected_rssi, nan=RSSI_THRESHOLD)  # Replace NaN with rssi_threshold or any suitable default (isolated samples)
-
-    # Compute linear powers for jammer and normal signals
-    P_rx_linear = dbm_to_linear(affected_rssi)
-    N_linear = dbm_to_linear(NOISE_LEVEL)
-    jammer_linear = dbm_to_linear(rssi_jammer)
-
-    # Compute SINR in linear scale and convert SINR from linear scale to dB
-    noise_floor = jammer_linear + N_linear
-    noise_floor_dB = linear_to_db(noise_floor)
-
-    SINR_linear = P_rx_linear / noise_floor
-    SINR_dB = linear_to_db(SINR_linear)
-
-    # Compute detection threshold for SINR
-    jammed = noise_floor_dB > NOISE_THRESHOLD
-
-    # Condition checks
-    jammed_nodes = np.sum(jammed) >= 4  # At least 4 nodes are jammed
-    not_jammed_nodes = np.sum(~jammed) >= 1  # At least 2 nodes are not jammed
-    high_rssi_nodes = np.sum(affected_rssi > -80) >= 1  # At least 2 nodes have RSSI greater than -80
-
-    # Plot only if all conditions are met
-    if jammed_nodes and not_jammed_nodes and high_rssi_nodes:
-        if PLOT:
-            plot_network_with_rssi(node_positions, affected_rssi, jammer_position, SINR_dB, noise_floor_dB, jammed)
-        instance_count += 1
-
-        # Data to be collected
-        data = {
-            "num_samples": n_nodes,
-            "node_positions": [node_positions.tolist()],  # Convert positions to list for storage
-            "node_rssi": [affected_rssi.tolist()],  # RSSI values converted to list
-            "node_noise": [noise_floor_dB.tolist()],  # RSSI values converted to list
-            "node_states": [jammed.astype(int).tolist()],  # Convert boolean array to int and then to list
-            "jammer_position": [jammer_position[0].tolist()],  # Jammer position
-            "jammer_power": P_tx_jammer,  # Jammer transmit power
-            "jammer_gain": G_tx_jammer,  # Jammer gain
-            "pl_exp": n,  # Path loss exponent
-            "sigma": sigma  # Shadow fading
+        config = {
+            'size': size,
+            'n_nodes': n_nodes,
+            'P_tx': P_tx,
+            'G_tx': G_tx,
+            'G_rx': G_rx,
+            'P_tx_jammer': P_tx_jammer,
+            'G_tx_jammer': G_tx_jammer
         }
 
-        # Append the new row to the data collection DataFrame
-        data_collection = pd.concat([data_collection, pd.DataFrame(data, index=[0])], ignore_index=True)
+        # Distance calculations
+        dist_matrix = np.linalg.norm(node_positions[:, np.newaxis, :] - node_positions[np.newaxis, :, :], axis=2)
+        jammer_dist = np.linalg.norm(node_positions - jammer_position, axis=1)
 
-# After the loop, you can save the DataFrame to a CSV file or use it for further analysis
-data_collection.to_csv(f"{POS_SAMPLING_STRAT}.csv", index=False)
+        # Path loss calculations
+        if loss_func == log_distance_path_loss:
+            path_loss = loss_func(dist_matrix, n=n, sigma=sigma)
+            path_loss_jammer = loss_func(jammer_dist, n=n, sigma=sigma)
+        else:
+            path_loss = loss_func(dist_matrix)
+            path_loss_jammer = loss_func(jammer_dist)
+
+        # RSSI calculations
+        rssi_matrix = P_tx + G_tx + G_rx - path_loss
+        rssi_jammer = P_tx_jammer + G_tx_jammer + G_rx - path_loss_jammer
+
+        # Precompute maximum jammer RSSI for each pair using broadcasting
+        # Sample alongwith path (i,j) and take the highest jamming power from those points to represent power at (i,j)
+        max_jammer_rssi_matrix = np.full((n_nodes, n_nodes), -np.inf)  # Initialize with low values
+        for i in range(n_nodes):
+            for j in range(i + 1, n_nodes):  # Only fill upper triangle, the matrix is symmetric
+                # Sample path and compute maximum jamming power
+                max_jamming_power_dbm = sample_path_jamming(node_positions[i], node_positions[j], jammer_position[0], loss_func, n, sigma)
+                max_jammer_rssi_matrix[i, j] = max_jamming_power_dbm
+                max_jammer_rssi_matrix[j, i] = max_jamming_power_dbm
+
+        # Convert maximum jammer RSSI to linear scale for the entire matrix
+        jammer_power_linear_matrix = dbm_to_linear(max_jammer_rssi_matrix)
+
+        # Compute the noise floor for all pairs
+        noise_floor_matrix = dbm_to_linear(NOISE_LEVEL) + jammer_power_linear_matrix
+
+        # Convert RSSI values of the original matrix to linear scale
+        rssi_linear_matrix = dbm_to_linear(rssi_matrix)
+
+        # Compute SINR for all pairs
+        sinr_matrix = rssi_linear_matrix / noise_floor_matrix
+
+        # Convert SINR back to dB for the entire matrix
+        sinr_db_matrix = linear_to_db(sinr_matrix)
+
+        # Adjust the RSSI matrix
+        rssi_affected_matrix = np.minimum(rssi_matrix, rssi_matrix - (REFERENCE_SINR - sinr_db_matrix))
+        rssi_affected_matrix = np.maximum(rssi_affected_matrix, RSSI_THRESHOLD)
+
+        # Ignore self-comparisons
+        np.fill_diagonal(rssi_matrix, np.nan)
+        np.fill_diagonal(rssi_affected_matrix, np.nan)
+
+        # Calculate normal RSSI as the mean/max of the valid signals
+        affected_rssi = np.nanmax(rssi_affected_matrix, axis=1)
+
+        # Reference to disconnected nodes
+        disconnected = affected_rssi == np.nan
+        # Calculate normal RSSI as the mean/max of the valid signals
+        affected_rssi = np.nan_to_num(affected_rssi, nan=RSSI_THRESHOLD)  # Replace NaN with rssi_threshold or any suitable default (isolated samples)
+
+        # Compute linear powers for jammer and normal signals
+        P_rx_linear = dbm_to_linear(affected_rssi)
+        N_linear = dbm_to_linear(NOISE_LEVEL)
+        jammer_linear = dbm_to_linear(rssi_jammer)
+
+        # Compute SINR in linear scale and convert SINR from linear scale to dB
+        noise_floor = jammer_linear + N_linear
+        noise_floor_dB = linear_to_db(noise_floor)
+
+        SINR_linear = P_rx_linear / noise_floor
+        SINR_dB = linear_to_db(SINR_linear)
+
+        # Compute detection threshold for SINR
+        jammed = noise_floor_dB > NOISE_THRESHOLD
+
+        # Condition checks
+        jammed_nodes = np.sum(jammed) >= 3  # At least 3 nodes are jammed (3 since current simulation is in 2D) # required for CJ testing
+        not_jammed_nodes = np.sum(~jammed) >= 1  # At least 2 nodes are not jammed
+        high_rssi_nodes = np.sum(affected_rssi > -80) >= 1  # At least 1 node has RSSI greater than -80
+
+        # Plot only if all conditions are met
+        # if jammed_nodes and not_jammed_nodes and high_rssi_nodes:
+        if jammed_nodes and high_rssi_nodes:
+            if PLOT:
+                plot_network_with_rssi(node_positions, affected_rssi, jammer_position, SINR_dB, noise_floor_dB, jammed)
+            instance_count += 1
+
+            # Data to be collected
+            data = {
+                "num_samples": n_nodes,
+                "node_positions": [node_positions.tolist()],  # Convert positions to list for storage
+                "node_rssi": [affected_rssi.tolist()],  # RSSI values converted to list
+                "node_noise": [noise_floor_dB.tolist()],  # RSSI values converted to list
+                "node_states": [jammed.astype(int).tolist()],  # Convert boolean array to int and then to list
+                "jammer_position": [jammer_position[0].tolist()],  # Jammer position
+                "jammer_power": P_tx_jammer,  # Jammer transmit power
+                "jammer_gain": G_tx_jammer,  # Jammer gain
+                "pl_exp": n,  # Path loss exponent
+                "sigma": sigma,  # Shadow fading
+                "node_placement": placement_strategy
+            }
+
+            # Append the new row to the data collection DataFrame
+            data_collection = pd.concat([data_collection, pd.DataFrame(data, index=[0])], ignore_index=True)
+
+    # After the loop, you can save the DataFrame to a CSV file or use it for further analysis
+    if JAMMER_OUTSIDE_SAMPLE:
+        data_collection.to_csv(f"{folder_path}/{placement_strategy}_jammer_outside_region.csv", index=False)
+    else:
+        data_collection.to_csv(f"{folder_path}/{placement_strategy}.csv", index=False)
