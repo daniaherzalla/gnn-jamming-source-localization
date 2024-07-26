@@ -15,7 +15,7 @@ NOISE_THRESHOLD = -55  # A jamming attack is deemed successful if the floor nois
 RSSI_THRESHOLD = -80  # Minimum RSSI threshold (represents the point where communication is effectively non-functional)
 MESH_NETWORK = True  # Set to True for mesh network, False for AP-client network
 JAMMER_OUTSIDE_SAMPLE = True
-PLOT = True
+PLOT = False
 POS_SAMPLING_STRAT = 'combined'
 
 
@@ -92,8 +92,11 @@ def plot_network_with_rssi(node_positions, final_rssi, jammer_position, sinr_db,
         ax.text(pos[0], pos[1], node_info, fontsize=9, ha='right')
 
     # Plot jammer
-    ax.plot(jammer_position[0][0], jammer_position[0][1], 'r^', markersize=10)  # Jammer in red
-    ax.text(jammer_position[0][0], jammer_position[0][1], ' Jammer', verticalalignment='bottom', horizontalalignment='right', color='red', fontsize=10)
+    # ax.plot(jammer_position[0][0], jammer_position[0][1], 'r^', markersize=10)  # Jammer in red
+    # ax.text(jammer_position[0][0], jammer_position[0][1], ' Jammer', verticalalignment='bottom', horizontalalignment='right', color='red', fontsize=10)
+
+    ax.plot(jammer_position[0], jammer_position[1], 'r^', markersize=10)  # Jammer in red
+    ax.text(jammer_position[0], jammer_position[1], ' Jammer', verticalalignment='bottom', horizontalalignment='right', color='red', fontsize=10)
 
     ax.set_title('Network Topology with RSSI, SINR, and Noise Floor', fontsize=11)
     ax.set_xlabel('X position (m)', fontsize=14)
@@ -142,20 +145,42 @@ def get_position(n_nodes, size, placement='random'):
 
 
 # Generate new position outside the range
-# def random_position_outside_sample(region, sampled_region):
-#     (x1, y1, x2, y2) = region  # Main rectangle coordinates
-#     (sx1, sy1, sx2, sy2) = sampled_region  # Sampled region coordinates
+def random_position_outside_sample(region, sampled_region):
+    (x1, y1, x2, y2) = region  # Main rectangle coordinates
+    (sx1, sy1, sx2, sy2) = sampled_region  # Sampled region coordinates
+
+    while True:
+        # Generate a random point within the main rectangle
+        rand_x = random.uniform(x1, x2)
+        rand_y = random.uniform(y1, y2)
+
+        # Check if the point is outside the sampled region
+        if not (sx1 <= rand_x <= sx2 and sy1 <= rand_y <= sy2):
+            return (rand_x, rand_y)
+
+
+# def get_jammer_position(size, scale):
+#     # Determine the outer boundary
+#     outer_size = scale * size
 #
-#     print("generating random pos outside sample...")
+#     # Choose a side randomly: 0 = top, 1 = bottom, 2 = left, 3 = right
+#     side = np.random.choice(['top', 'bottom', 'left', 'right'])
+#     print("side: ", side)
 #
-#     while True:
-#         # Generate a random point within the main rectangle
-#         rand_x = random.uniform(x1, x2)
-#         rand_y = random.uniform(y1, y2)
+#     if side == 'top':
+#         x = np.random.uniform(size, outer_size)
+#         y = outer_size
+#     elif side == 'bottom':
+#         x = np.random.uniform(size, outer_size)
+#         y = size
+#     elif side == 'left':
+#         x = size
+#         y = np.random.uniform(size, outer_size)
+#     elif side == 'right':
+#         x = outer_size
+#         y = np.random.uniform(size, outer_size)
 #
-#         # Check if the point is outside the sampled region
-#         if not (sx1 <= rand_x <= sx2 and sy1 <= rand_y <= sy2):
-#             return (rand_x, rand_y)
+#     return np.array([[x, y]])
 
 
 # Initialize DataFrame to collect data
@@ -163,7 +188,7 @@ columns = ["num_samples", "node_positions", "node_rssi", "node_noise", "node_sta
 data_collection = pd.DataFrame(columns=columns)
 
 # Node information
-instance_count, num_instances = 0, 500
+instance_count, num_instances = 0, 200
 # loss_func = log_distance_path_loss
 loss_func = free_space_path_loss
 
@@ -185,7 +210,6 @@ for placement_strategy in node_placement_strategy:
         sigma = np.random.uniform(1, 6)  # Random shadow fading between 1 dB and 6 dB # TODO: sigma range up to 10 wireless comm outdoor
 
         size = np.random.randint(500, 1500)  # Area size in meters [500, 1500]
-        # jammer_size = size * 1.5  # Jammer has a 50% larger area to operate in
         lb_nodes = calculate_node_bounds(size)
         ub_nodes = 8 * lb_nodes
         beta_values = np.random.beta(2, 8)
@@ -195,28 +219,26 @@ for placement_strategy in node_placement_strategy:
         P_tx = np.random.randint(15, 30)  # Transmit power in dBm [15, 30]
         G_tx = 0  # Transmitting antenna gain in dBi [0, 5]
         G_rx = 0  # Receiving antenna gain in dBi [0, 5]
-        P_tx_jammer = np.random.randint(20, 60)  # Jammer transmit power in dBm [25, 50]
+        P_tx_jammer = np.random.randint(20, 50)  # Jammer transmit power in dBm [25, 50]
         G_tx_jammer = np.random.randint(0, 5)  # Jammer transmitting antenna gain in dBi [0, 5]
 
         # Node positions
         node_positions = get_position(n_nodes, size, placement=placement_strategy)
 
-        # # Get the min and max values for x and y
-        # min_x, min_y = np.min(node_positions, axis=0)
-        # max_x, max_y = np.max(node_positions, axis=0)
-        #
-        # # Define the region and sampled region based on the min and max values of node positions
-        # region = (0, 0, size, size)
-        # sampled_region = (min_x, min_y, max_x, max_y)
-        # print("sampled_region: ", sampled_region)
+        # Get the min and max values for x and y
+        min_x, min_y = np.min(node_positions, axis=0)
+        max_x, max_y = np.max(node_positions, axis=0)
+
+        # Define the region and sampled region based on the min and max values of node positions
+        region = (0, 0, 1500, 1500)
+        sampled_region = (min_x, min_y, max_x, max_y)
 
         # Random jammer position
         if JAMMER_OUTSIDE_SAMPLE:
-            # jammer_position = random_position_outside_sample(region, sampled_region)
-            scale = 1.5
-            jammer_position = np.random.rand(1, 2) * (scale - 1) * size + size  # Generate two random numbers between 0 and 1, then scale them to be between size and 1.5*size
+            jammer_position = random_position_outside_sample(region, sampled_region)
         else:
             jammer_position = np.random.rand(1, 2) * size  # Generate jammer within sampled region
+            jammer_position = jammer_position[0]
 
         config = {
             'size': size,
@@ -306,8 +328,7 @@ for placement_strategy in node_placement_strategy:
         high_rssi_nodes = np.sum(affected_rssi > -80) >= 1  # At least 1 node has RSSI greater than -80
 
         # Plot only if all conditions are met
-        # if jammed_nodes and not_jammed_nodes and high_rssi_nodes:
-        if jammed_nodes and high_rssi_nodes:
+        if jammed_nodes and not_jammed_nodes and high_rssi_nodes:
             if PLOT:
                 plot_network_with_rssi(node_positions, affected_rssi, jammer_position, SINR_dB, noise_floor_dB, jammed)
             instance_count += 1
@@ -319,7 +340,7 @@ for placement_strategy in node_placement_strategy:
                 "node_rssi": [affected_rssi.tolist()],  # RSSI values converted to list
                 "node_noise": [noise_floor_dB.tolist()],  # RSSI values converted to list
                 "node_states": [jammed.astype(int).tolist()],  # Convert boolean array to int and then to list
-                "jammer_position": [jammer_position[0].tolist()],  # Jammer position
+                "jammer_position": [[jammer_position[0], jammer_position[1]]],  # Jammer position
                 "jammer_power": P_tx_jammer,  # Jammer transmit power
                 "jammer_gain": G_tx_jammer,  # Jammer gain
                 "pl_exp": n,  # Path loss exponent
