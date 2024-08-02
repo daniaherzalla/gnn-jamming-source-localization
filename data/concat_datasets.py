@@ -2,8 +2,8 @@ import pandas as pd
 import os
 
 # Define the folder containing the CSV files
-# folder_path = 'log_distance'
-folder_path = 'fspl'
+folder_path = 'log_distance'
+# folder_path = 'fspl'
 
 # List to hold individual DataFrames
 dataframes = []

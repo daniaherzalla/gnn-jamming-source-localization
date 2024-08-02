@@ -92,9 +92,6 @@ def plot_network_with_rssi(node_positions, final_rssi, jammer_position, sinr_db,
         ax.text(pos[0], pos[1], node_info, fontsize=9, ha='right')
 
     # Plot jammer
-    # ax.plot(jammer_position[0][0], jammer_position[0][1], 'r^', markersize=10)  # Jammer in red
-    # ax.text(jammer_position[0][0], jammer_position[0][1], ' Jammer', verticalalignment='bottom', horizontalalignment='right', color='red', fontsize=10)
-
     ax.plot(jammer_position[0], jammer_position[1], 'r^', markersize=10)  # Jammer in red
     ax.text(jammer_position[0], jammer_position[1], ' Jammer', verticalalignment='bottom', horizontalalignment='right', color='red', fontsize=10)
 
@@ -159,38 +156,14 @@ def random_position_outside_sample(region, sampled_region):
             return (rand_x, rand_y)
 
 
-# def get_jammer_position(size, scale):
-#     # Determine the outer boundary
-#     outer_size = scale * size
-#
-#     # Choose a side randomly: 0 = top, 1 = bottom, 2 = left, 3 = right
-#     side = np.random.choice(['top', 'bottom', 'left', 'right'])
-#     print("side: ", side)
-#
-#     if side == 'top':
-#         x = np.random.uniform(size, outer_size)
-#         y = outer_size
-#     elif side == 'bottom':
-#         x = np.random.uniform(size, outer_size)
-#         y = size
-#     elif side == 'left':
-#         x = size
-#         y = np.random.uniform(size, outer_size)
-#     elif side == 'right':
-#         x = outer_size
-#         y = np.random.uniform(size, outer_size)
-#
-#     return np.array([[x, y]])
-
-
 # Initialize DataFrame to collect data
 columns = ["num_samples", "node_positions", "node_rssi", "node_noise", "node_states", "jammer_position", "jammer_power", "jammer_gain", "pl_exp", "sigma"]
 data_collection = pd.DataFrame(columns=columns)
 
 # Node information
-instance_count, num_instances = 0, 200
-# loss_func = log_distance_path_loss
-loss_func = free_space_path_loss
+instance_count, num_instances = 0, 1000
+loss_func = log_distance_path_loss
+# loss_func = free_space_path_loss
 
 
 if loss_func == log_distance_path_loss:
@@ -207,7 +180,7 @@ for placement_strategy in node_placement_strategy:
     while instance_count < num_instances:
         # Path loss variables for simulation of environment where the conditions are predominantly open with minimal obstructions
         n = np.random.uniform(2.0, 3.5)  # Random path loss exponent between 2.0 and 2.5
-        sigma = np.random.uniform(1, 6)  # Random shadow fading between 1 dB and 6 dB # TODO: sigma range up to 10 wireless comm outdoor
+        sigma = np.random.uniform(2, 6)  # Random shadow fading between 1 dB and 6 dB
 
         size = np.random.randint(500, 1500)  # Area size in meters [500, 1500]
         lb_nodes = calculate_node_bounds(size)
