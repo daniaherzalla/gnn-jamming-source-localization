@@ -62,6 +62,7 @@ def set_seeds_and_reproducibility(reproducible=True, seed_value=params['seed']):
     seed_value (int): The base seed value to use for RNGs.
     """
     # Set seeds with different offsets to avoid correlations
+    print("Set seeds for reproducibility")
     random.seed(seed_value)
     np.random.seed(seed_value + 1)
     torch.manual_seed(seed_value + 2)

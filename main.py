@@ -24,7 +24,7 @@ def main():
     """
     # Experiment params
     combination = params['coords'] + '_' + params['edges'] + '_' + params['norm']
-    experiment_path = 'experiments/' + combination + '/trial' + str(params['trial_num'])
+    experiment_path = 'experiments_datasets/' + combination + '/' + params['dataset'] + '/' + '/trial' + str(params['trial_num'])
     model_path = f'{experiment_path}/trained_model_{combination}.pth'
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -87,7 +87,7 @@ def main():
     save_metrics_and_params(metrics, params)
 
     # Save the trained model
-    torch.save(model.state_dict(), f'{experiment_path}/trained_model_{combination}.pth')
+    torch.save(model.state_dict(), f'{experiment_path}/trained_model.pth')
 
     # Evaluate the model on the test set
     model.load_state_dict(best_model_state)

@@ -12,6 +12,7 @@ import numpy as np
 # print(torch.cuda.device_count())  # Should list the number of
 # quit()
 
+import time
 
 
 def objective(hyperparameters):
@@ -41,17 +42,21 @@ def objective(hyperparameters):
     # Include the additional features in the hyperparameters dictionary
     hyperparameters['additional_features'] = additional_features
 
-    train_dataset, val_dataset, test_dataset, original_dataset = load_data(params['dataset_path'], hyperparameters)
-    train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=hyperparameters['batch_size'])
-    steps_per_epoch = len(train_loader)
-    model, optimizer, scheduler, criterion = initialize_model(device, hyperparameters, steps_per_epoch)
-    for epoch in range(params['max_epochs']):
-        train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
-        val_loss = validate(model, val_loader, criterion, device)
-        print(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
+    try:
+        train_dataset, val_dataset, test_dataset, original_dataset = load_data(params['dataset_path'], hyperparameters)
+        train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=hyperparameters['batch_size'])
+        steps_per_epoch = len(train_loader)
+        model, optimizer, scheduler, criterion = initialize_model(device, hyperparameters, steps_per_epoch)
+        for epoch in range(params['max_epochs']):
+            train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
+            val_loss = validate(model, val_loader, criterion, device)
+            print(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
 
-    # Return the results with the final hyperparameters including the dynamically added additional features
-    return {'loss': val_loss, 'status': 'ok'}
+        # Return the results with the final hyperparameters including the dynamically added additional features
+        return {'loss': val_loss, 'status': 'ok'}
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return {'loss': float('inf'), 'status': 'ok'}  # Return infinity to indicate a failed trial
 
 
 def convert_to_serializable(data):
@@ -80,8 +85,8 @@ def map_indices_to_values(hyperparameters, model_type):
     actual_values = {
         "num_heads": [2, 4, 8],
         "num_layers": [2, 4, 8],
-        "hidden_channels": [32, 64, 128, 256],
-        "out_channels": [32, 64, 128, 256],
+        "hidden_channels": [32, 64, 128, 256, 512],
+        "out_channels": [32, 64, 128, 256, 512],
         "batch_size": [16, 32, 64],
         "max_epochs": [200],
         "num_neighbors": [5, 10, 20, 30],
@@ -100,7 +105,7 @@ def map_indices_to_values(hyperparameters, model_type):
     return mapped_hyperparameters
 
 
-def save_results(trials, best_hyperparams, best_loss, model_type):
+def save_results(trials, best_hyperparams, best_loss, model_type, elapsed_time, num_trials):
     """
     Save the results of the hyperparameter tuning process along with the best validation loss.
     Adjust the function to save additional_features within the hyperparameters section.
@@ -108,6 +113,8 @@ def save_results(trials, best_hyperparams, best_loss, model_type):
     results = {
         'best_hyperparameters': convert_to_serializable(map_indices_to_values(best_hyperparams, model_type)),
         'best_loss': convert_to_serializable(best_loss),
+        'num_trials': num_trials,
+        'elapsed_time': elapsed_time,
         'trials': [
             {
                 'hyperparameters': convert_to_serializable(map_indices_to_values(trial['misc']['vals'], model_type)),
@@ -119,7 +126,7 @@ def save_results(trials, best_hyperparams, best_loss, model_type):
         ]
     }
     model_name = best_hyperparams['model']
-    filename = f'hyperparam_results/trial_results_{model_name}_TRIAL2.json'
+    filename = f'hyperparam_results/{model_name}_hyperopt_results.json'
     with open(filename, 'w') as f:
         json.dump(results, f, indent=4)
 
@@ -128,15 +135,16 @@ def main():
     """
     Main function to run hyperparameter optimization.
     """
-    model_type = 'GCN'
+    model_type = 'GAT'
+    num_trials = 50
 
     hyperparameter_space = {
         'dropout_rate': hp.uniform('dropout_rate', 0.2, 0.6),
         'num_heads': hp.choice('num_heads', [2, 4, 8]),
         'num_layers': hp.choice('num_layers', [2, 4, 8]),
-        'hidden_channels': hp.choice('hidden_channels', [32, 64, 128, 256]),
-        'out_channels': hp.choice('out_channels', [32, 64, 128, 256]),
-        'batch_size': hp.choice('batch_size', [16, 32]),
+        'hidden_channels': hp.choice('hidden_channels', [32, 64, 128, 256, 512]),
+        'out_channels': hp.choice('out_channels', [32, 64, 128, 256, 512]),
+        'batch_size': hp.choice('batch_size', [8, 16, 32, 64]),
         'learning_rate': hp.uniform('learning_rate', 0.0001, 0.001),
         'weight_decay': hp.loguniform('weight_decay', -7, -2),
         'num_neighbors': hp.choice('num_neighbors', [5, 10, 20, 30]),
@@ -158,17 +166,23 @@ def main():
         'use_range_noise': hp.choice('use_range_noise', [True, False])
     }
 
+    start_time = time.time()
+
     trials = Trials()
     best_hyperparameters = fmin(
         fn=objective,
         space=hyperparameter_space,
         algo=tpe.suggest,
-        max_evals=200,
+        max_evals=num_trials,
         trials=trials
     )
     best_hyperparams = space_eval(hyperparameter_space, best_hyperparameters)
     best_loss = min([trial['result']['loss'] for trial in trials.trials if trial['result']['status'] == 'ok'])
-    save_results(trials, best_hyperparams, best_loss, model_type)
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print("Elapsed time: ", elapsed_time)
+    save_results(trials, best_hyperparams, best_loss, model_type, elapsed_time, num_trials)
 
 
 if __name__ == "__main__":

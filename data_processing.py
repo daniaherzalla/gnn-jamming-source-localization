@@ -103,8 +103,8 @@ def center_coordinates(data):
 
         # Similar centering for jammer position
         jammer_pos = np.array(row['jammer_position'])
+        # print("jammer_pos: ", jammer_pos)
         centered_jammer_position = jammer_pos - center
-        # print('centered_jammer_position: ', centered_jammer_position)
         data.at[idx, 'jammer_position'] = centered_jammer_position.tolist()
 
         # Save center for this row index
@@ -218,7 +218,6 @@ def add_cyclical_features(data):
 def add_node_noise_statistical_features(data):
     """Calculate statistical features for node noise."""
     data['mean_noise'] = data['node_noise'].apply(np.mean)
-    print("data['mean_noise']: ", data['mean_noise'])
     data['median_noise'] = data['node_noise'].apply(np.median)
     data['std_noise'] = data['node_noise'].apply(np.std)
     data['range_noise'] = data['node_noise'].apply(lambda x: np.max(x) - np.min(x))
@@ -508,7 +507,7 @@ def save_datasets(preprocessed_data, data, params):
         train_indices = train_dataset.indices
         val_indices = val_dataset.indices
         test_indices = test_dataset.indices
-        experiments_path = 'experiments/' + params['coords'] + '_' + params['edges'] + '_' + params['norm'] + '/' + 'trial' + str(params['trial_num']) + '/'
+        experiments_path = 'experiments_datasets/' + params['coords'] + '_' + params['edges'] + '_' + params['norm'] + '/' + params['dataset'] + '/' + 'trial' + str(params['trial_num']) + '/'
 
         # Use these indices to split the DataFrame
         train_df = data.iloc[train_indices].reset_index(drop=True)
@@ -530,16 +529,16 @@ def save_datasets(preprocessed_data, data, params):
         test_path = experiments_path + 'test_df.csv'  # Change file extension to .csv
         test_df.to_csv(test_path, index=False)  # Save without row indices
 
-        # Save graphs
-        train_path = experiments_path + 'train_torch_geo_dataset.gzip'
-        val_path = experiments_path + 'validation_torch_geo_dataset.gzip'
-        test_path = experiments_path + 'test_torch_geo_dataset.gzip'
-        with gzip.open(train_path, 'wb') as f:
-            pickle.dump(train_dataset, f)
-        with gzip.open(val_path, 'wb') as f:
-            pickle.dump(val_dataset, f)
-        with gzip.open(test_path, 'wb') as f:
-            pickle.dump(test_dataset, f)
+        # # Save graphs
+        # train_path = experiments_path + 'train_torch_geo_dataset.gzip'
+        # val_path = experiments_path + 'validation_torch_geo_dataset.gzip'
+        # test_path = experiments_path + 'test_torch_geo_dataset.gzip'
+        # with gzip.open(train_path, 'wb') as f:
+        #     pickle.dump(train_dataset, f)
+        # with gzip.open(val_path, 'wb') as f:
+        #     pickle.dump(val_dataset, f)
+        # with gzip.open(test_path, 'wb') as f:
+        #     pickle.dump(test_dataset, f)
 
     return train_dataset, val_dataset, test_dataset
 
@@ -555,10 +554,11 @@ def load_data(dataset_path: str, params, data=None):
         Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
         The train, validation, and test datasets.
     """
+    logging.info("Loading data...")
     if data is None:
         data = pd.read_csv(dataset_path)
     data['id'] = range(1, len(data) + 1)
-    data.drop(columns=['jammer_power', 'pl_exp', 'sigma'], inplace=True)
+    # data.drop(columns=['jammer_power', 'pl_exp', 'sigma'], inplace=True)
 
     # Create a deep copy of the DataFrame
     data_to_preprocess = data.copy(deep=True)

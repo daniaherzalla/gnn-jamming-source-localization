@@ -13,7 +13,7 @@ from data_processing import load_data, create_data_loader
 # TIMEOUT = 48600  # seconds
 # TIMEOUT = 50400  # seconds # 14 hours
 TIMEOUT = 43200  # seconds # 12 hours
-NUM_JOBS = 2
+NUM_JOBS = 1
 
 
 def objective(trial, model):
@@ -42,7 +42,7 @@ def objective(trial, model):
         'weight_decay': trial.suggest_float('weight_decay', 1e-7, 1e-2, log=True),
         'num_neighbors': trial.suggest_categorical('num_neighbors', [5, 10, 20, 30]),
         'required_features': ['node_positions', 'node_noise'],
-        'max_epochs': 20,
+        'max_epochs': 200,
         'coords': 'cartesian',
         'edges': 'knn',
         'norm': 'minmax',
