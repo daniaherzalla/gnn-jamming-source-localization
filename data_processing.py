@@ -472,6 +472,15 @@ def convert_output(output, device):  # for training to compute val loss
     return output  # If not polar, just pass the output through
 
 
+def save_reduced_dataset(dataset, indices, path):
+    """
+    Saves only the necessary data from the original dataset at specified indices,
+    effectively reducing the file size by excluding unnecessary data.
+    """
+    reduced_data = [dataset[i] for i in indices]  # Extract only the relevant data
+    torch.save(reduced_data, path)  # Save the truly reduced dataset
+
+
 def save_datasets(preprocessed_data, data, params, experiments_path):
     """
     Save the preprocessed data into train, validation, and test datasets.
@@ -489,25 +498,6 @@ def save_datasets(preprocessed_data, data, params, experiments_path):
 
     logging.info('Creating graphs...')
     torch_geo_dataset = [create_torch_geo_data(row, params) for _, row in preprocessed_data.iterrows()]
-
-    # if params['inference']:
-    #     logging.info("Inference mode: creating test dataset...")
-    #     test_dataset = torch.utils.data.Subset(torch_geo_dataset, np.arange(len(torch_geo_dataset)))
-    #     return None, None, test_dataset
-
-    # # Shuffle the dataset
-    # indices = np.arange(len(data))
-    # np.random.shuffle(indices)
-    #
-    # # Reorder both datasets based on shuffled indices
-    # data = data.iloc[indices].reset_index(drop=True)
-    # torch_geo_dataset = [torch_geo_dataset[i] for i in indices]
-    #
-    # logging.info('Creating train-test split...')
-    # train_size = int(0.7 * len(torch_geo_dataset))
-    # val_size = int(0.1 * len(torch_geo_dataset))
-    # test_size = len(torch_geo_dataset) - train_size - val_size
-    # train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(torch_geo_dataset, [train_size, val_size, test_size])
 
     # Stratified split using scikit-learn
     train_idx, temp_idx, train_temp_y, temp_y = train_test_split(
@@ -527,87 +517,50 @@ def save_datasets(preprocessed_data, data, params, experiments_path):
         random_state=100
     )
 
-    # Create PyTorch datasets using the indices from the stratified split
-    train_dataset = Subset(torch_geo_dataset, train_idx)
-    val_dataset = Subset(torch_geo_dataset, val_idx)
-    test_dataset = Subset(torch_geo_dataset, test_idx)
-
     # Saving data
     if params['save_data']:
         logging.info("Saving data...")
 
         # Save datasets
-        torch.save(train_dataset, os.path.join(experiments_path, 'train_dataset.pt'))
-        torch.save(val_dataset, os.path.join(experiments_path, 'val_dataset.pt'))
-        torch.save(test_dataset, os.path.join(experiments_path, 'test_dataset.pt'))
+        save_reduced_dataset(torch_geo_dataset, train_idx, os.path.join(experiments_path, 'train_dataset.pt'))
+        save_reduced_dataset(torch_geo_dataset, val_idx, os.path.join(experiments_path, 'val_dataset.pt'))
+        save_reduced_dataset(torch_geo_dataset, test_idx, os.path.join(experiments_path, 'test_dataset.pt'))
 
         # Convert indices back to DataFrame subsets
-        train_df = preprocessed_data.iloc[train_idx].reset_index(drop=True)
-        val_df = preprocessed_data.iloc[val_idx].reset_index(drop=True)
         test_df = preprocessed_data.iloc[test_idx].reset_index(drop=True)
 
-        # Save to Pickle files
-        train_path = experiments_path + 'train_dataset.pkl'
-        val_path = experiments_path + 'validation_dataset.pkl'
+        # Save Pickle files
         test_path = experiments_path + 'test_dataset.pkl'
-        train_df.to_pickle(train_path)
-        val_df.to_pickle(val_path)
         test_df.to_pickle(test_path)
 
-        # Save to CSV files
+        # Save CSV files
         test_path = experiments_path + 'test_dataset.csv'
         test_df.to_csv(test_path, index=False)
 
-        # # Extract indices for each split
-        # train_indices = train_dataset.indices
-        # val_indices = val_dataset.indices
-        # test_indices = test_dataset.indices
-        #
-        # # Use these indices to split the DataFrame
-        # train_df = data.iloc[train_indices].reset_index(drop=True)
-        # val_df = data.iloc[val_indices].reset_index(drop=True)
-        # test_df = data.iloc[test_indices].reset_index(drop=True)
+        # Dataset types for specific filtering
+        dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
+                         'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
+                         'random_jammer_outside_region']
 
-        # # Save raw dataframes before preprocessing
-        # train_path = experiments_path + 'train_df.gzip'
-        # val_path = experiments_path + 'validation_df.gzip'
-        # test_path = experiments_path + 'test_df.gzip'
-        # with gzip.open(train_path, 'wb') as f:
-        #     pickle.dump(train_df, f)
-        # with gzip.open(val_path, 'wb') as f:
-        #     pickle.dump(val_df, f)
-        # with gzip.open(test_path, 'wb') as f:
-        #     pickle.dump(test_df, f)
+        # Save filtered test datasets based on specific dataset types and patterns
+        for dataset in dataset_types:
+            dataset_type_indices = [idx for idx in test_idx if preprocessed_data.iloc[idx]['dataset'] == dataset]
+            if dataset_type_indices:
+                save_reduced_dataset(torch_geo_dataset, dataset_type_indices, os.path.join(experiments_path, f'{dataset}_test_set.pt'))
 
-        # # Save test dataframe as CSV
-        # test_path = experiments_path + 'test_df.csv'
-        # test_df.to_csv(test_path, index=False)  # Save without row indices
+        # Special cases for "all_jammed" and "all_jammed_jammer_outside_region"
+        all_jammed_indices = [idx for idx in test_idx if 'all_jammed' in preprocessed_data.iloc[idx]['dataset'] and 'jammer_outside_region' not in preprocessed_data.iloc[idx]['dataset']]
+        all_jammed_jammer_outside_region_indices = [idx for idx in test_idx if 'all_jammed_jammer_outside_region' in preprocessed_data.iloc[idx]['dataset']]
+
+        if all_jammed_indices:
+            save_reduced_dataset(torch_geo_dataset, all_jammed_indices, os.path.join(experiments_path, 'all_jammed.pt'))
+
+        if all_jammed_jammer_outside_region_indices:
+            save_reduced_dataset(torch_geo_dataset, all_jammed_jammer_outside_region_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region.pt'))
 
         quit()
 
-    return train_dataset, val_dataset, test_dataset
-
-# from torch.utils.data import Dataset
-# class DataFrameDataset(Dataset):
-#     def __init__(self, dataframe, transform=None):
-#         self.dataframe = dataframe
-#         self.transform = transform
-#
-#     def __len__(self):
-#         return len(self.dataframe)
-#
-#     def __getitem__(self, idx):
-#         row = self.dataframe.iloc[idx]
-#         # Convert row data to the appropriate format, e.g., tensors
-#         data = torch.tensor(row.values, dtype=torch.float32)  # Adjust based on your needs
-#         if self.transform:
-#             data = self.transform(data)
-#         return data
-
-
-# def create_dataloader(dataframe, batch_size=params['batch_size'], shuffle=True, num_workers=4):
-#     dataset = DataFrameDataset(dataframe)
-#     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+    # return train_dataset, val_dataset, test_dataset
 
 
 def load_data(dataset_path: str, params, experiments_path=None, data=None):
@@ -637,27 +590,7 @@ def load_data(dataset_path: str, params, experiments_path=None, data=None):
         train_dataset = torch.load(os.path.join(experiments_path, 'train_dataset.pt'))
         val_dataset = torch.load(os.path.join(experiments_path, 'val_dataset.pt'))
         test_dataset = torch.load(os.path.join(experiments_path, 'test_dataset.pt'))
-
-
-        # train_dataset = pd.read_pickle(params['train_path'])
-        # val_dataset = pd.read_pickle(params['val_path'])
-        # test_dataset = pd.read_pickle(params['test_path'])
-
-        # # Convert DataFrames to PyTorch datasets
-        # train_dataset = create_dataloader(train_df)
-        # val_dataset = create_dataloader(val_df)
-        # test_dataset = create_dataloader(test_df)
-
-        # train_dataset = pd.read_csv(params['train_path'])
-        # val_dataset = pd.read_csv(params['val_path'])
-        # test_dataset = pd.read_csv(params['test_path'])
-
-        # convert_data_type(train_dataset)
-        # convert_data_type(val_dataset)
-        # convert_data_type(test_dataset)
-        #
-        # print("train_dataset: ", train_dataset)
-        # print("train_dataset cols: ", train_dataset.columns)
+        test_dataset_csv = pd.read_csv(experiments_path + 'test_dataset.csv')
 
     return train_dataset, val_dataset, test_dataset, data
 

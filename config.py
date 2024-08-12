@@ -9,7 +9,7 @@ params = {
     '3d': False,
     'required_features': ['node_positions', 'node_noise'],  # node_positions, polar_coordinates, node_noise, node_rssi
     'additional_features': [],  # ['relative_noise', 'proximity_count', 'std_noise', 'range_noise'],
-    'coords': 'cartesian',  # opts: 'polar', 'cartesian'
+    'coords': 'polar',  # opts: 'polar', 'cartesian'
     'num_neighbors': 10,
     'in_channels': 3,  # x, y, z, rssi # r, sin(theta), cos(theta), sin(phi), cos(phi)), rssi
     'num_layers': 4,
@@ -19,11 +19,9 @@ params = {
     'edges': 'knn',  # opts: 'knn', 'proximity'
     'norm': 'minmax',  # opts: 'minmax', 'unit_sphere'
     'activation': False,
-    'dataset': 'log_distance/urban_area/urban_area/',  # name of experiments_data folder
+    'dataset_type': 'rectangle',  # name of experiments_data folder
+    'dataset': 'log_distance/urban_area/',  # 'log_distance/urban_area/rectangle/',  # name of experiments_data folder
     'dataset_path': 'data/train_test_data/log_distance/urban_area/combined_urban_area.csv',  # data/static_swarm_3d.csv # /home/dania/Downloads/dataset/random/random.csv
-    'train_path': 'experiments_datasets/datasets/log_distance/urban_area/urban_area/train_dataset.pkl',
-    'val_path': 'experiments_datasets/datasets/log_distance/urban_area/urban_area/validation_dataset.pkl',
-    'test_path': 'experiments_datasets/datasets/log_distance/urban_area/urban_area/test_dataset.pkl',
     'inference': False,
     'save_data': False,
     'reproduce': True,  # set False only for dataset study
@@ -31,6 +29,9 @@ params = {
     'study': 'coord_system'  # dataset, coord_system, feat_engineering
 }
 
+#     'train_path': 'experiments_datasets/datasets/log_distance/urban_area/urban_area/train_dataset.pkl',
+#     'val_path': 'experiments_datasets/datasets/log_distance/urban_area/urban_area/validation_dataset.pkl',
+#     'test_path': 'experiments_datasets/datasets/log_distance/urban_area/urban_area/test_dataset.pkl',
 # 'seed': 100,  # opts: 42, 1, 23
 
 # CHECK: did you update...

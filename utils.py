@@ -58,6 +58,21 @@ def save_epochs(epoch_data, folder_path) -> None:
         writer.writerow(epoch_data)
 
 
+def save_study_data(trial_data, file) -> None:
+    file_exists = os.path.isfile(file)
+
+    # Open the CSV file in append mode
+    with open(file, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=trial_data.keys())
+
+        # Write the header only if the file didn't exist before
+        if not file_exists:
+            writer.writeheader()
+
+        # Write the data
+        writer.writerow(trial_data)
+
+
 def set_seeds_and_reproducibility(seed_value, reproducible=True):
     """
     Set seeds for reproducibility and configure PyTorch for deterministic behavior.

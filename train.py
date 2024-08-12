@@ -231,7 +231,22 @@ def predict_and_evaluate_full(loader, model, device, original_dataset):
     predictions = np.concatenate(predictions)
     actuals = np.concatenate(actuals)
 
-    return predictions, actuals, node_details
+    # calculate metrics MSE, RMSE using predictions and actuals
+    mae = mean_absolute_error(actuals, predictions)
+    mse = mean_squared_error(actuals, predictions)
+    print(f'Mean Squared Error: {mse}')
+    rmse = math.sqrt(mse)
+    print(f'Root Mean Squared Error: {rmse}')
+
+    err_metrics = {
+        'actuals': actuals,
+        'predictions': predictions,
+        'mae': mae,
+        'mse': mse,
+        'rmse': rmse
+    }
+
+    return predictions, actuals, node_details, err_metrics
 
 
 def predict(loader, model, device):
