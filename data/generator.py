@@ -14,9 +14,10 @@ REFERENCE_SINR = 10  # Typical SINR in dB under normal conditions
 NOISE_THRESHOLD = -55  # A jamming attack is deemed successful if the floor noise > NOISE_THRESHOLD
 RSSI_THRESHOLD = -80  # Minimum RSSI threshold (represents the point where communication is effectively non-functional)
 MESH_NETWORK = True  # Set to True for mesh network, False for AP-client network
-JAMMER_OUTSIDE_SAMPLE = True
+JAMMER_OUTSIDE_SAMPLE = False  # Set True to ensure jammer position is generated outside the node positions sampled region
+ALL_JAMMED = True  # Set True to ensure every node in network is jammed
+ENV = "shadowed_urban_area"  # "shadowed_urban_area"  # Set type of propagation environment
 PLOT = False
-POS_SAMPLING_STRAT = 'combined'
 
 
 def dbm_to_linear(dbm):
@@ -161,13 +162,17 @@ columns = ["num_samples", "node_positions", "node_rssi", "node_noise", "node_sta
 data_collection = pd.DataFrame(columns=columns)
 
 # Node information
-instance_count, num_instances = 0, 1000
+if ALL_JAMMED:
+    instance_count, num_instances = 0, 250
+else:
+    instance_count, num_instances = 0, 1000
+
 loss_func = log_distance_path_loss
 # loss_func = free_space_path_loss
 
 
 if loss_func == log_distance_path_loss:
-    folder_path = "log_distance"
+    folder_path = f"log_distance/{ENV}"
 else:
     folder_path = "fspl"
 
@@ -175,11 +180,16 @@ else:
 node_placement_strategy = ['random', 'rectangle', 'triangle', 'circle']
 for placement_strategy in node_placement_strategy:
     instance_count = 0
-    data_collection = pd.DataFrame(columns=columns)
-    # for instance_count in tqdm(range(num_instances)):
+    if not ALL_JAMMED:
+        data_collection = pd.DataFrame(columns=columns)
     while instance_count < num_instances:
         # Path loss variables for simulation of environment where the conditions are predominantly open with minimal obstructions
-        n = np.random.uniform(2.0, 3.5)  # Random path loss exponent between 2.0 and 2.5
+        if ENV == "urban_area":
+            n = np.random.uniform(2.7, 3.5)
+        elif ENV == "shadowed_urban_area":
+            n = np.random.uniform(3.0, 5)
+        else:
+            raise "Unknown propagation environment"
         sigma = np.random.uniform(2, 6)  # Random shadow fading between 1 dB and 6 dB
 
         size = np.random.randint(500, 1500)  # Area size in meters [500, 1500]
@@ -192,7 +202,7 @@ for placement_strategy in node_placement_strategy:
         P_tx = np.random.randint(15, 30)  # Transmit power in dBm [15, 30]
         G_tx = 0  # Transmitting antenna gain in dBi [0, 5]
         G_rx = 0  # Receiving antenna gain in dBi [0, 5]
-        P_tx_jammer = np.random.randint(20, 50)  # Jammer transmit power in dBm [25, 50]
+        P_tx_jammer = np.random.randint(20, 60)  # Jammer transmit power in dBm [25, 50]
         G_tx_jammer = np.random.randint(0, 5)  # Jammer transmitting antenna gain in dBi [0, 5]
 
         # Node positions
@@ -210,8 +220,13 @@ for placement_strategy in node_placement_strategy:
         if JAMMER_OUTSIDE_SAMPLE:
             jammer_position = random_position_outside_sample(region, sampled_region)
         else:
-            jammer_position = np.random.rand(1, 2) * size  # Generate jammer within sampled region
-            jammer_position = jammer_position[0]
+            # Generate jammer within the bounds of the sampled region S
+            jammer_x = np.random.uniform(min_x, max_x)
+            jammer_y = np.random.uniform(min_y, max_y)
+            jammer_position = np.array([jammer_x, jammer_y])
+
+            # jammer_position = np.random.rand(1, 2) * size  # Generate jammer within sampled region
+            # jammer_position = jammer_position[0]
 
         config = {
             'size': size,
@@ -295,16 +310,22 @@ for placement_strategy in node_placement_strategy:
         # Compute detection threshold for SINR
         jammed = noise_floor_dB > NOISE_THRESHOLD
 
-        # Condition checks
         jammed_nodes = np.sum(jammed) >= 3  # At least 3 nodes are jammed (3 since current simulation is in 2D) # required for CJ testing
-        not_jammed_nodes = np.sum(~jammed) >= 1  # At least 2 nodes are not jammed
-        high_rssi_nodes = np.sum(affected_rssi > -80) >= 1  # At least 1 node has RSSI greater than -80
+        not_jammed_nodes = np.sum(~jammed) >= 1  # At least 1 node is not jammed
+        all_jammed_nodes = np.sum(~jammed) == 0  # All nodes are jammed
+        high_rssi_nodes = np.sum(affected_rssi > -80) >= 1  # Ensure at least one node able to communicate with another node
 
-        # Plot only if all conditions are met
-        if jammed_nodes and not_jammed_nodes and high_rssi_nodes:
+        # Condition checks
+        if ALL_JAMMED:
+            conditions_met = all_jammed_nodes
+        else:
+            conditions_met = jammed_nodes and not_jammed_nodes and high_rssi_nodes
+
+        if conditions_met:
+            instance_count += 1
+            print("instance count: ", instance_count)
             if PLOT:
                 plot_network_with_rssi(node_positions, affected_rssi, jammer_position, SINR_dB, noise_floor_dB, jammed)
-            instance_count += 1
 
             # Data to be collected
             data = {
@@ -318,14 +339,23 @@ for placement_strategy in node_placement_strategy:
                 "jammer_gain": G_tx_jammer,  # Jammer gain
                 "pl_exp": n,  # Path loss exponent
                 "sigma": sigma,  # Shadow fading
-                "node_placement": placement_strategy
+                "node_placement": placement_strategy,
+                "jammer_outside_sample": JAMMER_OUTSIDE_SAMPLE
             }
 
             # Append the new row to the data collection DataFrame
             data_collection = pd.concat([data_collection, pd.DataFrame(data, index=[0])], ignore_index=True)
 
-    # After the loop, you can save the DataFrame to a CSV file or use it for further analysis
+    # After the loop, save the DataFrame to a CSV file
+    if not ALL_JAMMED:
+        if JAMMER_OUTSIDE_SAMPLE:
+            data_collection.to_csv(f"train_test_data/{folder_path}/{placement_strategy}_jammer_outside_region.csv", index=False)
+        else:
+            data_collection.to_csv(f"train_test_data/{folder_path}/{placement_strategy}.csv", index=False)
+
+if ALL_JAMMED:
+    # After the loop, save single DataFrame to a CSV file with each shape included
     if JAMMER_OUTSIDE_SAMPLE:
-        data_collection.to_csv(f"{folder_path}/{placement_strategy}_jammer_outside_region.csv", index=False)
+        data_collection.to_csv(f"train_test_data/{folder_path}/all_jammed_jammer_outside_region.csv", index=False)
     else:
-        data_collection.to_csv(f"{folder_path}/{placement_strategy}.csv", index=False)
+        data_collection.to_csv(f"train_test_data/{folder_path}/all_jammed.csv", index=False)
