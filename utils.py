@@ -38,11 +38,16 @@ def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, flo
         writer.writerow(result)
 
 
-def save_epochs(epoch_data, filename: str = 'results/epoch_metrics_converted.csv') -> None:
-    file_exists = os.path.isfile(filename)
+def save_epochs(epoch_data, folder_path) -> None:
+    if params['additional_features'] and params['study'] == 'feat_engineering':
+        filename = params['additional_features'][0] + "_epoch_metrics.csv"
+    else:
+        filename = "epoch_metrics.csv"
+    file = folder_path + filename
+    file_exists = os.path.isfile(file)
 
     # Open the CSV file in append mode
-    with open(filename, 'a', newline='') as csvfile:
+    with open(file, 'a', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=epoch_data.keys())
 
         # Write the header only if the file didn't exist before
@@ -53,7 +58,7 @@ def save_epochs(epoch_data, filename: str = 'results/epoch_metrics_converted.csv
         writer.writerow(epoch_data)
 
 
-def set_seeds_and_reproducibility(reproducible=True, seed_value=params['seed']):
+def set_seeds_and_reproducibility(seed_value, reproducible=True):
     """
     Set seeds for reproducibility and configure PyTorch for deterministic behavior.
 

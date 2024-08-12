@@ -17,8 +17,8 @@ from utils import set_seeds_and_reproducibility
 from data_processing import convert_output, convert_output_eval
 from config import params
 
-if params['reproduce']:
-    set_seeds_and_reproducibility()
+# if params['reproduce']:
+#     set_seeds_and_reproducibility()
 
 setup_logging()
 
@@ -164,7 +164,7 @@ def predict_and_evaluate(model, loader, device):
     plt.ylabel('Predicted Values')
     plt.plot([actuals.min(), actuals.max()], [actuals.min(), actuals.max()], 'k--', lw=2)  # Line showing perfect predictions
     # plt.savefig(f'results/graphs/polar_knn_minmax_trial2.png')
-    plt.show()
+    # plt.show()
 
     # calculate metrics MSE, RMSE using predictions and actuals
     mae = mean_absolute_error(actuals, predictions)
@@ -312,7 +312,8 @@ def plot_network_with_rssi(node_positions, final_rssi, jammer_position, noise_fl
     ax.text(mid_point[0], mid_point[1]-20, f'RMSE: {rmse:.2f}m', fontsize=12, color='black')
 
     coord_system = params['coords']
-    ax.set_title(f'Network Topology with RSSI, Noise Floor, and {coord_system} Jammer Prediction', fontsize=11)
+    # ax.set_title(f'Network Topology with RSSI, Noise Floor, and {coord_system} Jammer Prediction', fontsize=11)
+    ax.set_title(f'Network Topology with Actual and GNN Predicted Jammer Position', fontsize=11)
     ax.set_xlabel('X position (m)', fontsize=14)
     ax.set_ylabel('Y position (m)', fontsize=14)
     plt.grid(True)

@@ -6,8 +6,8 @@ from torch.nn import Linear
 from utils import set_seeds_and_reproducibility
 from config import params
 
-if params['reproduce']:
-    set_seeds_and_reproducibility()
+# if params['reproduce']:
+#     set_seeds_and_reproducibility()
 
 
 class GNN(torch.nn.Module):
