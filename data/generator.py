@@ -15,9 +15,9 @@ NOISE_THRESHOLD = -55  # A jamming attack is deemed successful if the floor nois
 RSSI_THRESHOLD = -80  # Minimum RSSI threshold (represents the point where communication is effectively non-functional)
 MESH_NETWORK = True  # Set to True for mesh network, False for AP-client network
 JAMMER_OUTSIDE_SAMPLE = False  # Set True to ensure jammer position is generated outside the node positions sampled region
-ALL_JAMMED = True  # Set True to ensure every node in network is jammed
-ENV = "shadowed_urban_area"  # "shadowed_urban_area"  # Set type of propagation environment
-PLOT = False
+ALL_JAMMED = False  # Set True to ensure every node in network is jammed
+ENV = "urban_area"  # "shadowed_urban_area" # fspl # Set type of propagation environment
+PLOT = True
 
 
 def dbm_to_linear(dbm):
@@ -137,9 +137,100 @@ def get_position(n_nodes, size, placement='random'):
         y = np.linspace(0, size, int(np.sqrt(n_nodes) + 1))
         xv, yv = np.meshgrid(x, y)
         positions = np.column_stack((xv.ravel(), yv.ravel()))[:n_nodes]
+    elif placement == 'line':
+        positions = line_placement(n_nodes, size)
     else:
         raise ValueError("Unsupported placement type.")
     return positions
+
+
+# def line_placement(n_nodes, size, circle_radius=50):
+#     # Define the number of lines
+#     n_lines = np.random.randint(2, 6)  # For example, 2 to 5 lines
+#     center = np.array([size / 2, size / 2])  # Center of the area
+#     print("center: ", center)
+#     line_positions = []
+#
+#     # Generate centers for each line within a circle
+#     for _ in range(n_lines):
+#         angle = np.random.uniform(0, np.pi / 4)
+#         r = circle_radius * np.sqrt(np.random.uniform(0, 1))  # Uniform distribution within a circle
+#         line_center_x = center[0] + r * np.cos(angle)
+#         line_center_y = center[1] + r * np.sin(angle)
+#
+#         # Random slope for each line
+#         slope = np.tan(np.random.uniform(-np.pi / 2, np.pi / 2))
+#         intercept = line_center_y - slope * line_center_x
+#
+#         # Calculate line endpoints within the bounds
+#         x_values = np.linspace(0, size, 100)  # Fine resolution for line
+#         y_values = slope * x_values + intercept
+#
+#         # Filter points within the area
+#         valid_idx = (y_values >= 0) & (y_values <= size)
+#         x_values, y_values = x_values[valid_idx], y_values[valid_idx]
+#
+#         # Determine nodes for this line based on remaining nodes and lines left
+#         if _ == n_lines - 1:
+#             line_nodes = n_nodes  # Assign remaining nodes to the last line
+#         else:
+#             if n_nodes > 1:
+#                 line_nodes = np.random.randint(1, n_nodes)
+#                 n_nodes -= line_nodes
+#             else:
+#                 line_nodes = 1
+#                 n_nodes -= line_nodes
+#
+#         sampled_indices = np.random.choice(len(x_values), line_nodes, replace=False)
+#         line_positions.extend(list(zip(x_values[sampled_indices], y_values[sampled_indices])))
+#
+#     return np.array(line_positions)
+
+def line_placement(n_nodes, size, circle_radius=50):
+    # Define the number of lines
+    n_lines = np.random.randint(2, 6)  # For example, 2 to 5 lines
+    center = np.array([size / 2, size / 2])  # Center of the area
+    line_positions = []
+
+    # Generate centers for each line within a circle
+    for _ in range(n_lines):
+        angle = np.random.uniform(0, 2 * np.pi)
+        r = circle_radius * np.sqrt(np.random.uniform(0, 1))  # Uniform distribution within a circle
+        line_center_x = center[0] + r * np.cos(angle)
+        line_center_y = center[1] + r * np.sin(angle)
+
+        # Random slope for each line
+        slope = np.tan(np.random.uniform(-np.pi / 2, np.pi / 2))
+        intercept = line_center_y - slope * line_center_x
+
+        # Calculate line endpoints within the bounds
+        x_values = np.linspace(0, size, 100)  # Fine resolution for line
+        y_values = slope * x_values + intercept
+
+        # Filter points within the area
+        valid_idx = (y_values >= 0) & (y_values <= size)
+        x_values, y_values = x_values[valid_idx], y_values[valid_idx]
+
+        # Determine nodes for this line based on remaining nodes and lines left
+        if _ == n_lines - 1:
+            line_nodes = n_nodes  # Assign remaining nodes to the last line
+        else:
+            if n_nodes > 1:
+                line_nodes = np.random.randint(1, n_nodes)
+            else:
+                line_nodes = 1
+
+            n_line_nodes = n_nodes - line_nodes
+
+        # Ensure not to sample more points than available
+        line_nodes = min(line_nodes, len(x_values))
+
+        if len(x_values) > 0:  # Check to ensure there are points to sample from
+            sampled_indices = np.random.choice(len(x_values), line_nodes, replace=False)
+            line_positions.extend(list(zip(x_values[sampled_indices], y_values[sampled_indices])))
+
+    return np.array(line_positions)
+
 
 
 # Generate new position outside the range
@@ -161,14 +252,16 @@ def random_position_outside_sample(region, sampled_region):
 columns = ["num_samples", "node_positions", "node_rssi", "node_noise", "node_states", "jammer_position", "jammer_power", "jammer_gain", "pl_exp", "sigma"]
 data_collection = pd.DataFrame(columns=columns)
 
+frequencies = [2.4e9, 5e9]  # 2.4 GHz and 5 GHz
+
 # Node information
 if ALL_JAMMED:
     instance_count, num_instances = 0, 250
 else:
     instance_count, num_instances = 0, 1000
 
-loss_func = log_distance_path_loss
-# loss_func = free_space_path_loss
+# loss_func = log_distance_path_loss
+loss_func = free_space_path_loss
 
 
 if loss_func == log_distance_path_loss:
@@ -177,7 +270,8 @@ else:
     folder_path = "fspl"
 
 
-node_placement_strategy = ['random', 'rectangle', 'triangle', 'circle']
+node_placement_strategy = ['random', 'rectangle', 'triangle', 'circle', 'line']
+# node_placement_strategy = ['line']
 for placement_strategy in node_placement_strategy:
     instance_count = 0
     if not ALL_JAMMED:
@@ -188,10 +282,11 @@ for placement_strategy in node_placement_strategy:
             n = np.random.uniform(2.7, 3.5)
         elif ENV == "shadowed_urban_area":
             n = np.random.uniform(3.0, 5)
+        elif ENV == "fspl":
+            n = 2.0
         else:
-            raise "Unknown propagation environment"
+            raise "Unknown environment"
         sigma = np.random.uniform(2, 6)  # Random shadow fading between 1 dB and 6 dB
-
         size = np.random.randint(500, 1500)  # Area size in meters [500, 1500]
         lb_nodes = calculate_node_bounds(size)
         ub_nodes = 8 * lb_nodes
@@ -225,8 +320,19 @@ for placement_strategy in node_placement_strategy:
             jammer_y = np.random.uniform(min_y, max_y)
             jammer_position = np.array([jammer_x, jammer_y])
 
-            # jammer_position = np.random.rand(1, 2) * size  # Generate jammer within sampled region
-            # jammer_position = jammer_position[0]
+            # # Generate jammer within 80% of the radius of the circle from the center
+            # circle_center = np.array([size / 2, size / 2])  # Assuming the circle is centered at (size/2, size/2)
+            # max_radius = size / 2 * 0.8  # 80% of the radius of the circle
+            #
+            # # Generate a random radius and angle
+            # random_radius = np.random.uniform(0, max_radius)
+            # random_angle = np.random.uniform(0, 2 * np.pi)
+            #
+            # # Convert polar coordinates to Cartesian coordinates
+            # jammer_x = circle_center[0] + random_radius * np.cos(random_angle)
+            # jammer_y = circle_center[1] + random_radius * np.sin(random_angle)
+            #
+            # jammer_position = np.array([jammer_x, jammer_y])
 
         config = {
             'size': size,
@@ -260,6 +366,8 @@ for placement_strategy in node_placement_strategy:
         for i in range(n_nodes):
             for j in range(i + 1, n_nodes):  # Only fill upper triangle, the matrix is symmetric
                 # Sample path and compute maximum jamming power
+                print("length of node pos: ", len(node_positions))
+                print("number of nodes: ", n_nodes)
                 max_jamming_power_dbm = sample_path_jamming(node_positions[i], node_positions[j], jammer_position[0], loss_func, n, sigma)
                 max_jammer_rssi_matrix[i, j] = max_jamming_power_dbm
                 max_jammer_rssi_matrix[j, i] = max_jamming_power_dbm
@@ -291,7 +399,8 @@ for placement_strategy in node_placement_strategy:
         affected_rssi = np.nanmax(rssi_affected_matrix, axis=1)
 
         # Reference to disconnected nodes
-        disconnected = affected_rssi == np.nan
+        # disconnected = affected_rssi == np.nan
+        disconnected = np.isnan(affected_rssi)
         # Calculate normal RSSI as the mean/max of the valid signals
         affected_rssi = np.nan_to_num(affected_rssi, nan=RSSI_THRESHOLD)  # Replace NaN with rssi_threshold or any suitable default (isolated samples)
 
@@ -349,13 +458,13 @@ for placement_strategy in node_placement_strategy:
     # After the loop, save the DataFrame to a CSV file
     if not ALL_JAMMED:
         if JAMMER_OUTSIDE_SAMPLE:
-            data_collection.to_csv(f"train_test_data/{folder_path}/{placement_strategy}_jammer_outside_region.csv", index=False)
+            data_collection.to_csv(f"train_test_data/{folder_path}/{placement_strategy}_jammer_outside_region_TEST.csv", index=False)
         else:
-            data_collection.to_csv(f"train_test_data/{folder_path}/{placement_strategy}.csv", index=False)
+            data_collection.to_csv(f"train_test_data/{folder_path}/{placement_strategy}_TEST.csv", index=False)
 
 if ALL_JAMMED:
     # After the loop, save single DataFrame to a CSV file with each shape included
     if JAMMER_OUTSIDE_SAMPLE:
-        data_collection.to_csv(f"train_test_data/{folder_path}/all_jammed_jammer_outside_region.csv", index=False)
+        data_collection.to_csv(f"train_test_data/{folder_path}/all_jammed_jammer_outside_region_TEST.csv", index=False)
     else:
-        data_collection.to_csv(f"train_test_data/{folder_path}/all_jammed.csv", index=False)
+        data_collection.to_csv(f"train_test_data/{folder_path}/all_jammed_TEST.csv", index=False)
