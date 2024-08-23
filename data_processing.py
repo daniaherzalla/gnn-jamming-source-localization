@@ -141,28 +141,29 @@ def apply_min_max_normalization(data):
         normalized_rssi = (node_noise - min_rssi) / range_rssi
         data.at[idx, 'node_noise'] = normalized_rssi.tolist()
 
-        # Normalize node positions to range [-1, 1]
-        node_positions = np.vstack(row['node_positions'])
-        min_coords = np.min(node_positions, axis=0)
-        max_coords = np.max(node_positions, axis=0)
+        if params['norm'] == 'minmax':
+            # Normalize node positions to range [-1, 1]
+            node_positions = np.vstack(row['node_positions'])
+            min_coords = np.min(node_positions, axis=0)
+            max_coords = np.max(node_positions, axis=0)
 
-        # Save min and max coordinates to the dataframe
-        if params['3d']:
-            data.at[idx, 'min_coords'] = (min_coords[0], min_coords[1], min_coords[2])
-            data.at[idx, 'max_coords'] = (max_coords[0], max_coords[1], max_coords[2])
-        else:
-            data.at[idx, 'min_coords'] = (min_coords[0], min_coords[1])
-            data.at[idx, 'max_coords'] = (max_coords[0], max_coords[1])
+            # Save min and max coordinates to the dataframe
+            if params['3d']:
+                data.at[idx, 'min_coords'] = (min_coords[0], min_coords[1], min_coords[2])
+                data.at[idx, 'max_coords'] = (max_coords[0], max_coords[1], max_coords[2])
+            else:
+                data.at[idx, 'min_coords'] = (min_coords[0], min_coords[1])
+                data.at[idx, 'max_coords'] = (max_coords[0], max_coords[1])
 
-        range_coords = np.where(max_coords - min_coords == 0, 1, max_coords - min_coords)
-        normalized_positions = 2 * ((node_positions - min_coords) / range_coords) - 1
-        data.at[idx, 'node_positions'] = normalized_positions.tolist()
+            range_coords = np.where(max_coords - min_coords == 0, 1, max_coords - min_coords)
+            normalized_positions = 2 * ((node_positions - min_coords) / range_coords) - 1
+            data.at[idx, 'node_positions'] = normalized_positions.tolist()
 
-        # Normalize jammer position similarly if present
-        if 'jammer_position' in row:
-            jammer_position = np.array(row['jammer_position']).reshape(1, -1)
-            jammer_position = 2 * ((jammer_position - min_coords) / range_coords) - 1
-            data.at[idx, 'jammer_position'] = jammer_position.flatten().tolist()
+            # Normalize jammer position similarly if present
+            if 'jammer_position' in row:
+                jammer_position = np.array(row['jammer_position']).reshape(1, -1)
+                jammer_position = 2 * ((jammer_position - min_coords) / range_coords) - 1
+                data.at[idx, 'jammer_position'] = jammer_position.flatten().tolist()
 
 
 def apply_unit_sphere_normalization(data):
@@ -175,6 +176,7 @@ def apply_unit_sphere_normalization(data):
     Returns:
     tuple: A tuple containing the normalized positions and the maximum radius.
     """
+    logging.info("Applying unit sphere normalization")
     # Initialize a column for maximum radius
     data['max_radius'] = None
 
@@ -217,15 +219,15 @@ def add_cyclical_features(data):
     data['cos_azimuth'] = data['azimuth_angle'].apply(lambda angles: [np.cos(angle) for angle in angles])
 
 
-def add_node_noise_statistical_features(data):
-    """Calculate statistical features for node noise."""
-    data['mean_noise'] = data['node_noise'].apply(np.mean)
-    data['median_noise'] = data['node_noise'].apply(np.median)
-    data['std_noise'] = data['node_noise'].apply(np.std)
-    data['range_noise'] = data['node_noise'].apply(lambda x: np.max(x) - np.min(x))
+# def add_node_noise_statistical_features(data):
+#     """Calculate statistical features for node noise."""
+#     data['mean_noise'] = data['node_noise'].apply(np.mean)
+#     data['median_noise'] = data['node_noise'].apply(np.median)
+#     data['std_noise'] = data['node_noise'].apply(np.std)
+#     data['range_noise'] = data['node_noise'].apply(lambda x: np.max(x) - np.min(x))
 
 
-def calculate_proximity_metric(positions, threshold=0.1):
+def calculate_proximity_metric(positions, threshold=0.2):
     """Calculate the number of nearby nodes within a given threshold distance."""
     nbrs = NearestNeighbors(radius=threshold).fit(positions)
     distances, indices = nbrs.radius_neighbors(positions)
@@ -239,104 +241,175 @@ def add_proximity_count(data):
     )
 
 
-def create_graphs(data, threshold=0.2):
+def create_graphs(data):
     graphs = []
-
     for index, row in data.iterrows():
         G = nx.Graph()
         positions = np.array(row['node_positions'])
         num_nodes = positions.shape[0]
 
-        # First, add all nodes to the graph
-        for i in range(num_nodes):
-            G.add_node(i, pos=positions[i])  # Optional: Store positions as node attributes
+        if num_nodes > 1:  # Ensure there are enough nodes to form a graph
+            k = min(params['num_neighbors'], num_nodes - 1)  # num of neighbors, ensuring that num of neighbors is never greater than the number of possible neighbors
+            nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
+            distances, indices = nbrs.kneighbors(positions)
 
-        # Then, evaluate and add edges based on the proximity threshold
-        for i in range(num_nodes):
-            for j in range(i + 1, num_nodes):
-                distance = np.linalg.norm(positions[i] - positions[j])
-                if distance < threshold:
+            for i in range(num_nodes):
+                G.add_node(i, pos=positions[i], noise=row['node_noise'][i])
+                for j in indices[i]:
                     G.add_edge(i, j)
 
         graphs.append(G)
 
         # # Visualization and debugging output
-        # pos = nx.get_node_attributes(G, 'pos')  # Get positions for drawing
-        # nx.draw(G, pos, with_labels=True, node_color='skyblue', edge_color='#FF5733', node_size=500)
-        # plt.title(f"Graph Visualization for Row {index}")
-        # plt.show()
-
+        #         # pos = nx.get_node_attributes(G, 'pos')  # Get positions for drawing
+        #         # nx.draw(G, pos, with_labels=True, node_color='skyblue', edge_color='#FF5733', node_size=500)
+        #         # plt.title(f"Graph Visualization for Row {index}")
+        #         # plt.show()
     return graphs
 
 
-def add_clustering_coefficients(data, graphs):
+# def calculate_noise_statistics(graphs, stats_to_compute):
+#     node_noise_stats = []
+#     for G in graphs:
+#         stats_per_graph = []
+#         for node in G.nodes:
+#             neighbors = list(G.neighbors(node))
+#             neighbors.append(node)  # Include the node itself
+#             noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]
+#
+#             computed_stats = {}
+#             if 'mean_noise' in stats_to_compute:
+#                 computed_stats['mean_noise'] = np.mean(noises)
+#             if 'median_noise' in stats_to_compute:
+#                 computed_stats['median_noise'] = np.median(noises)
+#             if 'std_noise' in stats_to_compute:
+#                 computed_stats['std_noise'] = np.std(noises)
+#             if 'range_noise' in stats_to_compute:
+#                 computed_stats['range_noise'] = np.max(noises) - np.min(noises)
+#
+#             stats_per_graph.append(computed_stats)
+#         node_noise_stats.append(stats_per_graph)
+#     return node_noise_stats
+
+
+def calculate_noise_statistics(graphs, stats_to_compute):
+    all_graph_stats = []  # This will hold a list of lists, each sublist for a graph
+
+    for G in graphs:
+        graph_stats = []  # Initialize an empty list for current graph's node stats
+
+        for node in G.nodes:
+            neighbors = list(G.neighbors(node))
+            curr_node_noise = G.nodes[node]['noise']
+            neighbor_noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]  # Neighbors' noise
+
+            node_stats = {}  # Dictionary to store stats for the current node
+
+            # Compute mean noise for neighbors excluding the node itself
+            if neighbors:  # Ensure there are neighbors
+                mean_neighbor_noise = np.mean(neighbor_noises)
+            else:
+                mean_neighbor_noise = curr_node_noise  # If no neighbors, fallback to own noise
+
+            if 'mean_noise' in stats_to_compute:
+                node_stats['mean_noise'] = mean_neighbor_noise
+            if 'median_noise' in stats_to_compute:
+                node_stats['median_noise'] = np.median(neighbor_noises + [curr_node_noise])  # Include self for median
+            if 'std_noise' in stats_to_compute:
+                node_stats['std_noise'] = np.std(neighbor_noises + [curr_node_noise])  # Include self for std
+            if 'range_noise' in stats_to_compute:
+                node_stats['range_noise'] = np.max(neighbor_noises + [curr_node_noise]) - np.min(neighbor_noises + [curr_node_noise])
+
+            # Compute relative noise
+            node_stats['relative_noise'] = curr_node_noise - mean_neighbor_noise
+
+            graph_stats.append(node_stats)  # Append the current node's stats to the graph's list
+
+        all_graph_stats.append(graph_stats)  # Append the completed list of node stats for this graph
+
+    return all_graph_stats
+
+
+
+# def add_node_noise_statistics(data):
+#     graphs = create_graphs(data)
+#     node_noise_stats = calculate_noise_statistics(graphs)
+#     # Assuming each row in 'data' corresponds to one graph
+#     for idx, stats in enumerate(node_noise_stats):
+#         for key in stats[0].keys():  # example keys: 'mean_noise', 'median_noise'
+#             data.at[idx, key] = [stat[key] for stat in stats]
+#     return data
+
+
+def add_clustering_coefficients(graphs):
     """
-    Compute and add the clustering coefficient for each graph, mapping them to the DataFrame.
+    Compute the clustering coefficient for each node in each graph.
 
     Args:
-        data (pd.DataFrame): DataFrame where each row corresponds to a graph.
-        graphs (list): List of NetworkX graph objects, each corresponding to a row in 'data'.
+        graphs (list): List of NetworkX graph objects.
 
     Returns:
-        pd.DataFrame: Updated DataFrame with a new column for clustering coefficients.
+        list: A list of lists, where each sublist contains the clustering coefficients for nodes in a graph.
     """
-    # Initialize a list to hold clustering coefficients for each node in each graph
-    all_clustering_coeffs = []
+    all_graphs_clustering_coeffs = []  # This will hold a list of lists, each sublist for a graph
 
-    # Iterate through each graph and compute clustering coefficients
     for graph in graphs:
-        if len(graph.nodes()) > 0:  # Ensure the graph has nodes
+        graph_clustering_coeffs = []  # Initialize an empty list for current graph's node clustering coefficients
+
+        if len(graph.nodes()) > 0:
             clustering_coeffs = nx.clustering(graph)
-            # Collect the clustering coefficients in order of nodes
-            # Assuming node labels in the graph correspond to their positions in the node list
-            graph_clustering_coeffs = [clustering_coeffs.get(node) for node in graph.nodes()]
+            nodes = list(graph.nodes())
+
+            # Populate the clustering coefficients for each node, maintaining the order
+            for node in nodes:
+                graph_clustering_coeffs.append(clustering_coeffs[node])
         else:
             graph_clustering_coeffs = []
 
-        all_clustering_coeffs.append(graph_clustering_coeffs)
+        all_graphs_clustering_coeffs.append(graph_clustering_coeffs)  # Append the completed list for this graph
 
-    # Assign the list of clustering coefficients to the corresponding row in the DataFrame
-    data['clustering_coefficient'] = all_clustering_coeffs
-
-    return data
+    return all_graphs_clustering_coeffs
 
 
 def engineer_node_features(data, params):
-    # Check if features are in additional features and calculate accordingly
+    logging.info('Calculating node features')
     data['centroid'] = data['node_positions'].apply(lambda positions: np.mean(positions, axis=0))
 
     if 'dist_to_centroid' in params.get('additional_features', []):
         data['dist_to_centroid'] = data.apply(lambda row: [np.linalg.norm(pos - row['centroid']) for pos in row['node_positions']], axis=1)
 
-    if 'relative_noise' in params.get('additional_features', []):
-        data['relative_noise'] = data.apply(lambda row: [noise - np.mean(row['node_noise']) for noise in row['node_noise']], axis=1)
-
-    if 'mean_noise' in params.get('additional_features', []):
-        # Calculate the mean and repeat it num_samples times
-        data['mean_noise'] = data.apply(lambda row: [np.mean(row['node_noise'])] * row['num_samples'], axis=1)
-
-    if 'median_noise' in params.get('additional_features', []):
-        # Calculate the median and repeat it num_samples times
-        data['median_noise'] = data.apply(lambda row: [np.median(row['node_noise'])] * row['num_samples'], axis=1)
-
-    if 'std_noise' in params.get('additional_features', []):
-        # Calculate the standard deviation and repeat it num_samples times
-        data['std_noise'] = data.apply(lambda row: [np.std(row['node_noise'])] * row['num_samples'], axis=1)
-
-    if 'range_noise' in params.get('additional_features', []):
-        # Calculate the range (max - min) and repeat it num_samples times
-        data['range_noise'] = data.apply(lambda row: [(np.max(row['node_noise']) - np.min(row['node_noise']))] * row['num_samples'], axis=1)
-
-    if 'sin_azimuth' or 'cos_azimuth' in params.get('additional_features', []):
+    # Cyclical features
+    if 'sin_azimuth' in params.get('additional_features', []) or 'cos_azimuth' in params.get('additional_features', []):
         add_cyclical_features(data)
 
+    # Proximity counts
     if 'proximity_count' in params.get('additional_features', []):
         add_proximity_count(data)
 
+    # Clustering coefficients
     if 'clustering_coefficient' in params.get('additional_features', []):
-        # Adjust 'data' according to your actual data structure
         graphs = create_graphs(data)
-        add_clustering_coefficients(data, graphs)
+        clustering_coeffs = add_clustering_coefficients(graphs)
+        data['clustering_coefficient'] = clustering_coeffs  # Assign the coefficients directly
+
+    # Graph-based noise stats
+    graph_noise_stats = ['mean_noise', 'median_noise', 'std_noise', 'range_noise', 'relative_noise']
+    noise_stats_to_compute = [stat for stat in graph_noise_stats if stat in params.get('additional_features', [])]
+
+    if noise_stats_to_compute:
+        graphs = create_graphs(data)
+        node_noise_stats = calculate_noise_statistics(graphs, noise_stats_to_compute)
+
+        for stat in noise_stats_to_compute:
+            # Initialize the column for the statistic
+            data[stat] = pd.NA
+
+            # Assign the stats for each graph to the DataFrame
+            for idx, graph_stats in enumerate(node_noise_stats):
+                current_stat_list = [node_stats.get(stat) for node_stats in graph_stats if stat in node_stats]
+                data.at[idx, stat] = current_stat_list
+
+    return data
 
     # if params['3d']:
     #     if 'elevation_angle' in params.get('additional_features', []):
@@ -402,20 +475,20 @@ def polar_to_cartesian(data):
     return cartesian_coords
 
 
-def undo_center_coordinates(centered_coords, id, midpoints):
-    """
-    Adjust coordinates by adding the midpoint, calculated from stored midpoints for each index.
-
-    Args:
-        centered_coords (np.ndarray): The centered coordinates to be adjusted.
-        id (int): The unique identifier for the data sample.
-        midpoints (dict): The dictionary containing midpoints for each ID.
-
-    Returns:
-        np.ndarray: The uncentered coordinates.
-    """
-    midpoint = np.array(midpoints[str(id)])  # Convert index to string if it's an integer
-    return centered_coords + midpoint
+# def undo_center_coordinates(centered_coords, id, midpoints):
+#     """
+#     Adjust coordinates by adding the midpoint, calculated from stored midpoints for each index.
+#
+#     Args:
+#         centered_coords (np.ndarray): The centered coordinates to be adjusted.
+#         id (int): The unique identifier for the data sample.
+#         midpoints (dict): The dictionary containing midpoints for each ID.
+#
+#     Returns:
+#         np.ndarray: The uncentered coordinates.
+#     """
+#     midpoint = np.array(midpoints[str(id)])  # Convert index to string if it's an integer
+#     return centered_coords + midpoint
 
 
 def convert_output_eval(output, data_batch, data_type, device):
@@ -453,8 +526,12 @@ def convert_output_eval(output, data_batch, data_type, device):
         #     output = polar_to_cartesian(output)
 
         # 1. Reverse unit sphere normalization using max_radius
+        # print("output: ", output)
         max_radius = data_batch.max_radius.to(device).view(-1, 1)
+        # print("max radius: ", max_radius)
         converted_output = output * max_radius
+        # print("converted output: ", converted_output)
+        # quit()
 
     # 2. Reverse centering using the stored node_positions_center
     centers = data_batch.node_positions_center.to(device).view(-1, 2)
@@ -481,89 +558,122 @@ def save_reduced_dataset(dataset, indices, path):
     torch.save(reduced_data, path)  # Save the truly reduced dataset
 
 
-def save_datasets(preprocessed_data, data, params, experiments_path):
+def split_datasets(preprocessed_data, data, params, experiments_path):
     """
     Save the preprocessed data into train, validation, and test datasets.
 
     Args:
-        data (pd.DataFrame): The preprocessed data to be split and saved.
-        train_path (str): The file path to save the training dataset.
-        val_path (str): The file path to save the validation dataset.
-        test_path (str): The file path to save the test dataset.
+        preprocessed_data (pd.DataFrame): The preprocessed data to be split and saved.
+        params (str): The GNN project parameters.
+        experiments_path (str): The file path to save the train, test, validation datasets.
 
     Returns:
-        Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
-        The train, validation, and test datasets.
+        Tuple[list, list, list, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        The train, validation, and test datasets and their corresponding DataFrames.
     """
 
     logging.info('Creating graphs...')
     torch_geo_dataset = [create_torch_geo_data(row, params) for _, row in preprocessed_data.iterrows()]
 
     # Stratified split using scikit-learn
-    train_idx, temp_idx, train_temp_y, temp_y = train_test_split(
+    train_idx, test_idx, train_test_y, test_y = train_test_split(
         np.arange(len(torch_geo_dataset)),
         preprocessed_data['dataset'],
-        test_size=0.3,  # Split 70% train, 30% for temp
+        test_size=0.3,  # Split 70% train, 30% test
         stratify=preprocessed_data['dataset'],
         random_state=100  # For reproducibility
     )
 
-    # Now split the temp into validation and test
+    # Now split the test into validation and test
     val_idx, test_idx, _, _ = train_test_split(
-        temp_idx,
-        temp_y,
+        test_idx,
+        test_y,
         test_size=len(torch_geo_dataset) - len(train_idx) - int(0.1 * len(torch_geo_dataset)),
-        stratify=temp_y,
+        stratify=test_y,
         random_state=100
     )
 
-    # Saving data
-    if params['save_data']:
-        logging.info("Saving data...")
+    train_dataset = [torch_geo_dataset[i] for i in train_idx]
+    val_dataset = [torch_geo_dataset[i] for i in val_idx]
+    test_dataset = [torch_geo_dataset[i] for i in test_idx]
 
-        # Save datasets
-        save_reduced_dataset(torch_geo_dataset, train_idx, os.path.join(experiments_path, 'train_dataset.pt'))
-        save_reduced_dataset(torch_geo_dataset, val_idx, os.path.join(experiments_path, 'val_dataset.pt'))
-        save_reduced_dataset(torch_geo_dataset, test_idx, os.path.join(experiments_path, 'test_dataset.pt'))
+    # Convert indices back to DataFrame subsets
+    train_df = preprocessed_data.iloc[train_idx].reset_index(drop=True)
+    val_df = preprocessed_data.iloc[val_idx].reset_index(drop=True)
+    test_df = preprocessed_data.iloc[test_idx].reset_index(drop=True)
 
-        # Convert indices back to DataFrame subsets
-        test_df = preprocessed_data.iloc[test_idx].reset_index(drop=True)
-
-        # Save Pickle files
-        test_path = experiments_path + 'test_dataset.pkl'
-        test_df.to_pickle(test_path)
-
-        # Save CSV files
-        test_path = experiments_path + 'test_dataset.csv'
-        test_df.to_csv(test_path, index=False)
-
-        # Dataset types for specific filtering
-        dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
-                         'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
-                         'random_jammer_outside_region']
-
-        # Save filtered test datasets based on specific dataset types and patterns
-        for dataset in dataset_types:
-            dataset_type_indices = [idx for idx in test_idx if preprocessed_data.iloc[idx]['dataset'] == dataset]
-            if dataset_type_indices:
-                save_reduced_dataset(torch_geo_dataset, dataset_type_indices, os.path.join(experiments_path, f'{dataset}_test_set.pt'))
-
-        # Special cases for "all_jammed" and "all_jammed_jammer_outside_region"
-        all_jammed_indices = [idx for idx in test_idx if 'all_jammed' in preprocessed_data.iloc[idx]['dataset'] and 'jammer_outside_region' not in preprocessed_data.iloc[idx]['dataset']]
-        all_jammed_jammer_outside_region_indices = [idx for idx in test_idx if 'all_jammed_jammer_outside_region' in preprocessed_data.iloc[idx]['dataset']]
-
-        if all_jammed_indices:
-            save_reduced_dataset(torch_geo_dataset, all_jammed_indices, os.path.join(experiments_path, 'all_jammed.pt'))
-
-        if all_jammed_jammer_outside_region_indices:
-            save_reduced_dataset(torch_geo_dataset, all_jammed_jammer_outside_region_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region.pt'))
-
-        quit()
-
-    # return train_dataset, val_dataset, test_dataset
+    return train_dataset, val_dataset, test_dataset, train_df, val_df, test_df
 
 
-def load_data(dataset_path: str, params, experiments_path=None, data=None):
+
+def save_datasets(train_data, val_data, test_data, train_df, val_df, test_df, experiments_path):
+    """
+    Process the combined train, validation, and test data, and save them to disk.
+
+    Args:
+        train_data (list): List of training data samples.
+        val_data (list): List of validation data samples.
+        test_data (list): List of test data samples.
+        train_df (pd.DataFrame): DataFrame containing combined training data.
+        val_df (pd.DataFrame): DataFrame containing combined validation data.
+        test_df (pd.DataFrame): DataFrame containing combined test data.
+        experiments_path (str): The path where the processed data will be saved.
+    """
+    logging.info("Saving data...")
+    # Save the combined datasets
+    save_reduced_dataset(train_data, list(range(len(train_data))), os.path.join(experiments_path, 'train_dataset.pt'))
+    save_reduced_dataset(val_data, list(range(len(val_data))), os.path.join(experiments_path, 'val_dataset.pt'))
+    save_reduced_dataset(test_data, list(range(len(test_data))), os.path.join(experiments_path, 'test_dataset.pt'))
+
+    # Save the combined DataFrame subsets
+    train_df.to_csv(os.path.join(experiments_path, 'train_dataset.csv'), index=False)
+    val_df.to_csv(os.path.join(experiments_path, 'val_dataset.csv'), index=False)
+    test_df.to_csv(os.path.join(experiments_path, 'test_dataset.csv'), index=False)
+
+    # Dataset types for specific filtering
+    dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
+                     'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
+                     'random_jammer_outside_region']
+
+    for dataset in dataset_types:
+        train_indices = train_df[train_df['dataset'] == dataset].index.tolist()
+        val_indices = val_df[val_df['dataset'] == dataset].index.tolist()
+        test_indices = test_df[test_df['dataset'] == dataset].index.tolist()
+
+        if train_indices:
+            save_reduced_dataset(train_data, train_indices, os.path.join(experiments_path, f'{dataset}_train_set.pt'))
+        if val_indices:
+            save_reduced_dataset(val_data, val_indices, os.path.join(experiments_path, f'{dataset}_val_set.pt'))
+        if test_indices:
+            save_reduced_dataset(test_data, test_indices, os.path.join(experiments_path, f'{dataset}_test_set.pt'))
+
+    # Special cases for "all_jammed" and "all_jammed_jammer_outside_region"
+    all_jammed_train_indices = train_df[(train_df['dataset'].str.contains('all_jammed')) & (~train_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
+    all_jammed_val_indices = val_df[(val_df['dataset'].str.contains('all_jammed')) & (~val_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
+    all_jammed_test_indices = test_df[(test_df['dataset'].str.contains('all_jammed')) & (~test_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
+
+    all_jammed_jammer_outside_region_train_indices = train_df[train_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
+    all_jammed_jammer_outside_region_val_indices = val_df[val_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
+    all_jammed_jammer_outside_region_test_indices = test_df[test_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
+
+    if all_jammed_train_indices:
+        save_reduced_dataset(train_data, all_jammed_train_indices, os.path.join(experiments_path, 'all_jammed_train_set.pt'))
+    if all_jammed_val_indices:
+        save_reduced_dataset(val_data, all_jammed_val_indices, os.path.join(experiments_path, 'all_jammed_val_set.pt'))
+    if all_jammed_test_indices:
+        save_reduced_dataset(test_data, all_jammed_test_indices, os.path.join(experiments_path, 'all_jammed_test_set.pt'))
+
+    if all_jammed_jammer_outside_region_train_indices:
+        save_reduced_dataset(train_data, all_jammed_jammer_outside_region_train_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_train_set.pt'))
+    if all_jammed_jammer_outside_region_val_indices:
+        save_reduced_dataset(val_data, all_jammed_jammer_outside_region_val_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_val_set.pt'))
+    if all_jammed_jammer_outside_region_test_indices:
+        save_reduced_dataset(test_data, all_jammed_jammer_outside_region_test_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_test_set.pt'))
+
+    quit()
+
+
+def load_data(dataset_path: str, params, test_set, experiments_path=None, data=None):
     """
     Load the data from the given paths, or preprocess and save it if not already done.
 
@@ -576,21 +686,46 @@ def load_data(dataset_path: str, params, experiments_path=None, data=None):
     """
     logging.info("Loading data...")
 
-    if params['save_data']:
-        if data is None:
-            data = pd.read_csv(dataset_path)
-        data['id'] = range(1, len(data) + 1)
-        # data.drop(columns=['jammer_power', 'pl_exp', 'sigma'], inplace=True)
+    combined_train_data = []
+    combined_val_data = []
+    combined_test_data = []
+    combined_train_df = pd.DataFrame()
+    combined_val_df = pd.DataFrame()
+    combined_test_df = pd.DataFrame()
 
-        # Create a deep copy of the DataFrame
-        data_to_preprocess = data.copy(deep=True)
-        preprocessed_data = preprocess_data(data_to_preprocess, params)
-        train_dataset, val_dataset, test_dataset = save_datasets(preprocessed_data, data, params, experiments_path)
+    if params['save_data']:
+        if params['all_env']:
+            datasets = ['data/train_test_data/fspl/combined_fspl.csv', 'data/train_test_data/log_distance/urban_area/combined_urban_area.csv', 'data/train_test_data/log_distance/shadowed_urban_area/combined_shadowed_urban_area.csv']
+        else:
+            datasets = params['dataset_path']
+        for dataset in datasets:
+            print("dataset path: ", dataset)
+            data = pd.read_csv(dataset)
+            data['id'] = range(1, len(data) + 1)
+
+            # Create a deep copy of the DataFrame
+            data_to_preprocess = data.copy(deep=True)
+            preprocessed_data = preprocess_data(data_to_preprocess, params)
+            train_data, val_data, test_data, train_df, val_df, test_df = split_datasets(preprocessed_data, data, params, experiments_path)
+
+            combined_train_data.extend(train_data)
+            combined_val_data.extend(val_data)
+            combined_test_data.extend(test_data)
+            combined_train_df = pd.concat([combined_train_df, train_df], ignore_index=True)
+            combined_val_df = pd.concat([combined_val_df, val_df], ignore_index=True)
+            combined_test_df = pd.concat([combined_test_df, test_df], ignore_index=True)
+
+        # Process and save the combined data
+        save_datasets(combined_train_data, combined_val_data, combined_test_data,
+                                       combined_train_df, combined_val_df, combined_test_df,
+                                       experiments_path)
     else:
-        train_dataset = torch.load(os.path.join(experiments_path, 'train_dataset.pt'))
-        val_dataset = torch.load(os.path.join(experiments_path, 'val_dataset.pt'))
-        test_dataset = torch.load(os.path.join(experiments_path, 'test_dataset.pt'))
-        test_dataset_csv = pd.read_csv(experiments_path + 'test_dataset.csv')
+        # TODO: check what to be returned for the original dataset for plotting
+        train_dataset = torch.load(os.path.join(experiments_path, params['train_set']))
+        val_dataset = torch.load(os.path.join(experiments_path, params['val_set']))
+        test_dataset = torch.load(os.path.join(experiments_path, params['test_set']))
+
+        # test_dataset_csv = pd.read_csv(experiments_path + 'test_dataset.csv')
 
     return train_dataset, val_dataset, test_dataset, data
 
@@ -609,12 +744,12 @@ def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int
     logging.info("Creating DataLoader objects...")
     if not params['inference']:
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=False, num_workers=0)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
 
         return train_loader, val_loader, test_loader
     else:
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
 
         return None, None, test_loader
 
@@ -730,19 +865,22 @@ def ensure_complementary_features(params):
     if isinstance(required_features, tuple):
         required_features = list(required_features)
 
-    # Check for the presence of sin_azimuth or cos_azimuth
-    has_sin = 'sin_azimuth' in additional_features
-    has_cos = 'cos_azimuth' in additional_features
-
-    # If one is present and not the other, add the missing one
-    if has_sin and not has_cos:
-        additional_features.append('cos_azimuth')
-    elif has_cos and not has_sin:
-        additional_features.append('sin_azimuth')
+    # # if additional_features:
+    # # Check for the presence of sin_azimuth or cos_azimuth
+    # has_sin = 'sin_azimuth' in additional_features
+    # has_cos = 'cos_azimuth' in additional_features
+    #
+    # # If one is present and not the other, add the missing one
+    # if has_sin and not has_cos:
+    #     additional_features.append('cos_azimuth')
+    # elif has_cos and not has_sin:
+    #     additional_features.append('sin_azimuth')
 
     # Combine required and additional features
     all_features = required_features + additional_features
     return all_features
+    # else:
+    #     return required_features
 
 
 def create_torch_geo_data(row: pd.Series, params) -> Data:
@@ -757,8 +895,6 @@ def create_torch_geo_data(row: pd.Series, params) -> Data:
     """
     # Selecting features based on configuration
     all_features = ensure_complementary_features(params)
-    # additional_features = list(params['additional_features'])
-    # all_features = ['node_positions', 'node_noise'] + additional_features
 
     # Combining features from each node into a single list
     node_features = [
@@ -786,17 +922,6 @@ def create_torch_geo_data(row: pd.Series, params) -> Data:
             for j in range(1, indices.shape[1]):
                 edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
                 edge_weight.extend([distances[i, j], distances[i, j]])
-    elif params['edges'] == 'proximity':
-        edge_index, edge_weight = [], []
-        num_nodes = len(row['node_positions'])
-        for i in range(num_nodes):
-            edge_index.append([i, i])
-            edge_weight.append(0)
-            for j in range(i + 1, num_nodes):
-                dist = np.linalg.norm(positions[i] - positions[j])
-                if dist < 0.1:  # Proximity threshold
-                    edge_index.extend([[i, j], [j, i]])
-                    edge_weight.extend([dist, dist])
     else:
         raise ValueError("Unsupported edge specification")
 
@@ -807,7 +932,8 @@ def create_torch_geo_data(row: pd.Series, params) -> Data:
     y = torch.tensor(jammer_positions, dtype=torch.float)
 
     # Plot
-    # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features, edge_weights=edge_weight, show_weights=True)
+    # if row['dataset'] == 'triangle':
+    #     plot_graph(positions=positions, edge_index=edge_index, node_features=node_features, edge_weights=edge_weight, show_weights=True)
 
     # Create the Data object
     data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight, y=y)

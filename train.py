@@ -38,7 +38,12 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
         criterion (torch.nn.Module): Loss criterion.
     """
     logging.info("Initializing model...")
-    in_channels = len(params['additional_features']) + len(params['required_features']) + 1  # Add one (two for 3D) since position data is considered separately for each coordinate
+    if params['coords'] == 'cartesian':
+        in_channels = len(params['additional_features']) + len(params['required_features']) + 1  # Add one (two for 3D) since position data is considered separately for each coordinate
+    elif params['coords'] == 'polar':
+        in_channels = len(params['additional_features']) + len(params['required_features']) + 2
+    else:
+        raise "Unknown coordinate system"
     # print('params: ', params)
     print('in_channels: ', in_channels)
     # print("params['additional_features']: ", params['additional_features'])
@@ -214,18 +219,18 @@ def predict_and_evaluate_full(loader, model, device, original_dataset):
             predictions.append(predicted_coords.cpu().numpy())
             actuals.append(actual_coords.cpu().numpy())
 
-            # Fetch additional data using ID from the original DataFrame
-            ids = data_batch.id.cpu().numpy()
-            batch_details = original_dataset.loc[original_dataset['id'].isin(ids)]
-            for id in ids:
-                row = batch_details[batch_details['id'] == id].iloc[0]
-                node_details.append({
-                    'node_positions': row['node_positions'],
-                    'node_rssi': row['node_rssi'],
-                    'node_noise': row['node_noise'],
-                    'jammer_position': row['jammer_position'],
-                    'node_states': row['node_states']
-                })
+            # # Fetch additional data using ID from the original DataFrame
+            # ids = data_batch.id.cpu().numpy()
+            # batch_details = original_dataset.loc[original_dataset['id'].isin(ids)]
+            # for id in ids:
+            #     row = batch_details[batch_details['id'] == id].iloc[0]
+            #     node_details.append({
+            #         'node_positions': row['node_positions'],
+            #         'node_rssi': row['node_rssi'],
+            #         'node_noise': row['node_noise'],
+            #         'jammer_position': row['jammer_position'],
+            #         'node_states': row['node_states']
+            #     })
 
     # Flatten predictions and actuals if they are nested lists
     predictions = np.concatenate(predictions)

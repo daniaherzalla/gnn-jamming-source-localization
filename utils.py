@@ -6,6 +6,7 @@ import random
 from typing import Dict
 import numpy as np
 import torch
+
 from config import params
 
 
@@ -39,10 +40,7 @@ def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, flo
 
 
 def save_epochs(epoch_data, folder_path) -> None:
-    if params['additional_features'] and params['study'] == 'feat_engineering':
-        filename = params['additional_features'][0] + "_epoch_metrics.csv"
-    else:
-        filename = "epoch_metrics.csv"
+    filename = "epoch_metrics.csv"
     file = folder_path + filename
     file_exists = os.path.isfile(file)
 
@@ -73,7 +71,7 @@ def save_study_data(trial_data, file) -> None:
         writer.writerow(trial_data)
 
 
-def set_seeds_and_reproducibility(seed_value, reproducible=True):
+def set_seeds_and_reproducibility(seed_value):
     """
     Set seeds for reproducibility and configure PyTorch for deterministic behavior.
 
@@ -81,14 +79,13 @@ def set_seeds_and_reproducibility(seed_value, reproducible=True):
     reproducible (bool): Whether to configure the environment for reproducibility.
     seed_value (int): The base seed value to use for RNGs.
     """
-    # Set seeds with different offsets to avoid correlations
-    print("Set seeds for reproducibility")
-    random.seed(seed_value)
-    np.random.seed(seed_value + 1)
-    torch.manual_seed(seed_value + 2)
-    torch.cuda.manual_seed_all(seed_value + 3)
-
-    if reproducible:
+    if params['reproduce']:
+        # Set seeds with different offsets to avoid correlations
+        print("Set seeds for reproducibility")
+        random.seed(seed_value)
+        np.random.seed(seed_value + 1)
+        torch.manual_seed(seed_value + 2)
+        torch.cuda.manual_seed_all(seed_value + 3)
         # Configure PyTorch for deterministic behavior
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
