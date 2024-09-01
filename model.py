@@ -1,6 +1,6 @@
 import torch
 from torch_geometric.graphgym import init_weights
-from torch_geometric.nn import MLP, GCN, GraphSAGE, GIN, GAT, AttentionalAggregation
+from torch_geometric.nn import MLP, GCN, GraphSAGE, GIN, GAT, AttentionalAggregation, global_mean_pool
 
 from torch.nn import Linear
 from utils import set_seeds_and_reproducibility
@@ -19,7 +19,7 @@ class GNN(torch.nn.Module):
         num_heads (int): The number of attention heads in the GAT layers.
         in_channels (int): Input features dimension: drone pos (x,y,z), RSSI, jamming status, distance to centroid.
     """
-    def __init__(self, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], in_channels=params['in_channels'], hidden_channels=params['hidden_channels'], out_channels=params['out_channels'], num_layers=params['num_layers'], out_features=params['out_features'], act='relu', norm=None):
+    def __init__(self, in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'], out_channels=params['out_channels'], num_layers=params['num_layers'], out_features=params['out_features'], act='relu', norm=None):
         super(GNN, self).__init__()
 
         # Model definitions
@@ -57,6 +57,7 @@ class GNN(torch.nn.Module):
 
         # Apply GNN layers
         x = self.gnn(x, edge_index)
+        # x = global_mean_pool(x, data.batch)
         x = self.attention_pool(x, data.batch)  # Apply attention pooling to get a single vector for the graph
         x = self.dropout(x)  # apply dropout last layer
         x = self.regressor(x)

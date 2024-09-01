@@ -219,14 +219,6 @@ def add_cyclical_features(data):
     data['cos_azimuth'] = data['azimuth_angle'].apply(lambda angles: [np.cos(angle) for angle in angles])
 
 
-# def add_node_noise_statistical_features(data):
-#     """Calculate statistical features for node noise."""
-#     data['mean_noise'] = data['node_noise'].apply(np.mean)
-#     data['median_noise'] = data['node_noise'].apply(np.median)
-#     data['std_noise'] = data['node_noise'].apply(np.std)
-#     data['range_noise'] = data['node_noise'].apply(lambda x: np.max(x) - np.min(x))
-
-
 def calculate_proximity_metric(positions, threshold=0.2):
     """Calculate the number of nearby nodes within a given threshold distance."""
     nbrs = NearestNeighbors(radius=threshold).fit(positions)
@@ -249,47 +241,20 @@ def create_graphs(data):
         num_nodes = positions.shape[0]
 
         if num_nodes > 1:  # Ensure there are enough nodes to form a graph
-            k = min(params['num_neighbors'], num_nodes - 1)  # num of neighbors, ensuring that num of neighbors is never greater than the number of possible neighbors
+            k = min(params['num_neighbors'], num_nodes - 1)  # num of neighbors
             nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
             distances, indices = nbrs.kneighbors(positions)
 
             for i in range(num_nodes):
-                G.add_node(i, pos=positions[i], noise=row['node_noise'][i])
-                for j in indices[i]:
+                G.add_node(i, position=positions[i], noise=row['node_noise'][i])  # Changed 'pos' to 'position'
+                for j in indices[i]:  # Skip the first index since it is the point itself
                     G.add_edge(i, j)
 
         graphs.append(G)
 
-        # # Visualization and debugging output
-        #         # pos = nx.get_node_attributes(G, 'pos')  # Get positions for drawing
-        #         # nx.draw(G, pos, with_labels=True, node_color='skyblue', edge_color='#FF5733', node_size=500)
-        #         # plt.title(f"Graph Visualization for Row {index}")
-        #         # plt.show()
     return graphs
 
 
-# def calculate_noise_statistics(graphs, stats_to_compute):
-#     node_noise_stats = []
-#     for G in graphs:
-#         stats_per_graph = []
-#         for node in G.nodes:
-#             neighbors = list(G.neighbors(node))
-#             neighbors.append(node)  # Include the node itself
-#             noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]
-#
-#             computed_stats = {}
-#             if 'mean_noise' in stats_to_compute:
-#                 computed_stats['mean_noise'] = np.mean(noises)
-#             if 'median_noise' in stats_to_compute:
-#                 computed_stats['median_noise'] = np.median(noises)
-#             if 'std_noise' in stats_to_compute:
-#                 computed_stats['std_noise'] = np.std(noises)
-#             if 'range_noise' in stats_to_compute:
-#                 computed_stats['range_noise'] = np.max(noises) - np.min(noises)
-#
-#             stats_per_graph.append(computed_stats)
-#         node_noise_stats.append(stats_per_graph)
-#     return node_noise_stats
 
 
 def calculate_noise_statistics(graphs, stats_to_compute):
@@ -302,6 +267,7 @@ def calculate_noise_statistics(graphs, stats_to_compute):
             neighbors = list(G.neighbors(node))
             curr_node_noise = G.nodes[node]['noise']
             neighbor_noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]  # Neighbors' noise
+            neighbor_positions = [G.nodes[neighbor]['position'] for neighbor in neighbors]  # Neighbors' positions
 
             node_stats = {}  # Dictionary to store stats for the current node
 
@@ -323,6 +289,19 @@ def calculate_noise_statistics(graphs, stats_to_compute):
             # Compute relative noise
             node_stats['relative_noise'] = curr_node_noise - mean_neighbor_noise
 
+            # Compute the weighted centroid local (WCL)
+            if 'wcl_coefficient' in stats_to_compute:
+                total_weight = 0
+                weighted_sum = np.zeros(2)  # 2D positions
+                for pos, noise in zip(neighbor_positions, neighbor_noises):
+                    weight = 10 ** (noise / 10)
+                    weighted_coords = weight * np.array(pos)
+                    weighted_sum += weighted_coords
+                    total_weight += weight
+                if total_weight != 0:
+                    wcl_estimation = weighted_sum / total_weight
+                    node_stats['wcl_coefficient'] = wcl_estimation.tolist()  # Store as a list if necessary
+
             graph_stats.append(node_stats)  # Append the current node's stats to the graph's list
 
         all_graph_stats.append(graph_stats)  # Append the completed list of node stats for this graph
@@ -330,15 +309,74 @@ def calculate_noise_statistics(graphs, stats_to_compute):
     return all_graph_stats
 
 
-
-# def add_node_noise_statistics(data):
-#     graphs = create_graphs(data)
-#     node_noise_stats = calculate_noise_statistics(graphs)
-#     # Assuming each row in 'data' corresponds to one graph
-#     for idx, stats in enumerate(node_noise_stats):
-#         for key in stats[0].keys():  # example keys: 'mean_noise', 'median_noise'
-#             data.at[idx, key] = [stat[key] for stat in stats]
-#     return data
+# def calculate_noise_statistics(graphs, jammer_positions, stats_to_compute):
+#     all_graph_stats = []  # list of lists, each sublist for a graph
+#     count = 0
+#
+#     for G in graphs:
+#         graph_stats = []  # current graph's node stats
+#         count += 1
+#
+#         for node in G.nodes:
+#             plt.figure(figsize=(12, 10))  # new fig for each node's WCL calculation
+#
+#             # Plot all nodes and edges
+#             for n in G.nodes:
+#                 plt.scatter(*G.nodes[n]['position'], color='grey', s=50, edgecolor='black', zorder=1)  # Normal nodes
+#             for n1, n2 in G.edges:
+#                 plt.plot(*zip(G.nodes[n1]['position'], G.nodes[n2]['position']), color='grey', linewidth=0.3, zorder=0)  # Edges
+#
+#             # Plot jammer position
+#             jammer_pos = jammer_positions[count]
+#             print("jammer_pos: ", jammer_pos)
+#             plt.scatter(*jammer_pos, color='magenta', s=100, marker='^', label='Jammer', zorder=4)
+#
+#             neighbors = list(G.neighbors(node))
+#             curr_node_noise = G.nodes[node]['noise']
+#             neighbor_noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]
+#             neighbor_positions = [G.nodes[neighbor]['position'] for neighbor in neighbors]
+#
+#             node_stats = {}
+#
+#             if 'wcl_coefficient' in stats_to_compute:
+#                 total_weight = 0
+#                 weighted_sum = np.zeros(2)  # Assuming 2D positions
+#                 weights = []
+#                 for pos, noise in zip(neighbor_positions, neighbor_noises):
+#                     weight = 10 ** (noise / 10)
+#                     weights.append(weight)
+#                     weighted_coords = weight * np.array(pos)
+#                     weighted_sum += weighted_coords
+#                     total_weight += weight
+#                 if total_weight != 0:
+#                     wcl_estimation = weighted_sum / total_weight
+#                     node_stats['wcl_coefficient'] = wcl_estimation.tolist()
+#
+#                     # Plot WCL point on top
+#                     plt.scatter(*wcl_estimation, color='red', marker='x', s=200, zorder=3)
+#
+#             # Highlight the current node on top
+#             plt.scatter(*G.nodes[node]['position'], color='blue', s=100, zorder=2)
+#
+#             # Annotate neighbor nodes with weights
+#             for neighbor, weight in zip(neighbors, weights):
+#                 plt.annotate(f'{weight:.2f}', xy=G.nodes[neighbor]['position'], textcoords="offset points", xytext=(0,10), ha='center')
+#
+#             plt.title(f'Graph with WCL for Node {node}')
+#             plt.xlabel('X coordinate')
+#             plt.ylabel('Y coordinate')
+#             plt.grid(True)
+#
+#             graph_stats.append(node_stats)  # Append the current node's stats to the graph's list
+#             plt.show()
+#             # if dataset_type == 'random_all_jammed_jammer_outside_region':
+#             #     plt.show()
+#             # else:
+#             #     plt.close()
+#
+#         all_graph_stats.append(graph_stats)  # Append the completed list of node stats for this graph
+#
+#     return all_graph_stats
 
 
 def add_clustering_coefficients(graphs):
@@ -393,11 +431,14 @@ def engineer_node_features(data, params):
         data['clustering_coefficient'] = clustering_coeffs  # Assign the coefficients directly
 
     # Graph-based noise stats
-    graph_noise_stats = ['mean_noise', 'median_noise', 'std_noise', 'range_noise', 'relative_noise']
-    noise_stats_to_compute = [stat for stat in graph_noise_stats if stat in params.get('additional_features', [])]
+    graph_stats = ['mean_noise', 'median_noise', 'std_noise', 'range_noise', 'relative_noise', 'wcl_coefficient']
+    noise_stats_to_compute = [stat for stat in graph_stats if stat in params.get('additional_features', [])]
 
     if noise_stats_to_compute:
+        jammer_positions = data['jammer_position'].tolist()
+        # dataset_list = data['dataset'].tolist()
         graphs = create_graphs(data)
+        # node_noise_stats = calculate_noise_statistics(graphs, jammer_positions, noise_stats_to_compute)
         node_noise_stats = calculate_noise_statistics(graphs, noise_stats_to_compute)
 
         for stat in noise_stats_to_compute:
@@ -602,33 +643,38 @@ def split_datasets(preprocessed_data, data, params, experiments_path):
     val_df = preprocessed_data.iloc[val_idx].reset_index(drop=True)
     test_df = preprocessed_data.iloc[test_idx].reset_index(drop=True)
 
-    return train_dataset, val_dataset, test_dataset, train_df, val_df, test_df
+    # Apply the same indices to the raw data
+    raw_test_df = data.iloc[test_idx].reset_index(drop=True)
+
+    return train_dataset, val_dataset, test_dataset, train_df, val_df, test_df, raw_test_df
 
 
 
-def save_datasets(train_data, val_data, test_data, train_df, val_df, test_df, experiments_path):
+def save_datasets(combined_train_data, combined_val_data, combined_test_data, combined_raw_test_data, combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df, experiments_path):
     """
     Process the combined train, validation, and test data, and save them to disk.
 
     Args:
-        train_data (list): List of training data samples.
-        val_data (list): List of validation data samples.
-        test_data (list): List of test data samples.
-        train_df (pd.DataFrame): DataFrame containing combined training data.
-        val_df (pd.DataFrame): DataFrame containing combined validation data.
-        test_df (pd.DataFrame): DataFrame containing combined test data.
+        combined_train_data (list): List of training data samples.
+        combined_val_data (list): List of validation data samples.
+        combined_test_data (list): List of test data samples.
+        combined_train_df (pd.DataFrame): DataFrame containing combined training data.
+        combined_val_df (pd.DataFrame): DataFrame containing combined validation data.
+        combined_test_df (pd.DataFrame): DataFrame containing combined test data.
         experiments_path (str): The path where the processed data will be saved.
     """
     logging.info("Saving data...")
+
     # Save the combined datasets
-    save_reduced_dataset(train_data, list(range(len(train_data))), os.path.join(experiments_path, 'train_dataset.pt'))
-    save_reduced_dataset(val_data, list(range(len(val_data))), os.path.join(experiments_path, 'val_dataset.pt'))
-    save_reduced_dataset(test_data, list(range(len(test_data))), os.path.join(experiments_path, 'test_dataset.pt'))
+    save_reduced_dataset(combined_train_data, list(range(len(combined_train_data))), os.path.join(experiments_path, 'train_dataset.pt'))
+    save_reduced_dataset(combined_val_data, list(range(len(combined_val_data))), os.path.join(experiments_path, 'val_dataset.pt'))
+    save_reduced_dataset(combined_test_data, list(range(len(combined_test_data))), os.path.join(experiments_path, 'test_dataset.pt'))
 
     # Save the combined DataFrame subsets
-    train_df.to_csv(os.path.join(experiments_path, 'train_dataset.csv'), index=False)
-    val_df.to_csv(os.path.join(experiments_path, 'val_dataset.csv'), index=False)
-    test_df.to_csv(os.path.join(experiments_path, 'test_dataset.csv'), index=False)
+    combined_train_df.to_csv(os.path.join(experiments_path, 'train_dataset.csv'), index=False)
+    combined_val_df.to_csv(os.path.join(experiments_path, 'val_dataset.csv'), index=False)
+    combined_test_df.to_csv(os.path.join(experiments_path, 'test_dataset.csv'), index=False)
+    combined_raw_test_df.to_csv(os.path.join(experiments_path, 'raw_test_data.csv'), index=False)
 
     # Dataset types for specific filtering
     dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
@@ -636,44 +682,45 @@ def save_datasets(train_data, val_data, test_data, train_df, val_df, test_df, ex
                      'random_jammer_outside_region']
 
     for dataset in dataset_types:
-        train_indices = train_df[train_df['dataset'] == dataset].index.tolist()
-        val_indices = val_df[val_df['dataset'] == dataset].index.tolist()
-        test_indices = test_df[test_df['dataset'] == dataset].index.tolist()
+        train_indices = combined_train_df[combined_train_df['dataset'] == dataset].index.tolist()
+        val_indices = combined_val_df[combined_val_df['dataset'] == dataset].index.tolist()
+        test_indices = combined_test_df[combined_test_df['dataset'] == dataset].index.tolist()
 
         if train_indices:
-            save_reduced_dataset(train_data, train_indices, os.path.join(experiments_path, f'{dataset}_train_set.pt'))
+            save_reduced_dataset(combined_train_data, train_indices, os.path.join(experiments_path, f'{dataset}_train_set.pt'))
         if val_indices:
-            save_reduced_dataset(val_data, val_indices, os.path.join(experiments_path, f'{dataset}_val_set.pt'))
+            save_reduced_dataset(combined_val_data, val_indices, os.path.join(experiments_path, f'{dataset}_val_set.pt'))
         if test_indices:
-            save_reduced_dataset(test_data, test_indices, os.path.join(experiments_path, f'{dataset}_test_set.pt'))
+            save_reduced_dataset(combined_test_data, test_indices, os.path.join(experiments_path, f'{dataset}_test_set.pt'))
 
     # Special cases for "all_jammed" and "all_jammed_jammer_outside_region"
-    all_jammed_train_indices = train_df[(train_df['dataset'].str.contains('all_jammed')) & (~train_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
-    all_jammed_val_indices = val_df[(val_df['dataset'].str.contains('all_jammed')) & (~val_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
-    all_jammed_test_indices = test_df[(test_df['dataset'].str.contains('all_jammed')) & (~test_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
+    all_jammed_train_indices = combined_train_df[(combined_train_df['dataset'].str.contains('all_jammed')) & (~combined_train_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
+    all_jammed_val_indices = combined_val_df[(combined_val_df['dataset'].str.contains('all_jammed')) & (~combined_val_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
+    all_jammed_test_indices = combined_test_df[(combined_test_df['dataset'].str.contains('all_jammed')) & (~combined_test_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
 
-    all_jammed_jammer_outside_region_train_indices = train_df[train_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
-    all_jammed_jammer_outside_region_val_indices = val_df[val_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
-    all_jammed_jammer_outside_region_test_indices = test_df[test_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
+    all_jammed_jammer_outside_region_train_indices = combined_train_df[combined_train_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
+    all_jammed_jammer_outside_region_val_indices = combined_val_df[combined_val_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
+    all_jammed_jammer_outside_region_test_indices = combined_test_df[combined_test_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
 
+    # TODO:
     if all_jammed_train_indices:
-        save_reduced_dataset(train_data, all_jammed_train_indices, os.path.join(experiments_path, 'all_jammed_train_set.pt'))
+        save_reduced_dataset(combined_train_data, all_jammed_train_indices, os.path.join(experiments_path, 'all_jammed_train_set.pt'))
     if all_jammed_val_indices:
-        save_reduced_dataset(val_data, all_jammed_val_indices, os.path.join(experiments_path, 'all_jammed_val_set.pt'))
+        save_reduced_dataset(combined_val_data, all_jammed_val_indices, os.path.join(experiments_path, 'all_jammed_val_set.pt'))
     if all_jammed_test_indices:
-        save_reduced_dataset(test_data, all_jammed_test_indices, os.path.join(experiments_path, 'all_jammed_test_set.pt'))
+        save_reduced_dataset(combined_test_data, all_jammed_test_indices, os.path.join(experiments_path, 'all_jammed_test_set.pt'))
 
     if all_jammed_jammer_outside_region_train_indices:
-        save_reduced_dataset(train_data, all_jammed_jammer_outside_region_train_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_train_set.pt'))
+        save_reduced_dataset(combined_train_data, all_jammed_jammer_outside_region_train_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_train_set.pt'))
     if all_jammed_jammer_outside_region_val_indices:
-        save_reduced_dataset(val_data, all_jammed_jammer_outside_region_val_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_val_set.pt'))
+        save_reduced_dataset(combined_val_data, all_jammed_jammer_outside_region_val_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_val_set.pt'))
     if all_jammed_jammer_outside_region_test_indices:
-        save_reduced_dataset(test_data, all_jammed_jammer_outside_region_test_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_test_set.pt'))
+        save_reduced_dataset(combined_test_data, all_jammed_jammer_outside_region_test_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_test_set.pt'))
 
     quit()
 
 
-def load_data(dataset_path: str, params, test_set, experiments_path=None, data=None):
+def load_data(params, train_set_name, val_set_name, test_set_name, experiments_path=None, data=None):
     """
     Load the data from the given paths, or preprocess and save it if not already done.
 
@@ -686,48 +733,52 @@ def load_data(dataset_path: str, params, test_set, experiments_path=None, data=N
     """
     logging.info("Loading data...")
 
-    combined_train_data = []
-    combined_val_data = []
-    combined_test_data = []
-    combined_train_df = pd.DataFrame()
-    combined_val_df = pd.DataFrame()
-    combined_test_df = pd.DataFrame()
-
     if params['save_data']:
-        if params['all_env']:
-            datasets = ['data/train_test_data/fspl/combined_fspl.csv', 'data/train_test_data/log_distance/urban_area/combined_urban_area.csv', 'data/train_test_data/log_distance/shadowed_urban_area/combined_shadowed_urban_area.csv']
+        combined_train_data = []
+        combined_val_data = []
+        combined_test_data = []
+        combined_raw_test_data = []
+        combined_train_df = pd.DataFrame()
+        combined_val_df = pd.DataFrame()
+        combined_test_df = pd.DataFrame()
+        combined_raw_test_df = pd.DataFrame()
+
+        if params['all_env_data']:
+            datasets = ['data/train_test_data/log_distance/urban_area/combined_urban_area.csv', 'data/train_test_data/log_distance/shadowed_urban_area/combined_shadowed_urban_area.csv']
+            # datasets = ['data/train_test_data/log_distance/urban_area/rectangle.csv'] # circle_jammer_outside_region
         else:
-            datasets = params['dataset_path']
+            datasets = [params['dataset_path']]
         for dataset in datasets:
-            print("dataset path: ", dataset)
+            print(f"dataset: {dataset}")
             data = pd.read_csv(dataset)
             data['id'] = range(1, len(data) + 1)
 
             # Create a deep copy of the DataFrame
             data_to_preprocess = data.copy(deep=True)
             preprocessed_data = preprocess_data(data_to_preprocess, params)
-            train_data, val_data, test_data, train_df, val_df, test_df = split_datasets(preprocessed_data, data, params, experiments_path)
+            train_data, val_data, test_data, train_df, val_df, test_df, raw_test_df = split_datasets(preprocessed_data, data, params, experiments_path)
 
             combined_train_data.extend(train_data)
             combined_val_data.extend(val_data)
             combined_test_data.extend(test_data)
+            combined_raw_test_data.extend(raw_test_df)
             combined_train_df = pd.concat([combined_train_df, train_df], ignore_index=True)
             combined_val_df = pd.concat([combined_val_df, val_df], ignore_index=True)
             combined_test_df = pd.concat([combined_test_df, test_df], ignore_index=True)
+            combined_raw_test_df = pd.concat([combined_raw_test_df, raw_test_df], ignore_index=True)
 
         # Process and save the combined data
-        save_datasets(combined_train_data, combined_val_data, combined_test_data,
-                                       combined_train_df, combined_val_df, combined_test_df,
+        save_datasets(combined_train_data, combined_val_data, combined_test_data, combined_raw_test_data,
+                                       combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df,
                                        experiments_path)
     else:
         # TODO: check what to be returned for the original dataset for plotting
-        train_dataset = torch.load(os.path.join(experiments_path, params['train_set']))
-        val_dataset = torch.load(os.path.join(experiments_path, params['val_set']))
-        test_dataset = torch.load(os.path.join(experiments_path, params['test_set']))
+        train_dataset = torch.load(os.path.join(experiments_path, train_set_name))
+        val_dataset = torch.load(os.path.join(experiments_path, val_set_name))
+        test_dataset = torch.load(os.path.join(experiments_path, test_set_name))
+        # test_dataset_csv = pd.read_csv(experiments_path + test_set)
 
-        # test_dataset_csv = pd.read_csv(experiments_path + 'test_dataset.csv')
-
-    return train_dataset, val_dataset, test_dataset, data
+    return train_dataset, val_dataset, test_dataset
 
 
 def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int):

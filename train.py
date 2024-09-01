@@ -47,7 +47,7 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
     # print('params: ', params)
     print('in_channels: ', in_channels)
     # print("params['additional_features']: ", params['additional_features'])
-    model = GNN(dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], in_channels=in_channels, hidden_channels=params['hidden_channels'], out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
+    model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'], out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
     criterion = torch.nn.MSELoss()
