@@ -28,7 +28,6 @@ def main():
         seeds = [100]
     else:
         seeds = [1, 23, 42]  # Different seeds for different initialization trials
-        # seeds = [1, 7, 23, 42, 12345]
 
     if params['train_per_class']:
         dataset_classes = ['circle', 'triangle', 'rectangle', 'random',
@@ -81,8 +80,8 @@ def main():
             # Inference
             if params['inference']:
                 # shape_classifier = joblib.load('trained_shape_classifier.pkl')
-                for test_set in params['test_sets']:
-                    print(test_set)
+                for test_set_name in params['test_sets']:
+                    print(test_set_name)
                     train_dataset, val_dataset, test_dataset = load_data(params, train_set_name, val_set_name, test_set_name, experiment_path)
                     _, _, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
 
@@ -100,13 +99,13 @@ def main():
                     # Load trained model
                     model.load_state_dict(torch.load(model_path))
                     # Predict jammer position
-                    predictions, actuals, node_details, err_metrics = predict_and_evaluate_full(test_loader, model, device, raw_test_data)
+                    predictions, actuals, node_details, err_metrics = predict_and_evaluate_full(test_loader, model, device)
                     # Save inference data
                     study_data = {
                         'trial': 'seed_' + str(seed),
                         'model': params['model'],
                         'combination': combination,
-                        'dataset': test_set
+                        'dataset': test_set_name
                     }
                     trial_data = {**study_data, **err_metrics}
 

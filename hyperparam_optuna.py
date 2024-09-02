@@ -7,12 +7,14 @@ import optuna
 from optuna.trial import TrialState
 from train import initialize_model, train, validate
 from data_processing import load_data, create_data_loader
+from utils import set_seeds_and_reproducibility
 
 
 # TIMEOUT = 52800  # seconds
 # TIMEOUT = 48600  # seconds
 # TIMEOUT = 50400  # seconds # 14 hours
-TIMEOUT = 43200  # seconds # 12 hours
+# TIMEOUT = 43200  # seconds # 12 hours
+TIMEOUT = 36000  # seconds # 12 hours
 NUM_JOBS = 1
 
 
@@ -32,7 +34,8 @@ def objective(trial, model):
 
     print("device: ", device)
     hyperparameters = {
-        'dropout_rate': trial.suggest_float('dropout_rate', 0.2, 0.7),
+        'model': model,
+        'dropout_rate': trial.suggest_float('dropout_rate', 0.2, 0.6),
         'num_heads': trial.suggest_categorical('num_heads', [2, 4, 8]),
         'num_layers': trial.suggest_categorical('num_layers', [2, 4, 8]),
         'hidden_channels': trial.suggest_categorical('hidden_channels', [32, 64, 128, 256, 512]),
@@ -40,50 +43,58 @@ def objective(trial, model):
         'batch_size': trial.suggest_categorical('batch_size', [4, 8, 16, 32, 64]),
         'learning_rate': trial.suggest_float('learning_rate', 0.0001, 0.001),
         'weight_decay': trial.suggest_float('weight_decay', 1e-7, 1e-2, log=True),
-        'num_neighbors': trial.suggest_categorical('num_neighbors', [5, 10, 20, 30]),
         'required_features': ['node_positions', 'node_noise'],
+        'additional_features': ['mean_noise', 'std_noise', 'range_noise', 'dist_to_centroid', 'sin_azimuth', 'cos_azimuth'],
+        'num_neighbors': 50,
         'max_epochs': 200,
         'coords': 'cartesian',
         'edges': 'knn',
         'norm': 'minmax',
         'inference': False,
         'save_data': False,
-        'model': model,
-        # Dynamic feature selection
-        'use_dist_to_centroid': trial.suggest_categorical('use_dist_to_centroid', [True, False]),
-        'use_sin_azimuth': trial.suggest_categorical('use_sin_azimuth', [True, False]),
-        'use_relative_noise': trial.suggest_categorical('use_relative_noise', [True, False]),
-        'use_proximity_count': trial.suggest_categorical('use_proximity_count', [True, False]),
-        'use_clustering_coefficient': trial.suggest_categorical('use_clustering_coefficient', [True, False]),
-        'use_mean_noise': trial.suggest_categorical('use_mean_noise', [True, False]),
-        'use_median_noise': trial.suggest_categorical('use_median_noise', [True, False]),
-        'use_std_noise': trial.suggest_categorical('use_std_noise', [True, False]),
-        'use_range_noise': trial.suggest_categorical('use_range_noise', [True, False])
+        'all_env_data': True,
+        'reproduce': True,
+        'activation': False,
+        'test_sets': ['test_dataset.pt', 'circle_test_set.pt', 'triangle_test_set.pt', 'rectangle_test_set.pt', 'random_test_set.pt', 'circle_jammer_outside_region_test_set.pt',
+                      'triangle_jammer_outside_region_test_set.pt', 'rectangle_jammer_outside_region_test_set.pt', 'random_jammer_outside_region_test_set.pt',
+                      'all_jammed_test_set.pt', 'all_jammed_jammer_outside_region_test_set.pt'],
+        'train_set': 'train_dataset.pt',  # train_dataset.pt # triangle_train_set.pt
+        'val_set': 'val_dataset.pt',  # val_dataset.pt # triangle_val_set.pt
+        'test_set': 'test_dataset.pt',  # test_dataset.pt # triangle_test_set.pt
+        'experiments_folder': 'combined_new/',
+        'dataset_path': 'data/train_test_data/fspl/combined_fspl.csv'
     }
 
-    additional_features = [feature for feature in [
-        'dist_to_centroid', 'relative_noise', 'proximity_count',
-        'clustering_coefficient', 'mean_noise', 'median_noise', 'std_noise', 'range_noise'
-    ] if hyperparameters[f'use_{feature}']]
-
-    # Include azimuth features if selected
-    if hyperparameters['use_sin_azimuth']:
-        additional_features.extend(['sin_azimuth', 'cos_azimuth'])
-
-    hyperparameters['additional_features'] = additional_features
-
     try:
-        # '/home/mladmin/dania/gnn-jamming-source-localization/data/random.csv'
-        train_dataset, val_dataset, test_dataset, original_dataset = load_data('data/combined_fspl_log_distance.csv', hyperparameters)
-        train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=hyperparameters['batch_size'])
-        steps_per_epoch = len(train_loader)
-        model, optimizer, scheduler, criterion = initialize_model(device, hyperparameters, steps_per_epoch)
+        seeds = [0]
+        for trial_num, seed in enumerate(seeds):
+            print("\nseed: ", seed)
+            set_seeds_and_reproducibility(seed)
+
+            # Experiment params
+            experiment_path = 'experiments_datasets/knn_edges/combined_new/'
+
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            # device = torch.device('cpu')
+            print("device: ", device)
+
+            train_dataset, val_dataset, test_dataset, original_test_dataset = load_data('', hyperparameters, 'test_dataset.pt', experiment_path)
+            train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=hyperparameters['batch_size'])
+
+            # Initialize model
+            steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
+            model, optimizer, scheduler, criterion = initialize_model(device, hyperparameters, steps_per_epoch)
+
+            best_val_loss = float('inf')
+
         for epoch in range(hyperparameters['max_epochs']):
             train_loss = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
             val_loss = validate(model, val_loader, criterion, device)
             print(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
-            # Report the validation loss to Optuna
-            trial.report(val_loss, epoch)
+            trial.report(val_loss, epoch)  # Report the validation loss to Optuna
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
 
             # # Report the validation loss only at epoch 75
             # if epoch == 75:
@@ -94,7 +105,7 @@ def objective(trial, model):
                 trial.set_user_attr('pruned_epoch', epoch)
                 raise optuna.exceptions.TrialPruned()
 
-        return val_loss
+        return best_val_loss
 
     except optuna.exceptions.TrialPruned as e:
         print(e)
@@ -120,7 +131,7 @@ def main():
         # pruner = optuna.pruners.MedianPruner()
         # Instantiate the HyperbandPruner
         pruner = optuna.pruners.HyperbandPruner(
-            min_resource=1,  # Minimum number of training iterations
+            min_resource=100,  # Minimum number of training iterations
             max_resource=200,  # Maximum number of training iterations (as defined by 'max_epochs')
             reduction_factor=3  # Determines how aggressively trials are pruned
         )
@@ -191,7 +202,7 @@ def save_results(study, model):
         trial_info['last_epoch'] = trial.user_attrs.get('pruned_epoch', 200)
         results['trials'].append(trial_info)
 
-    with open(f'hyperparam_results/latest_optuna/{model}_optuna_results.json', 'w') as f:
+    with open(f'hyperparam_results/new/{model}_optuna_results.json', 'w') as f:
         json.dump(results, f, indent=4)
 
 

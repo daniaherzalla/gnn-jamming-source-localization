@@ -189,7 +189,7 @@ def predict_and_evaluate(model, loader, device):
     return predictions, actuals, err_metrics, rmse_list
 
 
-def predict_and_evaluate_full(loader, model, device, original_dataset):
+def predict_and_evaluate_full(loader, model, device, original_dataset=None):
     """
     Extended evaluation function to gather all required details for plotting, including
     fetching details using IDs from the data DataFrame.
