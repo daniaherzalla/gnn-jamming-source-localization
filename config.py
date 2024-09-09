@@ -1,13 +1,13 @@
 params = {
-    'model': 'Sage',
-    'learning_rate': 0.0008648799192603533,
+    'model': 'MLP',
+    'learning_rate': 0.0003539362244375827,
     'weight_decay': 0.00005,
-    'batch_size': 8,
+    'batch_size': 16,
     'dropout_rate': 0.5,
-    'num_heads': 4,
+    'num_heads': 2,
     'num_layers': 8,
-    'hidden_channels': 256,
-    'out_channels': 32,
+    'hidden_channels': 128,
+    'out_channels': 64,
     'out_features': 2,  # 3 jammer pos (x, y, z) # 5 (r, sin(theta), cos(theta), sin(phi), cos(phi))
     'max_epochs': 250,
     '3d': False,
@@ -18,12 +18,13 @@ params = {
     'edges': 'knn',  # opts: 'knn', 'proximity'
     'norm': 'minmax',  # opts: 'minmax', 'unit_sphere'
     'activation': False,
-    'experiments_folder': 'fspl_new/10000samples/',
-    'dataset_path': 'data/train_test_data/fspl/10000samples/combined_10000_fspl.csv',  # combined_fspl_log_distance.csv',  # combined_urban_area.csv
+    'experiments_folder': 'log_new/10000samples/',
+    'dataset_path': 'data/train_test_data/fspl/10000samples/.csv',  # combined_fspl_log_distance.csv',  # combined_urban_area.csv
+    'test_sets': ['test_dataset.pt', 'circle_test_set.pt', 'triangle_test_set.pt', 'rectangle_test_set.pt', 'random_test_set.pt', 'circle_jammer_outside_region_test_set.pt', 'triangle_jammer_outside_region_test_set.pt', 'rectangle_jammer_outside_region_test_set.pt', 'random_jammer_outside_region_test_set.pt', 'all_jammed_test_set.pt', 'all_jammed_jammer_outside_region_test_set.pt'],
     'train_per_class': False,
     'all_env_data': False,
-    'inference': False,
-    'save_data': True,
+    'inference': True,
+    'save_data': False,
     'reproduce': True,
     'plot_network': False,
     'study': 'dataset'  # dataset, coord_system, feat_engineering, knn_edges
