@@ -17,8 +17,8 @@ MESH_NETWORK = True  # Set to True for mesh network, False for AP-client network
 JAMMER_OUTSIDE_SAMPLE = False  # Set True to ensure jammer position is generated outside the node positions sampled region
 ALL_JAMMED = False  # Set True to ensure every node in network is jammed
 ENV = "urban_area"  # "shadowed_urban_area" # fspl # Set type of propagation environment
-PLOT = True
-NUM_RSSI_SAMPLES = 10
+PLOT = False
+NUM_RSSI_SAMPLES = 1
 
 
 def dbm_to_linear(dbm):
@@ -121,34 +121,40 @@ def plot_network_with_rssi(node_positions, final_rssi, jammer_position, sinr_db,
     plt.grid(True)
     plt.show()
 
-def calculate_line_bounds(center_x, center_y, angle, size):
+def calculate_line_bounds(center_x, center_y, angle, size, delta=0):
     cos_a = np.cos(angle)
     sin_a = np.sin(angle)
     intercepts = []
 
+    # Adjust for a buffer zone of 50 units from either boundary
+    min_bound = delta
+    max_bound = size - delta
+
     if cos_a != 0:
+        # Intercept with x = 0 (left boundary)
         t = -center_x / cos_a
         y = center_y + t * sin_a
-        if 0 <= y <= size:
-            intercepts.append((0, y))
+        if min_bound <= y <= max_bound:
+            intercepts.append((min_bound, y))
 
-    if cos_a != 0:
+        # Intercept with x = size (right boundary)
         t = (size - center_x) / cos_a
         y = center_y + t * sin_a
-        if 0 <= y <= size:
-            intercepts.append((size, y))
+        if min_bound <= y <= max_bound:
+            intercepts.append((max_bound, y))
 
     if sin_a != 0:
+        # Intercept with y = 0 (bottom boundary)
         t = -center_y / sin_a
         x = center_x + t * cos_a
-        if 0 <= x <= size:
-            intercepts.append((x, 0))
+        if min_bound <= x <= max_bound:
+            intercepts.append((x, min_bound))
 
-    if sin_a != 0:
+        # Intercept with y = size (top boundary)
         t = (size - center_y) / sin_a
         x = center_x + t * cos_a
-        if 0 <= x <= size:
-            intercepts.append((x, size))
+        if min_bound <= x <= max_bound:
+            intercepts.append((x, max_bound))
 
     if len(intercepts) >= 2:
         return intercepts[0], intercepts[-1]
@@ -190,79 +196,83 @@ def get_position(n_nodes, size, line_alignment, placement='random'):
         xv, yv = np.meshgrid(x, y)
         positions = np.column_stack((xv.ravel(), yv.ravel()))[:n_nodes]
     elif placement == 'line':
-        num_lines = np.random.randint(1, 11)
-        nodes_per_line =[]
         positions = np.empty((0, 2))
+        timestamps = []  # List to store timestamps for each line
+        nodes_per_line = []
 
-        center_x = np.random.uniform(0, size)
-        center_y = np.random.uniform(0, size)
-        base_angle = np.random.uniform(0, 2 * np.pi)
+        # Generating a number from the beta distribution scaled and shifted to range 1-5
+        scale = 5
+        num_lines = int(np.ceil(np.random.beta(2, 5) * scale))
+        # print("num_lines: ", num_lines)
 
-        min_sampling_freq = 1
-        max_sampling_freq = 10 # think about sf
+        # Determine center coordinates for line
+        center_x = random.uniform(100, size-100)
+        center_y = random.uniform(100, size-100)
+
+        # Determine speed and sampling frequency for lines
+        speed = random.uniform(10, 35)  # Speed range in m/s
+        sampling_freq = random.uniform(0.25, 4)
 
         for i in range(num_lines):
-            # TODO: ask about this center offset
-            center_x += np.random.uniform(-100, 100)
-            center_y += np.random.uniform(-100, 100)
-
-            angle = np.random.uniform((base_angle - (np.pi / 5)) * (1 - line_alignment),
-                                      (base_angle + (np.pi / 5)) * (1 - line_alignment))
-
+            center_x += random.uniform(100, 200)
+            center_y += random.uniform(100, 200)
+            angle = random.uniform((np.pi / 180) * (360 * line_alignment - 25), (np.pi / 180) * (360 * line_alignment + 25))  # prev 45
             bounds = calculate_line_bounds(center_x, center_y, angle, size)
+
+            # print("size: ", size)
             if bounds:
                 start_point, end_point = bounds
                 distance = np.linalg.norm(np.array(start_point) - np.array(end_point))
-                speed = np.random.uniform(100, 500)
-                total_time = distance / speed
-
-                sampling_freq = np.random.randint(min_sampling_freq, max_sampling_freq)
-                num_points = int(total_time * sampling_freq)
+                # print("sampling frequency: ", sampling_freq)
+                num_points = int((distance / speed * sampling_freq))
+                # print("num_points: ", num_points)
+                # quit()
 
                 x_values = np.linspace(start_point[0], end_point[0], num_points)
                 y_values = np.linspace(start_point[1], end_point[1], num_points)
 
-                # Multiple sinusoidal deviations as previously discussed
+                # Calculate timestamps based on speed
+                time_intervals = np.linspace(0, distance / speed, num_points)
+                # Add time offset to each timestamp
+                time_intervals += random.uniform(0, 3)
+
+                # Deviation logic
                 deviations = np.zeros_like(x_values)
-                for _ in range(np.random.randint(1, 4)):  # 1 to 3 sinusoids
-                    amplitude = np.random.uniform(20, 50)
-                    frequency = np.random.uniform(0.1, 1)
-                    phase = np.random.uniform(0, 2 * np.pi)
+                for _ in range(random.randint(1, 3)):  # 1 to 3 sinusoids
+                    amplitude = random.uniform(10, 20)
+                    frequency = random.uniform(0.1, 1)
+                    phase = random.uniform(0, 2 * np.pi)
                     deviations += amplitude * np.sin(2 * np.pi * frequency * np.linspace(0, 1, num_points) + phase)
 
-                # Apply deviations
+                # Randomly choose whether to apply deviations
                 apply_deviation = np.random.choice(['x', 'y', 'both', 'none'], p=[0.25, 0.25, 0.25, 0.25])
-
                 if apply_deviation == 'x':
-                    print("\nadding dev to x")
                     x_values += deviations
                 elif apply_deviation == 'y':
-                    print("\nadding dev to y")
                     y_values += deviations
                 elif apply_deviation == 'both':
-                    print("\nadding dev to both")
                     x_values += deviations
                     y_values += deviations
-                else:
-                    print("\nadding dev to None")
 
-                line_positions = np.array([[x, y] for x, y in zip(x_values, y_values)])
-
-                # Store each line's data separately
+                line_positions = np.vstack((x_values, y_values)).T
                 if line_positions.size > 0:
                     positions = np.vstack([positions, line_positions])
-                    nodes_per_line.append(len(line_positions))
+                    timestamps.append(time_intervals)  # Append timestamps for this line
 
-            # print(f"Line {i + 1}:")
+                nodes_per_line.append(len(line_positions))
+
+                # print(f"Line {i + 1}: Speed: {speed:.2f} m/s, Sampling Frequency: {sampling_freq} Hz, Total Points: {num_points}")
+
+                # print(f"Line {i + 1}:")
                 # print(f"  Total Points: {num_points} points")
                 # print(f"  Speed: {speed:.2f} units per second")
-                # print(f"  Total Time: {total_time:.2f} seconds (Time Offset: {time_offset:.2f} seconds)")
+                # # print(f"  Total Time: {total_time:.2f} seconds")
                 # print(f"  Sampling Frequency: {sampling_freq} points per second")
 
     else:
         raise ValueError("Unsupported placement type.")
 
-    return positions, nodes_per_line
+    return positions, nodes_per_line, timestamps, speed, sampling_freq
 
 
 # Generate new position outside the range
@@ -318,6 +328,7 @@ for placement_strategy in node_placement_strategy:
         else:
             raise "Unknown environment"
         sigma = np.random.uniform(2, 6)  # Random shadow fading between 1 dB and 6 dB
+        # size = np.random.randint(500, 1500) # Area size in meters [500, 1500]
         size = np.random.randint(500, 1500) # Area size in meters [500, 1500]
         lb_nodes = calculate_node_bounds(size)
         ub_nodes = 8 * lb_nodes
@@ -335,39 +346,37 @@ for placement_strategy in node_placement_strategy:
         line_alignment = np.random.uniform(0.1, 1)
 
         # Node positions
-        node_positions, nodes_per_line = get_position(n_nodes, size, line_alignment, placement=placement_strategy)
+        node_positions, nodes_per_line, timestamps, speed, sampling_freq = get_position(n_nodes, size, line_alignment, placement=placement_strategy)
 
         # Inside the main simulation loop after generating node positions
+        if node_positions.size > 0:
+            # print("node_positions: ", node_positions)
+            min_x, min_y = np.min(node_positions, axis=0)
+            max_x, max_y = np.max(node_positions, axis=0)
 
-        # Get the min and max values for x and y
-        min_x, min_y = np.min(node_positions, axis=0)
-        max_x, max_y = np.max(node_positions, axis=0)
+            # Define the region and sampled region based on the min and max values of node positions
+            region = (0, 0, 1500, 1500)
+            sampled_region = (min_x, min_y, max_x, max_y)
 
-        # Define the region and sampled region based on the min and max values of node positions
-        region = (0, 0, 1500, 1500)
-        sampled_region = (min_x, min_y, max_x, max_y)
+            # Random jammer position
+            if JAMMER_OUTSIDE_SAMPLE:
+                jammer_position = random_position_outside_sample(region, sampled_region)
+            else:
+                # Generate jammer within the bounds of the sampled region S
+                jammer_x = np.random.uniform(min_x, max_x)
+                jammer_y = np.random.uniform(min_y, max_y)
+                jammer_position = np.array([jammer_x, jammer_y])
 
-        # Random jammer position
-        # TODO: update for line placement definition of within and outside
-        if JAMMER_OUTSIDE_SAMPLE:
-            jammer_position = random_position_outside_sample(region, sampled_region)
-        else:
-            # Generate jammer within the bounds of the sampled region S
-            jammer_x = np.random.uniform(min_x, max_x)
-            jammer_y = np.random.uniform(min_y, max_y)
-            jammer_position = np.array([jammer_x, jammer_y])
+            config = {
+                'size': size,
+                'n_nodes': len(node_positions),
+                'P_tx': P_tx,
+                'G_tx': G_tx,
+                'G_rx': G_rx,
+                'P_tx_jammer': P_tx_jammer,
+                'G_tx_jammer': G_tx_jammer
+            }
 
-        config = {
-            'size': size,
-            'n_nodes': len(node_positions),
-            'P_tx': P_tx,
-            'G_tx': G_tx,
-            'G_rx': G_rx,
-            'P_tx_jammer': P_tx_jammer,
-            'G_tx_jammer': G_tx_jammer
-        }
-
-        if placement_strategy == 'line':
             dist_matrix = np.linalg.norm(node_positions[:, np.newaxis, :] - node_positions[np.newaxis, :, :], axis=2)
             jammer_dist = np.linalg.norm(node_positions - jammer_position, axis=1)
 
@@ -438,118 +447,51 @@ for placement_strategy in node_placement_strategy:
 
             SINR_linear = P_rx_linear / noise_floor
             SINR_dB = linear_to_db(SINR_linear)
-        else:
-            # Distance calculations
-            dist_matrix = np.linalg.norm(node_positions[:, np.newaxis, :] - node_positions[np.newaxis, :, :], axis=2)
-            jammer_dist = np.linalg.norm(node_positions - jammer_position, axis=1)
 
-            # here
-            # Path loss calculations
-            if loss_func == log_distance_path_loss:
-                path_loss = loss_func(dist_matrix, n=n, sigma=sigma)
-                print("path_loss: ", path_loss)
-                path_loss_jammer = loss_func(jammer_dist, n=n, sigma=sigma)
+            # Compute detection threshold for SINR
+            jammed = noise_floor_dB > NOISE_THRESHOLD
+
+            jammed_nodes = np.sum(jammed) >= 3  # At least 3 nodes are jammed (3 since current simulation is in 2D) # required for CJ testing
+            not_jammed_nodes = np.sum(~jammed) >= 1  # At least 1 node is not jammed
+            all_jammed_nodes = np.sum(~jammed) == 0  # All nodes are jammed
+            high_rssi_nodes = np.sum(affected_rssi > -80) >= 1  # Ensure at least one node able to communicate with another node
+
+            # Condition checks
+            if ALL_JAMMED:
+                conditions_met = all_jammed_nodes
             else:
-                path_loss = loss_func(dist_matrix)
-                path_loss_jammer = loss_func(jammer_dist)
+                conditions_met = jammed_nodes and not_jammed_nodes and high_rssi_nodes
 
-            # RSSI calculations
-            rssi_matrix = P_tx + G_tx + G_rx - path_loss
-            rssi_jammer = P_tx_jammer + G_tx_jammer + G_rx - path_loss_jammer
+            if conditions_met:
+                # print("len(node_positions): ", len(node_positions))
 
-            # Precompute maximum jammer RSSI for each pair using broadcasting
-            # Sample alongwith path (i,j) and take the highest jamming power from those points to represent power at (i,j)
-            max_jammer_rssi_matrix = np.full((len(node_positions), len(node_positions)), -np.inf)
-            for i in range(len(node_positions)):
-                for j in range(i + 1, len(node_positions)):  # Only fill upper triangle, the matrix is symmetric
-                    max_jamming_power_dbm = sample_path_jamming(node_positions[i], node_positions[j], jammer_position, loss_func, n, sigma)
-                    max_jammer_rssi_matrix[i, j] = max_jamming_power_dbm
-                    max_jammer_rssi_matrix[j, i] = max_jamming_power_dbm
+                instance_count += 1
+                print("instance count: ", instance_count)
+                if PLOT:
+                    plot_network_with_rssi(node_positions, affected_rssi, jammer_position, SINR_dB, noise_floor_dB, jammed)
 
-            # Convert maximum jammer RSSI to linear scale for the entire matrix
-            jammer_power_linear_matrix = dbm_to_linear(max_jammer_rssi_matrix)
+                # Data to be collected
+                data = {
+                    "num_samples": len(node_positions),
+                    "nodes_per_line": [nodes_per_line],
+                    "node_positions": [node_positions.tolist()],  # Convert positions to list for storage
+                    "node_rssi": [affected_rssi.tolist()],  # RSSI values converted to list
+                    "node_noise": [noise_floor_dB.tolist()],  # RSSI values converted to list
+                    "node_states": [jammed.astype(int).tolist()],  # Convert boolean array to int and then to list
+                    "jammer_position": [[jammer_position[0], jammer_position[1]]],  # Jammer position
+                    "jammer_power": P_tx_jammer,  # Jammer transmit power
+                    "jammer_gain": G_tx_jammer,  # Jammer gain
+                    "pl_exp": n,  # Path loss exponent
+                    "sigma": sigma,  # Shadow fading
+                    "timestamps": [timestamps],
+                    "speed": speed,
+                    "sampling_freq": sampling_freq,
+                    "node_placement": placement_strategy,
+                    "jammer_outside_sample": JAMMER_OUTSIDE_SAMPLE
+                }
 
-            # Compute the noise floor for all pairs
-            noise_floor_matrix = dbm_to_linear(NOISE_LEVEL) + jammer_power_linear_matrix
-
-            # Convert RSSI values of the original matrix to linear scale
-            rssi_linear_matrix = dbm_to_linear(rssi_matrix)
-
-            # Compute SINR for all pairs
-            sinr_matrix = rssi_linear_matrix / noise_floor_matrix
-
-            # Convert SINR back to dB for the entire matrix
-            sinr_db_matrix = linear_to_db(sinr_matrix)
-
-            # Adjust the RSSI matrix
-            rssi_affected_matrix = np.minimum(rssi_matrix, rssi_matrix - (REFERENCE_SINR - sinr_db_matrix))
-            rssi_affected_matrix = np.maximum(rssi_affected_matrix, RSSI_THRESHOLD)
-
-            # Ignore self-comparisons
-            np.fill_diagonal(rssi_matrix, np.nan)
-            np.fill_diagonal(rssi_affected_matrix, np.nan)
-
-            # Calculate normal RSSI as the mean/max of the valid signals
-            affected_rssi = np.nanmax(rssi_affected_matrix, axis=1)
-
-            # Reference to disconnected nodes
-            disconnected = np.isnan(affected_rssi)
-            # Calculate normal RSSI as the mean/max of the valid signals
-            affected_rssi = np.nan_to_num(affected_rssi, nan=RSSI_THRESHOLD)  # Replace NaN with rssi_threshold or any suitable default (isolated samples)
-
-            # Compute linear powers for jammer and normal signals
-            P_rx_linear = dbm_to_linear(affected_rssi)
-            N_linear = dbm_to_linear(NOISE_LEVEL)
-            jammer_linear = dbm_to_linear(rssi_jammer)
-
-            # Compute SINR in linear scale and convert SINR from linear scale to dB
-            noise_floor = jammer_linear + N_linear
-            noise_floor_dB = linear_to_db(noise_floor)
-
-            SINR_linear = P_rx_linear / noise_floor
-            SINR_dB = linear_to_db(SINR_linear)
-
-        # Compute detection threshold for SINR
-        jammed = noise_floor_dB > NOISE_THRESHOLD
-
-        jammed_nodes = np.sum(jammed) >= 3  # At least 3 nodes are jammed (3 since current simulation is in 2D) # required for CJ testing
-        not_jammed_nodes = np.sum(~jammed) >= 1  # At least 1 node is not jammed
-        all_jammed_nodes = np.sum(~jammed) == 0  # All nodes are jammed
-        high_rssi_nodes = np.sum(affected_rssi > -80) >= 1  # Ensure at least one node able to communicate with another node
-
-        # Condition checks
-        if ALL_JAMMED:
-            conditions_met = all_jammed_nodes
-        else:
-            conditions_met = jammed_nodes and not_jammed_nodes and high_rssi_nodes
-
-        if conditions_met:
-            print("len(node_positions): ", len(node_positions))
-
-            instance_count += 1
-            print("instance count: ", instance_count)
-            if PLOT:
-                plot_network_with_rssi(node_positions, affected_rssi, jammer_position, SINR_dB, noise_floor_dB, jammed)
-
-            # Data to be collected
-            data = {
-                "num_samples": len(node_positions),
-                "nodes_per_line": [nodes_per_line],
-                "node_positions": [node_positions.tolist()],  # Convert positions to list for storage
-                "node_rssi": [affected_rssi.tolist()],  # RSSI values converted to list
-                "node_noise": [noise_floor_dB.tolist()],  # RSSI values converted to list
-                "node_states": [jammed.astype(int).tolist()],  # Convert boolean array to int and then to list
-                "jammer_position": [[jammer_position[0], jammer_position[1]]],  # Jammer position
-                "jammer_power": P_tx_jammer,  # Jammer transmit power
-                "jammer_gain": G_tx_jammer,  # Jammer gain
-                "pl_exp": n,  # Path loss exponent
-                "sigma": sigma,  # Shadow fading
-                "node_placement": placement_strategy,
-                "jammer_outside_sample": JAMMER_OUTSIDE_SAMPLE
-            }
-
-            # Append the new row to the data collection DataFrame
-            data_collection = pd.concat([data_collection, pd.DataFrame(data, index=[0])], ignore_index=True)
+                # Append the new row to the data collection DataFrame
+                data_collection = pd.concat([data_collection, pd.DataFrame(data, index=[0])], ignore_index=True)
 
     # After the loop, save the DataFrame to a CSV file
     if not ALL_JAMMED:
