@@ -1,16 +1,14 @@
 import csv
-import os
-# os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+import numpy as np
 import torch
-# torch.use_deterministic_algorithms(True)
-import pandas as pd
 import statistics
+import logging
 from config import params
 from data_processing import load_data, create_data_loader, convert_data_type
 from train import initialize_model, train, validate, predict_and_evaluate, predict_and_evaluate_full, plot_network_with_rssi
 from utils import set_seeds_and_reproducibility, save_metrics_and_params, save_epochs, save_study_data
-import logging
 from custom_logging import setup_logging
+from data_processing import TemporalGraphDataset
 # from shape_classification import engineer_features
 
 # Setup custom logging
@@ -74,7 +72,6 @@ def main():
             model_path = f"{experiment_path}trained_model_seed{seed}_{params['model']}_{combination}_{data_class}.pth"
 
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            # device = torch.device('cpu')
             print("device: ", device)
 
             # Inference
@@ -125,8 +122,13 @@ def main():
                             )
                     # return predictions
             else:
+                # train_dataset, val_dataset, test_dataset = load_data(params, train_set_name, val_set_name, test_set_name, experiment_path)
+                # train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
+
                 train_dataset, val_dataset, test_dataset = load_data(params, train_set_name, val_set_name, test_set_name, experiment_path)
-                train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
+                window_size = 4 #np.random.randint(1, 10))
+                temporal_dataset = TemporalGraphDataset(train_dataset, val_dataset, test_dataset, window_size=window_size)
+                train_loader, val_loader, test_loader = create_data_loader(temporal_dataset, batch_size=params['batch_size'])
 
                 # Initialize model
                 steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader

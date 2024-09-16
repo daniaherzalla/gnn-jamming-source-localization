@@ -1,29 +1,84 @@
-import gzip
-import json
 import os
 import pandas as pd
 import numpy as np
 import torch
-import random
 import networkx as nx
 import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
+from torch.utils.data import Subset, Dataset
 from typing import Tuple, List, Any
 from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
-from torch.utils.data import Subset
 import logging
 import pickle
-from utils import set_seeds_and_reproducibility, cartesian_to_polar
+from utils import cartesian_to_polar
 from custom_logging import setup_logging
 from config import params
 
+from torch_geometric.utils import to_networkx
+
 setup_logging()
 
-# if params['reproduce']:
-#     set_seeds_and_reproducibility()
+
+class TemporalGraphDataset(torch.utils.data.Dataset):
+    def __init__(self, train_dataset, val_dataset, test_dataset, window_size):
+        self.datasets = {
+            'train': train_dataset,
+            'val': val_dataset,
+            'test': test_dataset
+        }
+        self.window_size = window_size
+        self.lengths = {
+            key: sum(max(1, len(graph.x) - window_size + 1) for graph in dataset)
+            for key, dataset in self.datasets.items()
+        }
+
+    def __len__(self):
+        return self.lengths
+
+    def get_dataset(self, dataset_type):
+        return self.datasets[dataset_type], self.lengths[dataset_type]
+
+    def __getitem__(self, dataset_type, index):
+        dataset, length = self.get_dataset(dataset_type)
+        if index >= length:
+            raise IndexError("Index out of range")
+
+        graph_index = 0
+        cumulative_length = 0
+
+        # Find the graph that contains the index
+        for i, graph in enumerate(dataset):
+            new_cumulative_length = cumulative_length + max(1, len(graph.x) - self.window_size + 1)
+            if index < new_cumulative_length:
+                graph_index = i
+                index -= cumulative_length
+                break
+            cumulative_length = new_cumulative_length
+
+        # Fetch the graph
+        graph = dataset[graph_index]
+
+        # Adjust the window size if necessary
+        effective_window_size = min(self.window_size, len(graph.x))
+        start_index = index  # Calculate the start index within the graph
+        if start_index + effective_window_size > len(graph.x):  # If window exceeds available nodes
+            start_index = len(graph.x) - effective_window_size  # Adjust start index to fit
+
+        node_slice = torch.arange(start_index, start_index + effective_window_size)
+        edge_mask = ((graph.edge_index[0] >= start_index) & (graph.edge_index[0] < start_index + effective_window_size) &
+                     (graph.edge_index[1] >= start_index) & (graph.edge_index[1] < start_index + effective_window_size))
+        edge_index = graph.edge_index[:, edge_mask] - start_index
+
+        # Create subgraph
+        subgraph = Data(x=graph.x[node_slice], edge_index=edge_index, edge_attr=graph.edge_attr[edge_mask], y=graph.y)
+
+        # Engineering features directly on the subgraph
+        subgraph = engineer_node_features(subgraph, params)
+
+        return subgraph
 
 
 def angle_to_cyclical(positions):
@@ -205,7 +260,7 @@ def apply_unit_sphere_normalization(data):
 
 def convert_data_type(data):
     # Convert from str to required data type for specified features
-    dataset_features = ['jammer_position', 'node_positions', 'node_noise', 'node_rssi', 'node_states']
+    dataset_features = ['jammer_position', 'node_positions', 'node_noise', 'timestamps', 'angle_of_arrival']
 
     # Apply conversion to each feature directly
     for feature in dataset_features:
@@ -256,127 +311,95 @@ def create_graphs(data):
 
 
 
-
-def calculate_noise_statistics(graphs, stats_to_compute):
-    all_graph_stats = []  # This will hold a list of lists, each sublist for a graph
-
-    for G in graphs:
-        graph_stats = []  # Initialize an empty list for current graph's node stats
-
-        for node in G.nodes:
-            neighbors = list(G.neighbors(node))
-            curr_node_noise = G.nodes[node]['noise']
-            neighbor_noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]  # Neighbors' noise
-            neighbor_positions = [G.nodes[neighbor]['position'] for neighbor in neighbors]  # Neighbors' positions
-
-            node_stats = {}  # Dictionary to store stats for the current node
-
-            # Compute mean noise for neighbors excluding the node itself
-            if neighbors:  # Ensure there are neighbors
-                mean_neighbor_noise = np.mean(neighbor_noises)
-            else:
-                mean_neighbor_noise = curr_node_noise  # If no neighbors, fallback to own noise
-
-            if 'mean_noise' in stats_to_compute:
-                node_stats['mean_noise'] = mean_neighbor_noise
-            if 'median_noise' in stats_to_compute:
-                node_stats['median_noise'] = np.median(neighbor_noises + [curr_node_noise])  # Include self for median
-            if 'std_noise' in stats_to_compute:
-                node_stats['std_noise'] = np.std(neighbor_noises + [curr_node_noise])  # Include self for std
-            if 'range_noise' in stats_to_compute:
-                node_stats['range_noise'] = np.max(neighbor_noises + [curr_node_noise]) - np.min(neighbor_noises + [curr_node_noise])
-
-            # Compute relative noise
-            node_stats['relative_noise'] = curr_node_noise - mean_neighbor_noise
-
-            # Compute the weighted centroid local (WCL)
-            if 'wcl_coefficient' in stats_to_compute:
-                total_weight = 0
-                weighted_sum = np.zeros(2)  # 2D positions
-                for pos, noise in zip(neighbor_positions, neighbor_noises):
-                    weight = 10 ** (noise / 10)
-                    weighted_coords = weight * np.array(pos)
-                    weighted_sum += weighted_coords
-                    total_weight += weight
-                if total_weight != 0:
-                    wcl_estimation = weighted_sum / total_weight
-                    node_stats['wcl_coefficient'] = wcl_estimation.tolist()  # Store as a list if necessary
-
-            graph_stats.append(node_stats)  # Append the current node's stats to the graph's list
-
-        all_graph_stats.append(graph_stats)  # Append the completed list of node stats for this graph
-
-    return all_graph_stats
-
-
-# def calculate_noise_statistics(graphs, jammer_positions, stats_to_compute):
-#     all_graph_stats = []  # list of lists, each sublist for a graph
-#     count = 0
+# Original!
+# def calculate_noise_statistics(graphs, stats_to_compute):
+#     all_graph_stats = []  # This will hold a list of lists, each sublist for a graph
 #
 #     for G in graphs:
-#         graph_stats = []  # current graph's node stats
-#         count += 1
+#         graph_stats = []  # Initialize an empty list for current graph's node stats
 #
 #         for node in G.nodes:
-#             plt.figure(figsize=(12, 10))  # new fig for each node's WCL calculation
-#
-#             # Plot all nodes and edges
-#             for n in G.nodes:
-#                 plt.scatter(*G.nodes[n]['position'], color='grey', s=50, edgecolor='black', zorder=1)  # Normal nodes
-#             for n1, n2 in G.edges:
-#                 plt.plot(*zip(G.nodes[n1]['position'], G.nodes[n2]['position']), color='grey', linewidth=0.3, zorder=0)  # Edges
-#
-#             # Plot jammer position
-#             jammer_pos = jammer_positions[count]
-#             print("jammer_pos: ", jammer_pos)
-#             plt.scatter(*jammer_pos, color='magenta', s=100, marker='^', label='Jammer', zorder=4)
-#
 #             neighbors = list(G.neighbors(node))
 #             curr_node_noise = G.nodes[node]['noise']
-#             neighbor_noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]
-#             neighbor_positions = [G.nodes[neighbor]['position'] for neighbor in neighbors]
+#             neighbor_noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]  # Neighbors' noise
+#             neighbor_positions = [G.nodes[neighbor]['position'] for neighbor in neighbors]  # Neighbors' positions
 #
-#             node_stats = {}
+#             node_stats = {}  # Dictionary to store stats for the current node
 #
+#             # Compute mean noise for neighbors excluding the node itself
+#             if neighbors:  # Ensure there are neighbors
+#                 mean_neighbor_noise = np.mean(neighbor_noises)
+#             else:
+#                 mean_neighbor_noise = curr_node_noise  # If no neighbors, fallback to own noise
+#
+#             if 'mean_noise' in stats_to_compute:
+#                 node_stats['mean_noise'] = mean_neighbor_noise
+#             if 'median_noise' in stats_to_compute:
+#                 node_stats['median_noise'] = np.median(neighbor_noises + [curr_node_noise])  # Include self for median
+#             if 'std_noise' in stats_to_compute:
+#                 node_stats['std_noise'] = np.std(neighbor_noises + [curr_node_noise])  # Include self for std
+#             if 'range_noise' in stats_to_compute:
+#                 node_stats['range_noise'] = np.max(neighbor_noises + [curr_node_noise]) - np.min(neighbor_noises + [curr_node_noise])
+#
+#             # Compute relative noise
+#             node_stats['relative_noise'] = curr_node_noise - mean_neighbor_noise
+#
+#             # Compute the weighted centroid local (WCL)
 #             if 'wcl_coefficient' in stats_to_compute:
 #                 total_weight = 0
-#                 weighted_sum = np.zeros(2)  # Assuming 2D positions
-#                 weights = []
+#                 weighted_sum = np.zeros(2)  # 2D positions
 #                 for pos, noise in zip(neighbor_positions, neighbor_noises):
 #                     weight = 10 ** (noise / 10)
-#                     weights.append(weight)
 #                     weighted_coords = weight * np.array(pos)
 #                     weighted_sum += weighted_coords
 #                     total_weight += weight
 #                 if total_weight != 0:
 #                     wcl_estimation = weighted_sum / total_weight
-#                     node_stats['wcl_coefficient'] = wcl_estimation.tolist()
-#
-#                     # Plot WCL point on top
-#                     plt.scatter(*wcl_estimation, color='red', marker='x', s=200, zorder=3)
-#
-#             # Highlight the current node on top
-#             plt.scatter(*G.nodes[node]['position'], color='blue', s=100, zorder=2)
-#
-#             # Annotate neighbor nodes with weights
-#             for neighbor, weight in zip(neighbors, weights):
-#                 plt.annotate(f'{weight:.2f}', xy=G.nodes[neighbor]['position'], textcoords="offset points", xytext=(0,10), ha='center')
-#
-#             plt.title(f'Graph with WCL for Node {node}')
-#             plt.xlabel('X coordinate')
-#             plt.ylabel('Y coordinate')
-#             plt.grid(True)
+#                     node_stats['wcl_coefficient'] = wcl_estimation.tolist()  # Store as a list if necessary
 #
 #             graph_stats.append(node_stats)  # Append the current node's stats to the graph's list
-#             plt.show()
-#             # if dataset_type == 'random_all_jammed_jammer_outside_region':
-#             #     plt.show()
-#             # else:
-#             #     plt.close()
 #
 #         all_graph_stats.append(graph_stats)  # Append the completed list of node stats for this graph
 #
 #     return all_graph_stats
+
+
+def calculate_noise_statistics(subgraphs, stats_to_compute):
+    all_graph_stats = []
+
+    for subgraph in subgraphs:
+        node_stats = []
+        edge_index = subgraph.edge_index
+        num_nodes = subgraph.num_nodes
+
+        for node_id in range(num_nodes):
+            # Identifying the neighbors of the current node
+            mask = (edge_index[0] == node_id) | (edge_index[1] == node_id)
+            neighbors = edge_index[1][mask] if edge_index[0][mask].eq(node_id).any() else edge_index[0][mask]
+
+            curr_node_noise = subgraph.x[node_id][2]  # Assuming noise is the third feature
+            neighbor_noises = subgraph.x[neighbors, 2]
+
+            temp_stats = {
+                'mean_noise': neighbor_noises.mean().item() if neighbors.size(0) > 0 else curr_node_noise.item(),
+                'median_noise': neighbor_noises.median().item() if neighbors.size(0) > 0 else curr_node_noise.item(),
+                'std_noise': neighbor_noises.std().item() if neighbors.size(0) > 0 else 0,
+                'range_noise': (neighbor_noises.max() - neighbor_noises.min()).item() if neighbors.size(0) > 0 else 0,
+                'relative_noise': (curr_node_noise - neighbor_noises.mean()).item() if neighbors.size(0) > 0 else 0,
+            }
+
+            # Compute WCL if needed
+            if 'wcl_coefficient' in stats_to_compute:
+                weights = torch.pow(10, neighbor_noises / 10)
+                weighted_positions = weights.unsqueeze(1) * subgraph.x[neighbors, :2]
+                wcl_estimation = weighted_positions.sum(0) / weights.sum() if weights.sum() > 0 else subgraph.x[node_id, :2]
+                temp_stats['wcl_coefficient'] = wcl_estimation.tolist()
+
+            node_stats.append(temp_stats)
+
+        all_graph_stats.append(node_stats)
+
+    return all_graph_stats
 
 
 def add_clustering_coefficients(graphs):
@@ -409,54 +432,90 @@ def add_clustering_coefficients(graphs):
     return all_graphs_clustering_coeffs
 
 
-def engineer_node_features(data, params):
-    logging.info('Calculating node features')
-    data['centroid'] = data['node_positions'].apply(lambda positions: np.mean(positions, axis=0))
+def engineer_node_features(subgraph, params):
+    if subgraph.x.size(0) == 0:
+        raise ValueError("Empty subgraph encountered")
+
+    new_features = []
+
+    # Calculating centroid
+    centroid = torch.mean(subgraph.x, dim=0)
 
     if 'dist_to_centroid' in params.get('additional_features', []):
-        data['dist_to_centroid'] = data.apply(lambda row: [np.linalg.norm(pos - row['centroid']) for pos in row['node_positions']], axis=1)
+        distances = torch.norm(subgraph.x - centroid, dim=1, keepdim=True)
+        new_features.append(distances)
 
-    # Cyclical features
-    if 'sin_azimuth' in params.get('additional_features', []) or 'cos_azimuth' in params.get('additional_features', []):
-        add_cyclical_features(data)
-
-    # Proximity counts
-    if 'proximity_count' in params.get('additional_features', []):
-        add_proximity_count(data)
-
-    # Clustering coefficients
-    if 'clustering_coefficient' in params.get('additional_features', []):
-        graphs = create_graphs(data)
-        clustering_coeffs = add_clustering_coefficients(graphs)
-        data['clustering_coefficient'] = clustering_coeffs  # Assign the coefficients directly
+    if 'sin_azimuth' in params.get('additional_features', []):
+        azimuth_angles = torch.atan2(subgraph.x[:, 1] - centroid[1], subgraph.x[:, 0] - centroid[0])
+        new_features.append(torch.sin(azimuth_angles).unsqueeze(1))
+        new_features.append(torch.cos(azimuth_angles).unsqueeze(1))
 
     # Graph-based noise stats
     graph_stats = ['mean_noise', 'median_noise', 'std_noise', 'range_noise', 'relative_noise', 'wcl_coefficient']
     noise_stats_to_compute = [stat for stat in graph_stats if stat in params.get('additional_features', [])]
 
     if noise_stats_to_compute:
-        jammer_positions = data['jammer_position'].tolist()
-        # dataset_list = data['dataset'].tolist()
-        graphs = create_graphs(data)
-        # node_noise_stats = calculate_noise_statistics(graphs, jammer_positions, noise_stats_to_compute)
-        node_noise_stats = calculate_noise_statistics(graphs, noise_stats_to_compute)
-
+        noise_stats = calculate_noise_statistics([subgraph], noise_stats_to_compute)
+        # Save each stat as a separate tensor
         for stat in noise_stats_to_compute:
-            # Initialize the column for the statistic
-            data[stat] = pd.NA
+            stat_values = torch.tensor([node_stat[stat] for node_stat in noise_stats[0]], dtype=torch.float32)
+            new_features.append(stat_values.unsqueeze(1))  # Unsqueeze to maintain the correct dimension
 
-            # Assign the stats for each graph to the DataFrame
-            for idx, graph_stats in enumerate(node_noise_stats):
-                current_stat_list = [node_stats.get(stat) for node_stats in graph_stats if stat in node_stats]
-                data.at[idx, stat] = current_stat_list
+    if new_features:
+        new_features_tensor = torch.cat(new_features, dim=1)
+        subgraph.x = torch.cat((subgraph.x, new_features_tensor), dim=1)
 
-    return data
+    return subgraph
 
-    # if params['3d']:
-    #     if 'elevation_angle' in params.get('additional_features', []):
-    #         data['elevation_angle'] = data.apply(
-    #             lambda row: [np.arcsin((pos[2] - row['centroid'][2]) / np.linalg.norm(pos - row['centroid'])) for pos in row['node_positions']], axis=1)
 
+# # Original!
+# def engineer_node_features(data, params):
+#     logging.info('Calculating node features')
+#     data['centroid'] = data['node_positions'].apply(lambda positions: np.mean(positions, axis=0))
+#
+#     if 'dist_to_centroid' in params.get('additional_features', []):
+#         data['dist_to_centroid'] = data.apply(lambda row: [np.linalg.norm(pos - row['centroid']) for pos in row['node_positions']], axis=1)
+#
+#     # Cyclical features
+#     if 'sin_azimuth' in params.get('additional_features', []) or 'cos_azimuth' in params.get('additional_features', []):
+#         add_cyclical_features(data)
+#
+#     # Proximity counts
+#     if 'proximity_count' in params.get('additional_features', []):
+#         add_proximity_count(data)
+#
+#     # Clustering coefficients
+#     if 'clustering_coefficient' in params.get('additional_features', []):
+#         graphs = create_graphs(data)
+#         clustering_coeffs = add_clustering_coefficients(graphs)
+#         data['clustering_coefficient'] = clustering_coeffs  # Assign the coefficients directly
+#
+#     # Graph-based noise stats
+#     graph_stats = ['mean_noise', 'median_noise', 'std_noise', 'range_noise', 'relative_noise', 'wcl_coefficient']
+#     noise_stats_to_compute = [stat for stat in graph_stats if stat in params.get('additional_features', [])]
+#
+#     if noise_stats_to_compute:
+#         jammer_positions = data['jammer_position'].tolist()
+#         # dataset_list = data['dataset'].tolist()
+#         graphs = create_graphs(data)
+#         # node_noise_stats = calculate_noise_statistics(graphs, jammer_positions, noise_stats_to_compute)
+#         node_noise_stats = calculate_noise_statistics(graphs, noise_stats_to_compute)
+#
+#         for stat in noise_stats_to_compute:
+#             # Initialize the column for the statistic
+#             data[stat] = pd.NA
+#
+#             # Assign the stats for each graph to the DataFrame
+#             for idx, graph_stats in enumerate(node_noise_stats):
+#                 current_stat_list = [node_stats.get(stat) for node_stats in graph_stats if stat in node_stats]
+#                 data.at[idx, stat] = current_stat_list
+#
+#     return data
+#
+#     # if params['3d']:
+#     #     if 'elevation_angle' in params.get('additional_features', []):
+#     #         data['elevation_angle'] = data.apply(
+#     #             lambda row: [np.arcsin((pos[2] - row['centroid'][2]) / np.linalg.norm(pos - row['centroid'])) for pos in row['node_positions']], axis=1)
 
 def preprocess_data(data, params):
     """
@@ -474,7 +533,7 @@ def preprocess_data(data, params):
     convert_data_type(data)
     center_coordinates(data)
     standardize_data(data)
-    engineer_node_features(data, params)
+    # engineer_node_features(data, params)  # if engineering node features on temporal subgraphs before passing to dataloader
     if params['coords'] == 'polar':
         convert_to_polar(data)
     return data
@@ -717,7 +776,7 @@ def save_datasets(combined_train_data, combined_val_data, combined_test_data, co
     if all_jammed_jammer_outside_region_test_indices:
         save_reduced_dataset(combined_test_data, all_jammed_jammer_outside_region_test_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_test_set.pt'))
 
-    quit()
+    # quit()
 
 
 def load_data(params, train_set_name, val_set_name, test_set_name, experiments_path=None, data=None):
@@ -756,6 +815,7 @@ def load_data(params, train_set_name, val_set_name, test_set_name, experiments_p
             # Create a deep copy of the DataFrame
             data_to_preprocess = data.copy(deep=True)
             preprocessed_data = preprocess_data(data_to_preprocess, params)
+            print("preprocessed_data: ", preprocessed_data)
             train_data, val_data, test_data, train_df, val_df, test_df, raw_test_df = split_datasets(preprocessed_data, data, params, experiments_path)
 
             combined_train_data.extend(train_data)
@@ -771,20 +831,49 @@ def load_data(params, train_set_name, val_set_name, test_set_name, experiments_p
         save_datasets(combined_train_data, combined_val_data, combined_test_data, combined_raw_test_data,
                                        combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df,
                                        experiments_path)
-    else:
-        # TODO: check what to be returned for the original dataset for plotting
+
         train_dataset = torch.load(os.path.join(experiments_path, train_set_name))
         val_dataset = torch.load(os.path.join(experiments_path, val_set_name))
+        test_dataset = torch.load(os.path.join(experiments_path, test_set_name))
+    else:
+        # TODO: check what to be returned for the original dataset for plotting
+        # train_dataset = torch.load(os.path.join(experiments_path, train_set_name))
+        # val_dataset = torch.load(os.path.join(experiments_path, val_set_name))
         test_dataset = torch.load(os.path.join(experiments_path, test_set_name))
         # test_dataset_csv = pd.read_csv(experiments_path + test_set)
 
     return train_dataset, val_dataset, test_dataset
 
 
-def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int):
+# def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int):
+#     """
+#     Create data loader objects.
+#     Args:
+#         batch_size (int): Batch size for the DataLoader.
+#
+#     Returns:
+#         train_loader (DataLoader): DataLoader for the training dataset.
+#         val_loader (DataLoader): DataLoader for the validation dataset.
+#         test_loader (DataLoader): DataLoader for the testing dataset.
+#     """
+#     logging.info("Creating DataLoader objects...")
+#     if not params['inference']:
+#         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=False, num_workers=0)
+#         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+#         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+#
+#         return train_loader, val_loader, test_loader
+#     else:
+#         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+#
+#         return None, None, test_loader
+
+
+def create_data_loader(temporal_dataset, batch_size: int):
     """
-    Create data loader objects.
+    Create data loader objects for train, validation, and test datasets using temporal slicing.
     Args:
+        temporal_dataset (TemporalGraphDataset): The dataset containing train, val, and test sets.
         batch_size (int): Batch size for the DataLoader.
 
     Returns:
@@ -793,16 +882,20 @@ def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int
         test_loader (DataLoader): DataLoader for the testing dataset.
     """
     logging.info("Creating DataLoader objects...")
-    if not params['inference']:
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=False, num_workers=0)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+    train_data, train_length = temporal_dataset.get_dataset('train')
+    val_data, val_length = temporal_dataset.get_dataset('val')
+    test_data, test_length = temporal_dataset.get_dataset('test')
 
-        return train_loader, val_loader, test_loader
-    else:
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+    train_loader = DataLoader([temporal_dataset.__getitem__('train', idx) for idx in range(train_length)], batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader([temporal_dataset.__getitem__('val', idx) for idx in range(val_length)], batch_size=batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader([temporal_dataset.__getitem__('test', idx) for idx in range(test_length)], batch_size=batch_size, shuffle=False, num_workers=4)
 
-        return None, None, test_loader
+    # Plot
+    # for batch_data in train_loader:
+    #     print("subgraph: ", batch_data)
+    #     plot_graph_temporal(batch_data)
+
+    return train_loader, val_loader, test_loader
 
 
 def safe_convert_list(row: str, data_type: str) -> List[Any]:
@@ -834,10 +927,46 @@ def safe_convert_list(row: str, data_type: str) -> List[Any]:
         elif data_type == 'node_states':
             result = row.strip('[').strip(']').split(', ')
             return [int(state) for state in result]
+        elif data_type == 'timestamps':
+            result = row.strip('[').strip(']').split(', ')
+            return [float(time) for time in result]
+        elif data_type == 'angle_of_arrival':
+            result = row.strip('[').strip(']').split(', ')
+            return [float(aoa) for aoa in result]
         else:
             raise ValueError("Unknown data type")
     except (ValueError, SyntaxError, TypeError) as e:
         return []  # Return an empty list if there's an error
+
+
+def plot_graph_temporal(batch_data):
+    num_subgraphs = batch_data.batch.max().item() + 1  # Get the number of subgraphs in the batch
+
+    for subgraph_id in range(num_subgraphs):
+        # Mask to extract nodes for current subgraph
+        node_mask = batch_data.batch == subgraph_id
+        node_indices = node_mask.nonzero(as_tuple=True)[0]
+
+        # Mask to extract edges for current subgraph
+        edge_mask = (batch_data.batch[batch_data.edge_index[0]] == subgraph_id) & \
+                    (batch_data.batch[batch_data.edge_index[1]] == subgraph_id)
+        edge_indices = batch_data.edge_index[:, edge_mask]
+
+        # Extract subgraph data
+        x = batch_data.x[node_indices]
+        edge_index = batch_data.edge_index[:, edge_mask] - node_indices.min()  # Re-index edge indices
+        y = batch_data.y[subgraph_id] if batch_data.y.dim() > 1 else batch_data.y  # Handle y based on its dimensions
+
+        sub_data = Data(x=x, edge_index=edge_index, y=y)
+
+        # Convert to NetworkX graph for visualization
+        G = to_networkx(sub_data, to_undirected=True)
+        pos = nx.spring_layout(G)  # Layout for visual clarity
+        nx.draw(G, pos, node_size=70, node_color='skyblue', with_labels=True, font_weight='bold')
+
+        plt.title(f"Graph Visualization for Subgraph ID {subgraph_id}")
+        plt.axis('off')
+        plt.show()
 
 
 def plot_graph(positions, edge_index, node_features, edge_weights=None, show_weights=False):
@@ -908,7 +1037,7 @@ def ensure_complementary_features(params):
         list: Updated list of features including both sin_azimuth and cos_azimuth if either is present.
     """
     required_features = params['required_features']
-    additional_features = params['additional_features']
+    additional_features = [] #params['additional_features']
 
     if isinstance(additional_features, tuple):
         additional_features = list(additional_features)
@@ -944,15 +1073,35 @@ def create_torch_geo_data(row: pd.Series, params) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
-    # Selecting features based on configuration
-    all_features = ensure_complementary_features(params)
+    # Handling Angle of Arrival (AoA)
+    aoa = np.array(row['angle_of_arrival'])
+    sin_aoa = np.sin(aoa)
+    cos_aoa = np.cos(aoa)
 
-    # Combining features from each node into a single list
+    # Convert timestamps to percentage completion
+    timestamps = np.array(row['timestamps'])
+    min_time = np.min(timestamps)
+    max_time = np.max(timestamps)
+    perc_completion = (timestamps - min_time) / (max_time - min_time) if max_time != min_time else np.zeros_like(timestamps)
+
+    # Select and combine features
+    all_features = ensure_complementary_features(params)
+    all_features.remove('angle_of_arrival')  # Remove original AoA feature
+    all_features.remove('timestamps')  # Remove original timestamps to replace with normalized ones
+
     node_features = [
         sum(([feature_value] if not isinstance(feature_value, list) else feature_value
              for feature_value in node_data), [])
         for node_data in zip(*(row[feature] for feature in all_features))
     ]
+
+    # Append AoA and percentage completion as new features
+    for i, feature_list in enumerate(node_features):
+        feature_list.extend([sin_aoa[i], cos_aoa[i], perc_completion[i]])
+
+    # print("all_features: ", all_features)
+    # print("node_features: ", node_features)
+    # quit()
 
     # Convert to PyTorch tensor
     node_features = torch.tensor(node_features, dtype=torch.float32)
