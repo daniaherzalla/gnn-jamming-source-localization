@@ -863,11 +863,11 @@ def load_data(params, train_set_name, val_set_name, test_set_name, experiments_p
             # Create train test splits
             train_df, val_df, test_df, raw_test_df = split_datasets(data, data, params, experiments_path)
 
-            # # Apply random_crop to training and test datasets
-            # train_df = apply_processing(train_df, 'train_val')
-            # val_df = apply_processing(val_df, 'train_val')
-            # test_df = apply_processing(test_df, 'test')
-            # test_df = test_df.reset_index()
+            # Apply random_crop to training and test datasets
+            train_df = apply_processing(train_df, 'train_val')
+            val_df = apply_processing(val_df, 'train_val')
+            test_df = apply_processing(test_df, 'test')
+            test_df = test_df.reset_index()
 
             # print("train_df['jammer_position']: ", train_df['jammer_position'])
 
@@ -1352,5 +1352,8 @@ def create_torch_geo_data(row: pd.Series) -> Data:
         data.max_coords = torch.tensor(row['max_coords'], dtype=torch.float)
     elif params['norm'] == 'unit_sphere':
         data.max_radius = torch.tensor(row['max_radius'], dtype=torch.float)
+
+    # Store the perc_completion as part of the Data object
+    data.perc_completion = torch.tensor(perc_completion, dtype=torch.float32)
 
     return data

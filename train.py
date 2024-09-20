@@ -144,7 +144,7 @@ def predict_and_evaluate(model, loader, device):
             - actuals (list): The actual values after denormalization.
     """
     model.eval()
-    predictions, actuals, rmse_list = [], [], []
+    predictions, actuals, rmse_list, perc_completion_list = [], [], [], []
 
     with torch.no_grad():
         for data in loader:  # Each 'batch' is a DataBatch object containing multiple graphs batched together
@@ -155,6 +155,10 @@ def predict_and_evaluate(model, loader, device):
 
             predictions.append(predicted_coords.cpu().numpy())
             actuals.append(actual_coords.cpu().numpy())
+
+            # Save perc_completion for each graph
+            perc_completion_list.append(data.perc_completion.cpu().numpy())
+
             mse = mean_squared_error(actual_coords.cpu().numpy(), predicted_coords.cpu().numpy())
             rmse = math.sqrt(mse)
             rmse_list.append(rmse)
@@ -162,8 +166,11 @@ def predict_and_evaluate(model, loader, device):
     predictions = np.concatenate([np.array(pred).flatten() for pred in predictions])
     actuals = np.concatenate([np.array(act).flatten() for act in actuals])
     rmse_list = np.concatenate([np.array(rmse).flatten() for rmse in rmse_list])
+    perc_completion_list = np.concatenate([np.array(perc).flatten() for perc in perc_completion_list])
+
     print("predictions: ", predictions)
     print("actuals: ", actuals)
+    print("perc_completion_list: ", perc_completion_list)
 
     plt.figure(figsize=(10, 6))
     plt.scatter(actuals, predictions, alpha=0.5)
@@ -183,6 +190,7 @@ def predict_and_evaluate(model, loader, device):
     err_metrics = {
         'actuals': actuals,
         'predictions': predictions,
+        'perc_completion': perc_completion_list,
         'mae': mae,
         'mse': mse,
         'rmse': rmse
