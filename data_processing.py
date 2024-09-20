@@ -22,63 +22,146 @@ from torch_geometric.utils import to_networkx
 setup_logging()
 
 
-class TemporalGraphDataset(torch.utils.data.Dataset):
-    def __init__(self, train_dataset, val_dataset, test_dataset, window_size):
-        self.datasets = {
-            'train': train_dataset,
-            'val': val_dataset,
-            'test': test_dataset
-        }
-        self.window_size = window_size
-        self.lengths = {
-            key: sum(max(1, len(graph.x) - window_size + 1) for graph in dataset)
-            for key, dataset in self.datasets.items()
-        }
+from torch.utils.data import Dataset
+
+class TemporalGraphDataset(Dataset):
+    def __init__(self, data, mode='train'):
+        """
+        Initialize the dataset with preprocessed DataFrame.
+        """
+        self.data = data
+        self.mode = mode
 
     def __len__(self):
-        return self.lengths
+        return len(self.data)
 
-    def get_dataset(self, dataset_type):
-        return self.datasets[dataset_type], self.lengths[dataset_type]
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+        # print("row: ", row)
+        graph = create_torch_geo_data(row)  # Create PyTorch Geometric Data object
+        graph = engineer_node_features(graph)
+        # print("graph: ", graph)
+        return graph
 
-    def __getitem__(self, dataset_type, index):
-        dataset, length = self.get_dataset(dataset_type)
-        if index >= length:
-            raise IndexError("Index out of range")
 
-        graph_index = 0
-        cumulative_length = 0
+import random
+#
+#
+# class BufferedDataLoader:
+#     def __init__(self, dataset, batch_size, shuffle=False, num_workers=1, collate_fn=None):
+#         self.dataset = dataset
+#         self.batch_size = batch_size
+#         self.shuffle = shuffle
+#         self.num_workers = num_workers
+#         self.collate_fn = collate_fn
+#         self.buffer = []
+#
+#     def __iter__(self):
+#         dataset_indices = list(range(len(self.dataset)))
+#
+#         if self.shuffle:
+#             random.shuffle(dataset_indices)
+#
+#         # Create a ThreadPoolExecutor to parallelize data loading
+#         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+#             futures = []
+#
+#             for idx in dataset_indices:
+#                 if len(futures) >= self.num_workers:
+#                     for future in as_completed(futures):
+#                         data = future.result()
+#                         processed_data = self.collate_fn(data) if self.collate_fn else data
+#                         self.buffer.extend(processed_data)
+#
+#                         while len(self.buffer) >= self.batch_size:
+#                             yield self.buffer[:self.batch_size]
+#                             self.buffer = self.buffer[self.batch_size:]
+#
+#                         futures.remove(future)
+#
+#                 # Submit new loading task
+#                 futures.append(executor.submit(self.dataset.__getitem__, idx))
+#
+#             # Process remaining futures
+#             for future in as_completed(futures):
+#                 data = future.result()
+#                 processed_data = self.collate_fn(data) if self.collate_fn else data
+#                 self.buffer.extend(processed_data)
+#
+#                 while len(self.buffer) >= self.batch_size:
+#                     yield self.buffer[:self.batch_size]
+#                     self.buffer = self.buffer[self.batch_size:]
+#
+#         if self.buffer:
+#             yield self.buffer
+#             self.buffer = []  # Clear buffer after last batch
+#
+#     def __len__(self):
+#         # This might not be exact if data expands unpredictably
+#         return (len(self.dataset) + self.batch_size - 1) // self.batch_size
 
-        # Find the graph that contains the index
-        for i, graph in enumerate(dataset):
-            new_cumulative_length = cumulative_length + max(1, len(graph.x) - self.window_size + 1)
-            if index < new_cumulative_length:
-                graph_index = i
-                index -= cumulative_length
-                break
-            cumulative_length = new_cumulative_length
 
-        # Fetch the graph
-        graph = dataset[graph_index]
-
-        # Adjust the window size if necessary
-        effective_window_size = min(self.window_size, len(graph.x))
-        start_index = index  # Calculate the start index within the graph
-        if start_index + effective_window_size > len(graph.x):  # If window exceeds available nodes
-            start_index = len(graph.x) - effective_window_size  # Adjust start index to fit
-
-        node_slice = torch.arange(start_index, start_index + effective_window_size)
-        edge_mask = ((graph.edge_index[0] >= start_index) & (graph.edge_index[0] < start_index + effective_window_size) &
-                     (graph.edge_index[1] >= start_index) & (graph.edge_index[1] < start_index + effective_window_size))
-        edge_index = graph.edge_index[:, edge_mask] - start_index
-
-        # Create subgraph
-        subgraph = Data(x=graph.x[node_slice], edge_index=edge_index, edge_attr=graph.edge_attr[edge_mask], y=graph.y)
-
-        # Engineering features directly on the subgraph
-        subgraph = engineer_node_features(subgraph, params)
-
-        return subgraph
+# old version with buffering
+# class TemporalGraphDataset(torch.utils.data.Dataset):
+#     def __init__(self, train_dataset, val_dataset, test_dataset):
+#         self.datasets = {
+#             'train': train_dataset,
+#             'val': val_dataset,
+#             'test': test_dataset
+#         }
+#         self.lengths = {key: len(dataset) for key, dataset in self.datasets.items()}
+#
+#     def __len__(self):
+#         return sum(self.lengths.values())
+#
+#     def get_dataset(self, dataset_type):
+#         return self.datasets[dataset_type], self.lengths[dataset_type]
+#
+#     def load_data(self, index, dataset_type='test'):
+#         dataset, _ = self.get_dataset(dataset_type)
+#         return dataset[index]
+#
+#     def transform(self, graph, evaluate=False):
+#         if not evaluate:
+#             return self.random_crop(graph)
+#         else:
+#             return self.incremental_node_addition(graph)
+#
+#     def __getitem__(self, index, dataset_type='test', evaluate=False):
+#         graph = self.load_data(index, dataset_type)
+#         transformed_graph = self.transform(graph, evaluate)
+#         return transformed_graph
+#
+#     def random_crop(self, graph):
+#         print("graph: ", graph)
+#         num_nodes = graph.x.size(0)
+#         start_index = np.random.randint(0, num_nodes)
+#         end_index = np.random.randint(start_index + 1, num_nodes + 1)
+#         return self.extract_subgraph(graph, start_index, end_index)
+#
+#     def incremental_node_addition(self, graph):
+#         # This will generate a sequence of subgraphs, each with one more node than the last
+#         subgraphs = []
+#         for end_index in range(1, graph.x.size(0) + 1):
+#             subgraph = self.extract_subgraph(graph, 0, end_index)
+#             subgraphs.append(subgraph)
+#         return subgraphs
+#
+#     def extract_subgraph(self, graph, start_index, end_index):
+#         node_slice = torch.arange(start_index, end_index)
+#         edge_mask = ((graph.edge_index[0] >= start_index) & (graph.edge_index[0] < end_index) &
+#                      (graph.edge_index[1] >= start_index) & (graph.edge_index[1] < end_index))
+#         edge_index = graph.edge_index[:, edge_mask] - start_index
+#         subgraph = Data(x=graph.x[node_slice], edge_index=edge_index, edge_attr=graph.edge_attr[edge_mask] if graph.edge_attr is not None else None, y=graph.y, min_coords=graph.min_coords, max_coords=graph.max_coords,node_positions_center=graph.node_positions_center)
+#         # plot_graph_temporal(subgraph)
+#
+#         # here, before engineering node features, need to perform preprocessing
+#         # cant create graphs before data preprocessing because otherwise will create edges/node features with unprocessed data (no centering norm etc)
+#         # maybe instead can create slices then call data preprocessing then create torch geo data then call the rest of the func
+#         # change increment function to increment on csv data not graph data
+#
+#         subgraph = engineer_node_features(subgraph, params)
+#         return subgraph
 
 
 def angle_to_cyclical(positions):
@@ -153,9 +236,14 @@ def center_coordinates(data):
     data['node_positions_center'] = None
 
     for idx, row in data.iterrows():
+        # print("idx: ", idx)
+        # print("row: ", row)
         # Center coordinates using the calculated mean
         node_positions = np.vstack(row['node_positions'])
         centered_node_positions, center = mean_centering(node_positions)
+
+        # Convert to list and check structure
+        centered_list = centered_node_positions.tolist()
         data.at[idx, 'node_positions'] = centered_node_positions.tolist()
 
         # Similar centering for jammer position
@@ -380,11 +468,19 @@ def calculate_noise_statistics(subgraphs, stats_to_compute):
             curr_node_noise = subgraph.x[node_id][2]  # Assuming noise is the third feature
             neighbor_noises = subgraph.x[neighbors, 2]
 
+            # Handle case with fewer than two neighbors safely
+            if neighbors.size(0) > 1:
+                std_noise = neighbor_noises.std().item()
+                range_noise = (neighbor_noises.max() - neighbor_noises.min()).item()
+            else:
+                std_noise = 0
+                range_noise = 0
+
             temp_stats = {
                 'mean_noise': neighbor_noises.mean().item() if neighbors.size(0) > 0 else curr_node_noise.item(),
                 'median_noise': neighbor_noises.median().item() if neighbors.size(0) > 0 else curr_node_noise.item(),
-                'std_noise': neighbor_noises.std().item() if neighbors.size(0) > 0 else 0,
-                'range_noise': (neighbor_noises.max() - neighbor_noises.min()).item() if neighbors.size(0) > 0 else 0,
+                'std_noise': std_noise,
+                'range_noise': range_noise,
                 'relative_noise': (curr_node_noise - neighbor_noises.mean()).item() if neighbors.size(0) > 0 else 0,
             }
 
@@ -432,7 +528,7 @@ def add_clustering_coefficients(graphs):
     return all_graphs_clustering_coeffs
 
 
-def engineer_node_features(subgraph, params):
+def engineer_node_features(subgraph):
     if subgraph.x.size(0) == 0:
         raise ValueError("Empty subgraph encountered")
 
@@ -441,18 +537,18 @@ def engineer_node_features(subgraph, params):
     # Calculating centroid
     centroid = torch.mean(subgraph.x, dim=0)
 
-    if 'dist_to_centroid' in params.get('additional_features', []):
+    if 'dist_to_centroid' in params['additional_features']:
         distances = torch.norm(subgraph.x - centroid, dim=1, keepdim=True)
         new_features.append(distances)
 
-    if 'sin_azimuth' in params.get('additional_features', []):
+    if 'sin_azimuth' in params['additional_features']:
         azimuth_angles = torch.atan2(subgraph.x[:, 1] - centroid[1], subgraph.x[:, 0] - centroid[0])
         new_features.append(torch.sin(azimuth_angles).unsqueeze(1))
         new_features.append(torch.cos(azimuth_angles).unsqueeze(1))
 
     # Graph-based noise stats
     graph_stats = ['mean_noise', 'median_noise', 'std_noise', 'range_noise', 'relative_noise', 'wcl_coefficient']
-    noise_stats_to_compute = [stat for stat in graph_stats if stat in params.get('additional_features', [])]
+    noise_stats_to_compute = [stat for stat in graph_stats if stat in params['additional_features']]
 
     if noise_stats_to_compute:
         noise_stats = calculate_noise_statistics([subgraph], noise_stats_to_compute)
@@ -528,9 +624,7 @@ def preprocess_data(data, params):
        pd.DataFrame: The preprocessed data with transformed features.
    """
     logging.info("Preprocessing data...")
-
     # Conversion from string to list type
-    convert_data_type(data)
     center_coordinates(data)
     standardize_data(data)
     # engineer_node_features(data, params)  # if engineering node features on temporal subgraphs before passing to dataloader
@@ -575,22 +669,8 @@ def polar_to_cartesian(data):
     return cartesian_coords
 
 
-# def undo_center_coordinates(centered_coords, id, midpoints):
-#     """
-#     Adjust coordinates by adding the midpoint, calculated from stored midpoints for each index.
-#
-#     Args:
-#         centered_coords (np.ndarray): The centered coordinates to be adjusted.
-#         id (int): The unique identifier for the data sample.
-#         midpoints (dict): The dictionary containing midpoints for each ID.
-#
-#     Returns:
-#         np.ndarray: The uncentered coordinates.
-#     """
-#     midpoint = np.array(midpoints[str(id)])  # Convert index to string if it's an integer
-#     return centered_coords + midpoint
 
-
+# Original!
 def convert_output_eval(output, data_batch, data_type, device):
     """
     Convert and evaluate the output coordinates by uncentering them using the stored midpoints.
@@ -631,13 +711,14 @@ def convert_output_eval(output, data_batch, data_type, device):
         # print("max radius: ", max_radius)
         converted_output = output * max_radius
         # print("converted output: ", converted_output)
-        # quit()
 
     # 2. Reverse centering using the stored node_positions_center
     centers = data_batch.node_positions_center.to(device).view(-1, 2)
     converted_output += centers
 
-    return torch.tensor(converted_output, device=device)
+    # return torch.tensor(converted_output, device=device)
+    return converted_output.clone().detach().to(device)
+
 
 
 def convert_output(output, device):  # for training to compute val loss
@@ -673,11 +754,11 @@ def split_datasets(preprocessed_data, data, params, experiments_path):
     """
 
     logging.info('Creating graphs...')
-    torch_geo_dataset = [create_torch_geo_data(row, params) for _, row in preprocessed_data.iterrows()]
+    # torch_geo_dataset = [create_torch_geo_data(row, params) for _, row in preprocessed_data.iterrows()]
 
     # Stratified split using scikit-learn
     train_idx, test_idx, train_test_y, test_y = train_test_split(
-        np.arange(len(torch_geo_dataset)),
+        np.arange(len(preprocessed_data)),
         preprocessed_data['dataset'],
         test_size=0.3,  # Split 70% train, 30% test
         stratify=preprocessed_data['dataset'],
@@ -688,14 +769,10 @@ def split_datasets(preprocessed_data, data, params, experiments_path):
     val_idx, test_idx, _, _ = train_test_split(
         test_idx,
         test_y,
-        test_size=len(torch_geo_dataset) - len(train_idx) - int(0.1 * len(torch_geo_dataset)),
+        test_size=len(preprocessed_data) - len(train_idx) - int(0.1 * len(preprocessed_data)),
         stratify=test_y,
         random_state=100
     )
-
-    train_dataset = [torch_geo_dataset[i] for i in train_idx]
-    val_dataset = [torch_geo_dataset[i] for i in val_idx]
-    test_dataset = [torch_geo_dataset[i] for i in test_idx]
 
     # Convert indices back to DataFrame subsets
     train_df = preprocessed_data.iloc[train_idx].reset_index(drop=True)
@@ -705,11 +782,13 @@ def split_datasets(preprocessed_data, data, params, experiments_path):
     # Apply the same indices to the raw data
     raw_test_df = data.iloc[test_idx].reset_index(drop=True)
 
-    return train_dataset, val_dataset, test_dataset, train_df, val_df, test_df, raw_test_df
+    # return train_dataset, val_dataset, test_dataset, train_df, val_df, test_df, raw_test_df
+    return train_df, val_df, test_df, raw_test_df
 
 
 
-def save_datasets(combined_train_data, combined_val_data, combined_test_data, combined_raw_test_data, combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df, experiments_path):
+
+def save_datasets(combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df, experiments_path):
     """
     Process the combined train, validation, and test data, and save them to disk.
 
@@ -724,11 +803,6 @@ def save_datasets(combined_train_data, combined_val_data, combined_test_data, co
     """
     logging.info("Saving data...")
 
-    # Save the combined datasets
-    save_reduced_dataset(combined_train_data, list(range(len(combined_train_data))), os.path.join(experiments_path, 'train_dataset.pt'))
-    save_reduced_dataset(combined_val_data, list(range(len(combined_val_data))), os.path.join(experiments_path, 'val_dataset.pt'))
-    save_reduced_dataset(combined_test_data, list(range(len(combined_test_data))), os.path.join(experiments_path, 'test_dataset.pt'))
-
     # Save the combined DataFrame subsets
     combined_train_df.to_csv(os.path.join(experiments_path, 'train_dataset.csv'), index=False)
     combined_val_df.to_csv(os.path.join(experiments_path, 'val_dataset.csv'), index=False)
@@ -738,45 +812,21 @@ def save_datasets(combined_train_data, combined_val_data, combined_test_data, co
     # Dataset types for specific filtering
     dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
                      'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
-                     'random_jammer_outside_region']
+                     'random_jammer_outside_region', 'all_jammed', 'all_jammed_jammer_outside_region',
+                     'dynamic_guided_path', 'dynamic_linear_path']
 
     for dataset in dataset_types:
-        train_indices = combined_train_df[combined_train_df['dataset'] == dataset].index.tolist()
-        val_indices = combined_val_df[combined_val_df['dataset'] == dataset].index.tolist()
-        test_indices = combined_test_df[combined_test_df['dataset'] == dataset].index.tolist()
+        train_subset = combined_train_df[combined_train_df['dataset'] == dataset]
+        val_subset = combined_val_df[combined_val_df['dataset'] == dataset]
+        test_subset = combined_test_df[combined_test_df['dataset'] == dataset]
 
-        if train_indices:
-            save_reduced_dataset(combined_train_data, train_indices, os.path.join(experiments_path, f'{dataset}_train_set.pt'))
-        if val_indices:
-            save_reduced_dataset(combined_val_data, val_indices, os.path.join(experiments_path, f'{dataset}_val_set.pt'))
-        if test_indices:
-            save_reduced_dataset(combined_test_data, test_indices, os.path.join(experiments_path, f'{dataset}_test_set.pt'))
+        if not train_subset.empty:
+            train_subset.to_csv(os.path.join(experiments_path, f'{dataset}_train_set.csv'), index=False)
+        if not val_subset.empty:
+            val_subset.to_csv(os.path.join(experiments_path, f'{dataset}_val_set.csv'), index=False)
+        if not test_subset.empty:
+            test_subset.to_csv(os.path.join(experiments_path, f'{dataset}_test_set.csv'), index=False)
 
-    # Special cases for "all_jammed" and "all_jammed_jammer_outside_region"
-    all_jammed_train_indices = combined_train_df[(combined_train_df['dataset'].str.contains('all_jammed')) & (~combined_train_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
-    all_jammed_val_indices = combined_val_df[(combined_val_df['dataset'].str.contains('all_jammed')) & (~combined_val_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
-    all_jammed_test_indices = combined_test_df[(combined_test_df['dataset'].str.contains('all_jammed')) & (~combined_test_df['dataset'].str.contains('jammer_outside_region'))].index.tolist()
-
-    all_jammed_jammer_outside_region_train_indices = combined_train_df[combined_train_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
-    all_jammed_jammer_outside_region_val_indices = combined_val_df[combined_val_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
-    all_jammed_jammer_outside_region_test_indices = combined_test_df[combined_test_df['dataset'].str.contains('all_jammed_jammer_outside_region')].index.tolist()
-
-    # TODO:
-    if all_jammed_train_indices:
-        save_reduced_dataset(combined_train_data, all_jammed_train_indices, os.path.join(experiments_path, 'all_jammed_train_set.pt'))
-    if all_jammed_val_indices:
-        save_reduced_dataset(combined_val_data, all_jammed_val_indices, os.path.join(experiments_path, 'all_jammed_val_set.pt'))
-    if all_jammed_test_indices:
-        save_reduced_dataset(combined_test_data, all_jammed_test_indices, os.path.join(experiments_path, 'all_jammed_test_set.pt'))
-
-    if all_jammed_jammer_outside_region_train_indices:
-        save_reduced_dataset(combined_train_data, all_jammed_jammer_outside_region_train_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_train_set.pt'))
-    if all_jammed_jammer_outside_region_val_indices:
-        save_reduced_dataset(combined_val_data, all_jammed_jammer_outside_region_val_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_val_set.pt'))
-    if all_jammed_jammer_outside_region_test_indices:
-        save_reduced_dataset(combined_test_data, all_jammed_jammer_outside_region_test_indices, os.path.join(experiments_path, 'all_jammed_jammer_outside_region_test_set.pt'))
-
-    # quit()
 
 
 def load_data(params, train_set_name, val_set_name, test_set_name, experiments_path=None, data=None):
@@ -793,9 +843,6 @@ def load_data(params, train_set_name, val_set_name, test_set_name, experiments_p
     logging.info("Loading data...")
 
     if params['save_data']:
-        combined_train_data = []
-        combined_val_data = []
-        combined_test_data = []
         combined_raw_test_data = []
         combined_train_df = pd.DataFrame()
         combined_val_df = pd.DataFrame()
@@ -811,38 +858,110 @@ def load_data(params, train_set_name, val_set_name, test_set_name, experiments_p
             print(f"dataset: {dataset}")
             data = pd.read_csv(dataset)
             data['id'] = range(1, len(data) + 1)
+            convert_data_type(data)
 
-            # Create a deep copy of the DataFrame
-            data_to_preprocess = data.copy(deep=True)
-            preprocessed_data = preprocess_data(data_to_preprocess, params)
-            print("preprocessed_data: ", preprocessed_data)
-            train_data, val_data, test_data, train_df, val_df, test_df, raw_test_df = split_datasets(preprocessed_data, data, params, experiments_path)
+            # Create train test splits
+            train_df, val_df, test_df, raw_test_df = split_datasets(data, data, params, experiments_path)
 
-            combined_train_data.extend(train_data)
-            combined_val_data.extend(val_data)
-            combined_test_data.extend(test_data)
+            # # Apply random_crop to training and test datasets
+            # train_df = apply_processing(train_df, 'train_val')
+            # val_df = apply_processing(val_df, 'train_val')
+            # test_df = apply_processing(test_df, 'test')
+            # test_df = test_df.reset_index()
+
+            # print("train_df['jammer_position']: ", train_df['jammer_position'])
+
+            print("TRAIN\n\n")
+            train_dataset = preprocess_data(train_df, params)
+            print("VAL\n\n")
+            val_dataset = preprocess_data(val_df, params)
+            print("TEST\n\n")
+            test_dataset = preprocess_data(test_df, params)
+
+            # print("test_dataset: ", test_dataset.iloc[0])
+
+            # DONt create graphs yet! we will do that in the dataloader because otherwise it will take up too much space to do it beforehand
+
             combined_raw_test_data.extend(raw_test_df)
-            combined_train_df = pd.concat([combined_train_df, train_df], ignore_index=True)
-            combined_val_df = pd.concat([combined_val_df, val_df], ignore_index=True)
-            combined_test_df = pd.concat([combined_test_df, test_df], ignore_index=True)
+            combined_train_df = pd.concat([combined_train_df, train_dataset], ignore_index=True)
+            combined_val_df = pd.concat([combined_val_df, val_dataset], ignore_index=True)
+            combined_test_df = pd.concat([combined_test_df, test_dataset], ignore_index=True)
             combined_raw_test_df = pd.concat([combined_raw_test_df, raw_test_df], ignore_index=True)
 
         # Process and save the combined data
-        save_datasets(combined_train_data, combined_val_data, combined_test_data, combined_raw_test_data,
-                                       combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df,
+        save_datasets(combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df,
                                        experiments_path)
-
-        train_dataset = torch.load(os.path.join(experiments_path, train_set_name))
-        val_dataset = torch.load(os.path.join(experiments_path, val_set_name))
-        test_dataset = torch.load(os.path.join(experiments_path, test_set_name))
     else:
-        # TODO: check what to be returned for the original dataset for plotting
-        # train_dataset = torch.load(os.path.join(experiments_path, train_set_name))
-        # val_dataset = torch.load(os.path.join(experiments_path, val_set_name))
-        test_dataset = torch.load(os.path.join(experiments_path, test_set_name))
-        # test_dataset_csv = pd.read_csv(experiments_path + test_set)
+        # Load train, val and test sets that were saved
+        train_dataset = pd.read_csv(os.path.join(experiments_path, train_set_name))
+        val_dataset = pd.read_csv(os.path.join(experiments_path, val_set_name))
+        test_dataset = pd.read_csv(os.path.join(experiments_path, test_set_name))
 
     return train_dataset, val_dataset, test_dataset
+
+
+def random_crop(row, min_nodes=3):
+    """
+    Perform a random crop of node samples for one row.
+    Args:
+        row (pd.Series): A single row from a DataFrame.
+        min_nodes (int): Minimum number of nodes to keep, default is 3.
+    Returns:
+        pd.Series: Modified row with cropped data.
+    """
+    total_nodes = len(row['node_positions'])
+    if total_nodes > min_nodes:
+        start = np.random.randint(0, total_nodes - min_nodes)
+        end = np.random.randint(start + min_nodes, total_nodes)
+        for key in ['timestamps', 'node_positions', 'node_noise', 'angle_of_arrival']:
+            if key == 'node_positions':
+                row[key] = row[key][start:end]
+    return row
+
+def incremental_node_addition(row):
+    """
+    Generate incremental additions of node samples for one row.
+    Args:
+        row (pd.Series): A single row from a DataFrame.
+    Returns:
+        List[pd.Series]: List of new rows each incrementing node samples by one.
+    """
+    min_nodes = 3
+    total_nodes = len(row['node_positions'])
+    new_rows = []
+    if total_nodes >= min_nodes:
+        for i in range(min_nodes, total_nodes + 1):
+            new_row = row.copy()
+            for key in ['timestamps', 'node_positions', 'node_noise', 'angle_of_arrival']:
+                new_row[key] = row[key][:i]
+            new_rows.append(new_row)
+    return new_rows
+
+def apply_processing(df, mode):
+    """
+    Apply the specified processing mode to each row of the DataFrame.
+    Args:
+        df (pd.DataFrame): DataFrame containing the data to process.
+        mode (str): Processing mode, either 'train_val' or 'test'.
+    Returns:
+        pd.DataFrame: DataFrame containing all processed rows.
+    """
+    processed_rows = []
+    for _, row in df.iterrows():
+        processed = process_row(row, mode)
+        processed_rows.extend(processed)  # Extend to flatten list of Series into one list
+
+    # Convert list of pd.Series to DataFrame
+    return pd.DataFrame(processed_rows)
+
+def process_row(row, mode):
+    """
+    Process a single row based on the specified mode.
+    """
+    if mode == 'train_val':
+        return [random_crop(row)]
+    elif mode == 'test':
+        return incremental_node_addition(row)
 
 
 # def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int):
@@ -868,34 +987,150 @@ def load_data(params, train_set_name, val_set_name, test_set_name, experiments_p
 #
 #         return None, None, test_loader
 
+from torch.utils.data.dataloader import DataLoader as TorchDataLoader
+from torch_geometric.data import Batch
 
-def create_data_loader(temporal_dataset, batch_size: int):
+
+# class CustomDataLoader(TorchDataLoader):
+#     def __init__(self, dataset, batch_size, shuffle=False, collate_fn=None, **kwargs):
+#         super().__init__(dataset, batch_size, shuffle, collate_fn=collate_fn, **kwargs)
+
+
+def custom_collate(batch):
+    data_list = [item if isinstance(item, Data) else item[0] for item in batch]
+    batch = Batch.from_data_list(data_list)
+    return batch
+#
+# def custom_collate_eval(batch):
+#     # Assuming each item in 'batch' is a single Data object
+#     return batch  # Directly return the list of Data objects, no batching
+
+
+# def custom_collate_fn(batch):
+#     # Flatten out the lists of graphs into a single list
+#     batch_graphs = [graph for sublist in batch for graph in sublist]
+#
+#     # Ensure the batch size remains constant
+#     while len(batch_graphs) > params['batch_size']:
+#         yield batch_graphs[:params['batch_size']]
+#         batch_graphs = batch_graphs[params['batch_size']:]
+#
+#     if batch_graphs:
+#         yield batch_graphs
+
+
+# def tensor_to_list(tensor):
+#     return tensor.detach().cpu().numpy().tolist()
+
+# def process_and_save_data(processed_data, filename='processed_test_data.csv'):
+#     data_list = []
+#
+#     # Flatten the list of lists if necessary
+#     flat_list = [item for sublist in processed_data for item in sublist]
+#
+#     for data in flat_list:
+#         data_dict = {
+#             'x': tensor_to_list(data.x),
+#             'edge_index': tensor_to_list(data.edge_index),
+#             'edge_attr': tensor_to_list(data.edge_attr),
+#             'y': tensor_to_list(data.y),
+#             'min_coords': tensor_to_list(data.min_coords),
+#             'max_coords': tensor_to_list(data.max_coords),
+#             'node_positions_center': tensor_to_list(data.node_positions_center)
+#         }
+#         data_list.append(data_dict)
+#
+#     # Convert list of dictionaries to DataFrame
+#     df = pd.DataFrame(data_list)
+#     df.to_csv(filename, index=False)
+#     print(f"Data saved to {filename}")
+#
+
+# def create_data_loader(temporal_dataset, batch_size: int):
+#     """
+#     Create data loaders for training, validation, and testing sets with custom preprocessing using a custom DataLoader.
+#     Args:
+#         temporal_dataset (TemporalGraphDataset): The dataset containing train, val, and test sets.
+#         batch_size (int): Batch size for the DataLoader.
+#     Returns:
+#         Tuple[CustomDataLoader, CustomDataLoader, CustomDataLoader]: Custom DataLoader for the training, validation, and testing datasets.
+#     """
+#     # Fetch datasets
+#     train_data, train_length = temporal_dataset.get_dataset('train')
+#     val_data, val_length = temporal_dataset.get_dataset('val')
+#     test_data, test_length = temporal_dataset.get_dataset('test')
+#
+#     # Process training and validation data
+#     processed_train_data = [temporal_dataset.__getitem__(idx, 'train', evaluate=False) for idx in range(train_length)]
+#     processed_val_data = [temporal_dataset.__getitem__(idx, 'val', evaluate=False) for idx in range(val_length)]
+#
+#     # # Save processed test data to CSV
+#     # process_and_save_data(processed_test_data, 'processed_test_data.csv')
+#     #
+#     # quit()
+#
+#     # Create DataLoaders for training and validation with preprocessed data
+#     train_loader = CustomDataLoader(processed_train_data, batch_size=batch_size, shuffle=True, collate_fn=custom_collate, num_workers=4)
+#     val_loader = CustomDataLoader(processed_val_data, batch_size=batch_size, shuffle=False, collate_fn=custom_collate, num_workers=4)
+#
+#     # Create DataLoader for the test set without preprocessing
+#     test_loader = CustomDataLoader(test_data, batch_size=batch_size, shuffle=False, collate_fn=custom_collate_eval, num_workers=4)
+#
+#     return train_loader, val_loader, test_loader
+
+
+def create_data_loader(train_data, val_data, test_data, batch_size):
     """
-    Create data loader objects for train, validation, and test datasets using temporal slicing.
+    Create data loaders using the TemporalGraphDataset instances for training, validation, and testing sets.
     Args:
-        temporal_dataset (TemporalGraphDataset): The dataset containing train, val, and test sets.
-        batch_size (int): Batch size for the DataLoader.
-
+        train_data (pd.DataFrame): DataFrame containing the training data.
+        val_data (pd.DataFrame): DataFrame containing the validation data.
+        test_data (pd.DataFrame): DataFrame containing the testing data.
+        batch_size (int): The size of batches.
     Returns:
-        train_loader (DataLoader): DataLoader for the training dataset.
-        val_loader (DataLoader): DataLoader for the validation dataset.
-        test_loader (DataLoader): DataLoader for the testing dataset.
+        tuple: Three DataLoaders for the training, validation, and testing datasets.
     """
-    logging.info("Creating DataLoader objects...")
-    train_data, train_length = temporal_dataset.get_dataset('train')
-    val_data, val_length = temporal_dataset.get_dataset('val')
-    test_data, test_length = temporal_dataset.get_dataset('test')
+    # Instantiate the dataset classes for train, val, and test
+    train_dataset = TemporalGraphDataset(train_data, mode='train')
+    val_dataset = TemporalGraphDataset(val_data, mode='val')
+    test_dataset = TemporalGraphDataset(test_data, mode='test')
 
-    train_loader = DataLoader([temporal_dataset.__getitem__('train', idx) for idx in range(train_length)], batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader([temporal_dataset.__getitem__('val', idx) for idx in range(val_length)], batch_size=batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader([temporal_dataset.__getitem__('test', idx) for idx in range(test_length)], batch_size=batch_size, shuffle=False, num_workers=4)
-
-    # Plot
-    # for batch_data in train_loader:
-    #     print("subgraph: ", batch_data)
-    #     plot_graph_temporal(batch_data)
+    # Create DataLoaders for each dataset
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0) # TODO: do we need to add drop_last=True??
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     return train_loader, val_loader, test_loader
+
+
+
+# def create_data_loader(temporal_dataset, batch_size: int):
+#     """
+#     Create data loader objects for train, validation, and test datasets using temporal slicing.
+#     Args:
+#         temporal_dataset (TemporalGraphDataset): The dataset containing train, val, and test sets.
+#         batch_size (int): Batch size for the DataLoader.
+#
+#     Returns:
+#         train_loader (DataLoader): DataLoader for the training dataset.
+#         val_loader (DataLoader): DataLoader for the validation dataset.
+#         test_loader (DataLoader): DataLoader for the testing dataset.
+#     """
+#     logging.info("Creating DataLoader objects...")
+#     train_data, train_length = temporal_dataset.get_dataset('train')
+#     val_data, val_length = temporal_dataset.get_dataset('val')
+#     test_data, test_length = temporal_dataset.get_dataset('test')
+#
+#     # Create data loaders with evaluation mode specified for validation and test sets
+#     train_loader = DataLoader([temporal_dataset.__getitem__(idx, dataset_type='train', evaluate=False) for idx in range(train_length)], batch_size=params['batch_size'], shuffle=True, collate_fn=custom_collate, num_workers=4)
+#     val_loader = DataLoader([temporal_dataset.__getitem__(idx, dataset_type='val', evaluate=False) for idx in range(val_length)], batch_size=params['batch_size'],shuffle=False, collate_fn=custom_collate, num_workers=4)
+#     test_loader = DataLoader([temporal_dataset.__getitem__(idx, dataset_type='test', evaluate=True) for idx in range(test_length)], batch_size=params['batch_size'],shuffle=False, collate_fn=custom_collate, num_workers=4)
+#
+#     # Plot
+#     # for batch_data in train_loader:
+#     #     plot_graph_temporal(batch_data)
+#
+#     return train_loader, val_loader, test_loader
 
 
 def safe_convert_list(row: str, data_type: str) -> List[Any]:
@@ -939,58 +1174,30 @@ def safe_convert_list(row: str, data_type: str) -> List[Any]:
         return []  # Return an empty list if there's an error
 
 
-def plot_graph_temporal(batch_data):
-    num_subgraphs = batch_data.batch.max().item() + 1  # Get the number of subgraphs in the batch
-
-    for subgraph_id in range(num_subgraphs):
-        # Mask to extract nodes for current subgraph
-        node_mask = batch_data.batch == subgraph_id
-        node_indices = node_mask.nonzero(as_tuple=True)[0]
-
-        # Mask to extract edges for current subgraph
-        edge_mask = (batch_data.batch[batch_data.edge_index[0]] == subgraph_id) & \
-                    (batch_data.batch[batch_data.edge_index[1]] == subgraph_id)
-        edge_indices = batch_data.edge_index[:, edge_mask]
-
-        # Extract subgraph data
-        x = batch_data.x[node_indices]
-        edge_index = batch_data.edge_index[:, edge_mask] - node_indices.min()  # Re-index edge indices
-        y = batch_data.y[subgraph_id] if batch_data.y.dim() > 1 else batch_data.y  # Handle y based on its dimensions
-
-        sub_data = Data(x=x, edge_index=edge_index, y=y)
-
-        # Convert to NetworkX graph for visualization
-        G = to_networkx(sub_data, to_undirected=True)
-        pos = nx.spring_layout(G)  # Layout for visual clarity
-        nx.draw(G, pos, node_size=70, node_color='skyblue', with_labels=True, font_weight='bold')
-
-        plt.title(f"Graph Visualization for Subgraph ID {subgraph_id}")
-        plt.axis('off')
-        plt.show()
+def plot_graph_temporal(subgraph):
+    G = to_networkx(subgraph, to_undirected=True)
+    pos = nx.spring_layout(G)  # Layout for visual clarity
+    nx.draw(G, pos, node_size=70, node_color='skyblue', with_labels=True, font_weight='bold')
+    plt.title("Graph Visualization")
+    plt.axis('off')
+    plt.show()
 
 
-def plot_graph(positions, edge_index, node_features, edge_weights=None, show_weights=False):
+def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_positions=None, show_weights=False):
     G = nx.Graph()
 
     # Ensure positions and features are numpy arrays for easier handling
     positions = np.array(positions)
     node_features = np.array(node_features)
-
-    print("node features 0: ", node_features[0])
-    print("node features 1: ", node_features[1])
-    print("node features 2: ", node_features[2])
-    print("node features 3: ", node_features[3])
+    jammer_positions = np.array(jammer_positions)
 
     # Add nodes with features and positions
     for i, pos in enumerate(positions):
         # Example feature: assuming RSSI is the last feature in node_features array
-        print("pos[0]: ", pos[0])
-        print("pos[1]: ", pos[1])
-        print("node_features: ", node_features)
-        G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2])
+        G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2],
+                   timestamp=node_features[i][-1], sin_aoa=node_features[i][-3], cos_aoa=node_features[i][-2])
 
     # Convert edge_index to a usable format if it's a tensor or similar
-    print("edge_index: ", edge_index)
     if isinstance(edge_index, torch.Tensor):
         edge_index = edge_index.numpy()
 
@@ -1012,8 +1219,9 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, show_wei
     nx.draw_networkx_nodes(G, pos, node_color='skyblue', node_size=50)
     nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.5)
 
-    # Node labels
-    node_labels = {i: f"{i}\nNoise:{G.nodes[i]['noise']:.2f}" for i in G.nodes()}
+    # Node labels including timestamp, sin and cos of AoA
+    node_labels = {i: f"ID:{i}\nNoise:{G.nodes[i]['noise']:.2f}\nTimestamp:{G.nodes[i]['timestamp']:.2f}\nSin AoA:{G.nodes[i]['sin_aoa']:.2f}\nCos AoA:{G.nodes[i]['cos_aoa']:.2f}"
+                   for i in G.nodes()}
     nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
 
     # Optionally draw edge weights
@@ -1021,9 +1229,16 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, show_wei
         edge_labels = {(u, v): f"{w:.2f}" for u, v, w in G.edges(data='weight')}
         nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
 
+    # Draw jammer position
+    if jammer_positions is not None:
+        for jammer_pos in jammer_positions:
+            plt.scatter(*jammer_pos, color='red', s=100, label='Jammer')  # Add jammers to the plot
+            plt.annotate('Jammer', xy=jammer_pos, xytext=(5, 5), textcoords='offset points')
+
     plt.title("Network Graph with Node Features")
     plt.axis('off')  # Turn off the axis
     plt.show()
+
 
 
 def ensure_complementary_features(params):
@@ -1045,25 +1260,12 @@ def ensure_complementary_features(params):
     if isinstance(required_features, tuple):
         required_features = list(required_features)
 
-    # # if additional_features:
-    # # Check for the presence of sin_azimuth or cos_azimuth
-    # has_sin = 'sin_azimuth' in additional_features
-    # has_cos = 'cos_azimuth' in additional_features
-    #
-    # # If one is present and not the other, add the missing one
-    # if has_sin and not has_cos:
-    #     additional_features.append('cos_azimuth')
-    # elif has_cos and not has_sin:
-    #     additional_features.append('sin_azimuth')
-
     # Combine required and additional features
     all_features = required_features + additional_features
     return all_features
-    # else:
-    #     return required_features
 
 
-def create_torch_geo_data(row: pd.Series, params) -> Data:
+def create_torch_geo_data(row: pd.Series) -> Data:
     """
     Create a PyTorch Geometric Data object from a row of the dataset.
 
@@ -1073,6 +1275,7 @@ def create_torch_geo_data(row: pd.Series, params) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
+    # print("row in torch geo data: ", row)
     # Handling Angle of Arrival (AoA)
     aoa = np.array(row['angle_of_arrival'])
     sin_aoa = np.sin(aoa)
@@ -1108,6 +1311,8 @@ def create_torch_geo_data(row: pd.Series, params) -> Data:
 
     # Preparing edges and weights
     positions = np.array(row['node_positions'])
+    # print("positions: ", positions)
+    # print("len(positions): ", len(positions), '\n')
     if params['edges'] == 'knn':
         num_samples = positions.shape[0]
         k = min(params['num_neighbors'], num_samples - 1)  # num of neighbors, ensuring k < num_samples
@@ -1129,11 +1334,12 @@ def create_torch_geo_data(row: pd.Series, params) -> Data:
     edge_weight = torch.tensor(edge_weight, dtype=torch.float)
 
     jammer_positions = np.array(row['jammer_position']).reshape(-1, 2)  # Assuming this reshaping is valid based on your data structure
+    # print("jammer_positions: ", jammer_positions)
     y = torch.tensor(jammer_positions, dtype=torch.float)
 
     # Plot
     # if row['dataset'] == 'triangle':
-    #     plot_graph(positions=positions, edge_index=edge_index, node_features=node_features, edge_weights=edge_weight, show_weights=True)
+    # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True)
 
     # Create the Data object
     data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight, y=y)

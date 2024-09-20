@@ -22,10 +22,10 @@ def main():
     """
     Main function to run the training and evaluation.
     """
-    if params['save_data']:
-        seeds = [100]
-    else:
-        seeds = [1, 23, 42]  # Different seeds for different initialization trials
+    # if params['save_data']:
+    #     seeds = [100]
+    # else:
+    seeds = [1, 23, 42]  # Different seeds for different initialization trials
 
     if params['train_per_class']:
         dataset_classes = ['circle', 'triangle', 'rectangle', 'random',
@@ -39,13 +39,13 @@ def main():
         rmse_vals = []
 
         if params['train_per_class']:
-            train_set_name = data_class + "_train_set.pt"
-            val_set_name = data_class + "_val_set.pt"
-            test_set_name = data_class + "_test_set.pt"
+            train_set_name = data_class + "_train_set.csv"
+            val_set_name = data_class + "_val_set.csv"
+            test_set_name = data_class + "_test_set.csv"
         else:
-            train_set_name = "train_dataset.pt"
-            val_set_name = "val_dataset.pt"
-            test_set_name = "test_dataset.pt"
+            train_set_name = "train_dataset.csv"
+            val_set_name = "val_dataset.csv"
+            test_set_name = "test_dataset.csv"
 
         print("train_set_name: ", train_set_name)
         print("val_set_name: ", val_set_name)
@@ -53,7 +53,7 @@ def main():
 
         for trial_num, seed in enumerate(seeds):
             print("\nseed: ", seed)
-            set_seeds_and_reproducibility(seed)
+            set_seeds_and_reproducibility(100)
 
             # Experiment params
             combination = params['coords'] + '_' + params['edges'] + str(params['num_neighbors']) + '_' + params['norm']
@@ -79,6 +79,7 @@ def main():
                 # shape_classifier = joblib.load('trained_shape_classifier.pkl')
                 for test_set_name in params['test_sets']:
                     print(test_set_name)
+                    set_seeds_and_reproducibility(seed)
                     train_dataset, val_dataset, test_dataset = load_data(params, train_set_name, val_set_name, test_set_name, experiment_path)
                     _, _, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
 
@@ -122,16 +123,16 @@ def main():
                             )
                     # return predictions
             else:
-                # train_dataset, val_dataset, test_dataset = load_data(params, train_set_name, val_set_name, test_set_name, experiment_path)
-                # train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
-
+                # Load the datasets
                 train_dataset, val_dataset, test_dataset = load_data(params, train_set_name, val_set_name, test_set_name, experiment_path)
-                window_size = 4 #np.random.randint(1, 10))
-                temporal_dataset = TemporalGraphDataset(train_dataset, val_dataset, test_dataset, window_size=window_size)
-                train_loader, val_loader, test_loader = create_data_loader(temporal_dataset, batch_size=params['batch_size'])
+                set_seeds_and_reproducibility(seed)
+
+                # Create data loaders
+                # train_loader, val_loader, test_loader = create_data_loader(temporal_dataset, batch_size=params['batch_size'])
+                train_loader, val_loader, test_loader = create_data_loader(train_dataset, val_dataset, test_dataset, batch_size=params['batch_size'])
 
                 # Initialize model
-                steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader
+                steps_per_epoch = len(train_loader)  # Calculate steps per epoch based on the training data loader  # steps per epoch set based on 10000 samples dataset
                 model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
 
                 best_val_loss = float('inf')

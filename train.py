@@ -14,7 +14,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import logging
 from custom_logging import setup_logging
 from utils import set_seeds_and_reproducibility
-from data_processing import convert_output, convert_output_eval
+from data_processing import convert_output, convert_output_eval, preprocess_data, create_torch_geo_data
+
 from config import params
 
 # if params['reproduce']:
@@ -72,13 +73,21 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
     model.train()
     total_loss = 0
     num_batches = 0  # Use this to correctly compute average loss
+    # print("train_loader: ", train_loader)
     for data in train_loader:
         if steps_per_epoch is not None and num_batches >= steps_per_epoch:
             break
         data = data.to(device)
         optimizer.zero_grad()
+        # print("data: ", data)
+        # quit()
+        # print("Inputs: ", data.x)
+        # print("Targets: ", data)
         output = model(data)
+        # print("Target: ", data.y)
+        # print("output: ", output)
         loss = criterion(output, data.y)
+        # print("loss: ", loss)
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -138,18 +147,13 @@ def predict_and_evaluate(model, loader, device):
     predictions, actuals, rmse_list = [], [], []
 
     with torch.no_grad():
-        for data in loader:
-            # Process individual data items
+        for data in loader:  # Each 'batch' is a DataBatch object containing multiple graphs batched together
             data = data.to(device)
             output = model(data)
-            # print("output: ", output)
-
-            # Convert and uncenter using the index to retrieve the correct midpoint
             predicted_coords = convert_output_eval(output, data, 'prediction', device)
             actual_coords = convert_output_eval(data.y, data, 'target', device)
 
             predictions.append(predicted_coords.cpu().numpy())
-            # print("prediction: ", predicted_coords.cpu().numpy())
             actuals.append(actual_coords.cpu().numpy())
             mse = mean_squared_error(actual_coords.cpu().numpy(), predicted_coords.cpu().numpy())
             rmse = math.sqrt(mse)
@@ -157,25 +161,23 @@ def predict_and_evaluate(model, loader, device):
 
     predictions = np.concatenate([np.array(pred).flatten() for pred in predictions])
     actuals = np.concatenate([np.array(act).flatten() for act in actuals])
-    rmse_list = np.concatenate([np.array(rmse_list).flatten() for rmse in rmse_list])
+    rmse_list = np.concatenate([np.array(rmse).flatten() for rmse in rmse_list])
     print("predictions: ", predictions)
     print("actuals: ", actuals)
 
-    # Assuming `predictions` and `actuals` are your arrays of predicted and actual values
     plt.figure(figsize=(10, 6))
     plt.scatter(actuals, predictions, alpha=0.5)
+    plt.plot([actuals.min(), actuals.max()], [actuals.min(), actuals.max()], 'k--', lw=2)
     plt.title('Predictions vs. Actuals')
     plt.xlabel('Actual Values')
     plt.ylabel('Predicted Values')
-    plt.plot([actuals.min(), actuals.max()], [actuals.min(), actuals.max()], 'k--', lw=2)  # Line showing perfect predictions
-    # plt.savefig(f'results/graphs/polar_knn_minmax_trial2.png')
-    # plt.show()
+    plt.show()
 
     # calculate metrics MSE, RMSE using predictions and actuals
     mae = mean_absolute_error(actuals, predictions)
     mse = mean_squared_error(actuals, predictions)
-    print(f'Mean Squared Error: {mse}')
     rmse = math.sqrt(mse)
+    print(f'Mean Squared Error: {mse}')
     print(f'Root Mean Squared Error: {rmse}')
 
     err_metrics = {
@@ -240,39 +242,6 @@ def predict_and_evaluate_full(loader, model, device, original_dataset=None):
     }
 
     return predictions, actuals, node_details, err_metrics
-
-
-def predict(loader, model, device):
-    """
-    Extended evaluation function to gather all required details for plotting, including
-    fetching details using IDs from the data DataFrame.
-
-    Args:
-        loader: DataLoader providing the dataset for evaluation.
-        model: Trained model for evaluation.
-        device: Device to perform computations on.
-
-    Returns:
-        Predictions, actuals, and node details including RSSI and other metrics.
-    """
-    model.eval()
-    predictions = []
-
-    with torch.no_grad():
-        for data_batch in loader:
-            data_batch = data_batch.to(device)
-            output = model(data_batch)
-
-            # Convert and uncenter using the provided conversion function
-            predicted_coords = convert_output_eval(output, data_batch, 'prediction', device)
-
-            # Collect predictions and actuals
-            predictions.append(predicted_coords.cpu().numpy())
-
-    # Flatten predictions and actuals if they are nested lists
-    predictions = np.concatenate(predictions)
-
-    return predictions
 
 
 def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv') -> None:

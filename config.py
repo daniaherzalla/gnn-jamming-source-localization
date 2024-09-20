@@ -18,7 +18,7 @@ params = {
     'edges': 'knn',  # opts: 'knn', 'proximity'
     'norm': 'minmax',  # opts: 'minmax', 'unit_sphere'
     'activation': False,
-    'experiments_folder': 'log_new/dynamic_path/',
+    'experiments_folder': 'log_new/dynamic_path/linear/',
     'dataset_path': 'data/train_test_data/log_distance/guided_path_data.csv',  # combined_fspl_log_distance.csv',  # combined_urban_area.csv
     'test_sets': ['test_dataset.pt', 'circle_test_set.pt', 'triangle_test_set.pt', 'rectangle_test_set.pt', 'random_test_set.pt', 'circle_jammer_outside_region_test_set.pt', 'triangle_jammer_outside_region_test_set.pt', 'rectangle_jammer_outside_region_test_set.pt', 'random_jammer_outside_region_test_set.pt', 'all_jammed_test_set.pt', 'all_jammed_jammer_outside_region_test_set.pt'],
     'train_per_class': False,
