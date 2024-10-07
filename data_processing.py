@@ -12,7 +12,6 @@ from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
 import logging
-import pickle
 from utils import cartesian_to_polar
 from custom_logging import setup_logging
 from config import params
@@ -22,146 +21,22 @@ from torch_geometric.utils import to_networkx
 setup_logging()
 
 
-from torch.utils.data import Dataset
-
 class TemporalGraphDataset(Dataset):
-    def __init__(self, data, mode='train'):
+    def __init__(self, data):
         """
         Initialize the dataset with preprocessed DataFrame.
         """
         self.data = data
-        self.mode = mode
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
-        # print("row: ", row)
         graph = create_torch_geo_data(row)  # Create PyTorch Geometric Data object
         graph = engineer_node_features(graph)
-        # print("graph: ", graph)
         return graph
 
-
-import random
-#
-#
-# class BufferedDataLoader:
-#     def __init__(self, dataset, batch_size, shuffle=False, num_workers=1, collate_fn=None):
-#         self.dataset = dataset
-#         self.batch_size = batch_size
-#         self.shuffle = shuffle
-#         self.num_workers = num_workers
-#         self.collate_fn = collate_fn
-#         self.buffer = []
-#
-#     def __iter__(self):
-#         dataset_indices = list(range(len(self.dataset)))
-#
-#         if self.shuffle:
-#             random.shuffle(dataset_indices)
-#
-#         # Create a ThreadPoolExecutor to parallelize data loading
-#         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-#             futures = []
-#
-#             for idx in dataset_indices:
-#                 if len(futures) >= self.num_workers:
-#                     for future in as_completed(futures):
-#                         data = future.result()
-#                         processed_data = self.collate_fn(data) if self.collate_fn else data
-#                         self.buffer.extend(processed_data)
-#
-#                         while len(self.buffer) >= self.batch_size:
-#                             yield self.buffer[:self.batch_size]
-#                             self.buffer = self.buffer[self.batch_size:]
-#
-#                         futures.remove(future)
-#
-#                 # Submit new loading task
-#                 futures.append(executor.submit(self.dataset.__getitem__, idx))
-#
-#             # Process remaining futures
-#             for future in as_completed(futures):
-#                 data = future.result()
-#                 processed_data = self.collate_fn(data) if self.collate_fn else data
-#                 self.buffer.extend(processed_data)
-#
-#                 while len(self.buffer) >= self.batch_size:
-#                     yield self.buffer[:self.batch_size]
-#                     self.buffer = self.buffer[self.batch_size:]
-#
-#         if self.buffer:
-#             yield self.buffer
-#             self.buffer = []  # Clear buffer after last batch
-#
-#     def __len__(self):
-#         # This might not be exact if data expands unpredictably
-#         return (len(self.dataset) + self.batch_size - 1) // self.batch_size
-
-
-# old version with buffering
-# class TemporalGraphDataset(torch.utils.data.Dataset):
-#     def __init__(self, train_dataset, val_dataset, test_dataset):
-#         self.datasets = {
-#             'train': train_dataset,
-#             'val': val_dataset,
-#             'test': test_dataset
-#         }
-#         self.lengths = {key: len(dataset) for key, dataset in self.datasets.items()}
-#
-#     def __len__(self):
-#         return sum(self.lengths.values())
-#
-#     def get_dataset(self, dataset_type):
-#         return self.datasets[dataset_type], self.lengths[dataset_type]
-#
-#     def load_data(self, index, dataset_type='test'):
-#         dataset, _ = self.get_dataset(dataset_type)
-#         return dataset[index]
-#
-#     def transform(self, graph, evaluate=False):
-#         if not evaluate:
-#             return self.random_crop(graph)
-#         else:
-#             return self.incremental_node_addition(graph)
-#
-#     def __getitem__(self, index, dataset_type='test', evaluate=False):
-#         graph = self.load_data(index, dataset_type)
-#         transformed_graph = self.transform(graph, evaluate)
-#         return transformed_graph
-#
-#     def random_crop(self, graph):
-#         print("graph: ", graph)
-#         num_nodes = graph.x.size(0)
-#         start_index = np.random.randint(0, num_nodes)
-#         end_index = np.random.randint(start_index + 1, num_nodes + 1)
-#         return self.extract_subgraph(graph, start_index, end_index)
-#
-#     def incremental_node_addition(self, graph):
-#         # This will generate a sequence of subgraphs, each with one more node than the last
-#         subgraphs = []
-#         for end_index in range(1, graph.x.size(0) + 1):
-#             subgraph = self.extract_subgraph(graph, 0, end_index)
-#             subgraphs.append(subgraph)
-#         return subgraphs
-#
-#     def extract_subgraph(self, graph, start_index, end_index):
-#         node_slice = torch.arange(start_index, end_index)
-#         edge_mask = ((graph.edge_index[0] >= start_index) & (graph.edge_index[0] < end_index) &
-#                      (graph.edge_index[1] >= start_index) & (graph.edge_index[1] < end_index))
-#         edge_index = graph.edge_index[:, edge_mask] - start_index
-#         subgraph = Data(x=graph.x[node_slice], edge_index=edge_index, edge_attr=graph.edge_attr[edge_mask] if graph.edge_attr is not None else None, y=graph.y, min_coords=graph.min_coords, max_coords=graph.max_coords,node_positions_center=graph.node_positions_center)
-#         # plot_graph_temporal(subgraph)
-#
-#         # here, before engineering node features, need to perform preprocessing
-#         # cant create graphs before data preprocessing because otherwise will create edges/node features with unprocessed data (no centering norm etc)
-#         # maybe instead can create slices then call data preprocessing then create torch geo data then call the rest of the func
-#         # change increment function to increment on csv data not graph data
-#
-#         subgraph = engineer_node_features(subgraph, params)
-#         return subgraph
 
 
 def angle_to_cyclical(positions):
@@ -236,19 +111,15 @@ def center_coordinates(data):
     data['node_positions_center'] = None
 
     for idx, row in data.iterrows():
-        # print("idx: ", idx)
-        # print("row: ", row)
         # Center coordinates using the calculated mean
         node_positions = np.vstack(row['node_positions'])
         centered_node_positions, center = mean_centering(node_positions)
 
         # Convert to list and check structure
-        centered_list = centered_node_positions.tolist()
         data.at[idx, 'node_positions'] = centered_node_positions.tolist()
 
         # Similar centering for jammer position
         jammer_pos = np.array(row['jammer_position'])
-        # print("jammer_pos: ", jammer_pos)
         centered_jammer_position = jammer_pos - center
         data.at[idx, 'jammer_position'] = centered_jammer_position.tolist()
 
@@ -338,7 +209,6 @@ def apply_unit_sphere_normalization(data):
         # Normalize the positions uniformly
         normalized_positions = positions / max_radius
         normalized_jammer_position = jammer_position / max_radius
-        # print('normalized_jammer_position: ', normalized_jammer_position)
 
         # Update the DataFrame with normalized positions and maximum radius
         data.at[idx, 'node_positions'] = normalized_positions.tolist()
@@ -348,7 +218,7 @@ def apply_unit_sphere_normalization(data):
 
 def convert_data_type(data):
     # Convert from str to required data type for specified features
-    dataset_features = ['jammer_position', 'node_positions', 'node_noise', 'timestamps', 'angle_of_arrival']
+    dataset_features = params['required_features'] + ['jammer_position']
 
     # Apply conversion to each feature directly
     for feature in dataset_features:
@@ -376,82 +246,6 @@ def add_proximity_count(data):
     )
 
 
-def create_graphs(data):
-    graphs = []
-    for index, row in data.iterrows():
-        G = nx.Graph()
-        positions = np.array(row['node_positions'])
-        num_nodes = positions.shape[0]
-
-        if num_nodes > 1:  # Ensure there are enough nodes to form a graph
-            k = min(params['num_neighbors'], num_nodes - 1)  # num of neighbors
-            nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
-            distances, indices = nbrs.kneighbors(positions)
-
-            for i in range(num_nodes):
-                G.add_node(i, position=positions[i], noise=row['node_noise'][i])  # Changed 'pos' to 'position'
-                for j in indices[i]:  # Skip the first index since it is the point itself
-                    G.add_edge(i, j)
-
-        graphs.append(G)
-
-    return graphs
-
-
-
-# Original!
-# def calculate_noise_statistics(graphs, stats_to_compute):
-#     all_graph_stats = []  # This will hold a list of lists, each sublist for a graph
-#
-#     for G in graphs:
-#         graph_stats = []  # Initialize an empty list for current graph's node stats
-#
-#         for node in G.nodes:
-#             neighbors = list(G.neighbors(node))
-#             curr_node_noise = G.nodes[node]['noise']
-#             neighbor_noises = [G.nodes[neighbor]['noise'] for neighbor in neighbors]  # Neighbors' noise
-#             neighbor_positions = [G.nodes[neighbor]['position'] for neighbor in neighbors]  # Neighbors' positions
-#
-#             node_stats = {}  # Dictionary to store stats for the current node
-#
-#             # Compute mean noise for neighbors excluding the node itself
-#             if neighbors:  # Ensure there are neighbors
-#                 mean_neighbor_noise = np.mean(neighbor_noises)
-#             else:
-#                 mean_neighbor_noise = curr_node_noise  # If no neighbors, fallback to own noise
-#
-#             if 'mean_noise' in stats_to_compute:
-#                 node_stats['mean_noise'] = mean_neighbor_noise
-#             if 'median_noise' in stats_to_compute:
-#                 node_stats['median_noise'] = np.median(neighbor_noises + [curr_node_noise])  # Include self for median
-#             if 'std_noise' in stats_to_compute:
-#                 node_stats['std_noise'] = np.std(neighbor_noises + [curr_node_noise])  # Include self for std
-#             if 'range_noise' in stats_to_compute:
-#                 node_stats['range_noise'] = np.max(neighbor_noises + [curr_node_noise]) - np.min(neighbor_noises + [curr_node_noise])
-#
-#             # Compute relative noise
-#             node_stats['relative_noise'] = curr_node_noise - mean_neighbor_noise
-#
-#             # Compute the weighted centroid local (WCL)
-#             if 'wcl_coefficient' in stats_to_compute:
-#                 total_weight = 0
-#                 weighted_sum = np.zeros(2)  # 2D positions
-#                 for pos, noise in zip(neighbor_positions, neighbor_noises):
-#                     weight = 10 ** (noise / 10)
-#                     weighted_coords = weight * np.array(pos)
-#                     weighted_sum += weighted_coords
-#                     total_weight += weight
-#                 if total_weight != 0:
-#                     wcl_estimation = weighted_sum / total_weight
-#                     node_stats['wcl_coefficient'] = wcl_estimation.tolist()  # Store as a list if necessary
-#
-#             graph_stats.append(node_stats)  # Append the current node's stats to the graph's list
-#
-#         all_graph_stats.append(graph_stats)  # Append the completed list of node stats for this graph
-#
-#     return all_graph_stats
-
-
 def calculate_noise_statistics(subgraphs, stats_to_compute):
     all_graph_stats = []
 
@@ -462,29 +256,34 @@ def calculate_noise_statistics(subgraphs, stats_to_compute):
 
         for node_id in range(num_nodes):
             # Identifying the neighbors of the current node
-            mask = (edge_index[0] == node_id) | (edge_index[1] == node_id)
-            neighbors = edge_index[1][mask] if edge_index[0][mask].eq(node_id).any() else edge_index[0][mask]
+            neighbors = torch.cat([
+                edge_index[1][edge_index[0] == node_id],
+                edge_index[0][edge_index[1] == node_id]
+            ], dim=0).unique()
 
             curr_node_noise = subgraph.x[node_id][2]  # Assuming noise is the third feature
             neighbor_noises = subgraph.x[neighbors, 2]
 
+            # Combine current node's noise with neighbor noises
+            all_noises = torch.cat([neighbor_noises, curr_node_noise.unsqueeze(0)], dim=0)
+
             # Handle case with fewer than two neighbors safely
-            if neighbors.size(0) > 1:
-                std_noise = neighbor_noises.std().item()
-                range_noise = (neighbor_noises.max() - neighbor_noises.min()).item()
+            if all_noises.size(0) > 1:
+                std_noise = all_noises.std().item()
+                range_noise = (all_noises.max() - all_noises.min()).item()
             else:
                 std_noise = 0
                 range_noise = 0
 
             temp_stats = {
-                'mean_noise': neighbor_noises.mean().item() if neighbors.size(0) > 0 else curr_node_noise.item(),
-                'median_noise': neighbor_noises.median().item() if neighbors.size(0) > 0 else curr_node_noise.item(),
+                'mean_noise': all_noises.mean().item(),
+                'median_noise': all_noises.median().item(),
                 'std_noise': std_noise,
                 'range_noise': range_noise,
                 'relative_noise': (curr_node_noise - neighbor_noises.mean()).item() if neighbors.size(0) > 0 else 0,
             }
 
-            # Compute WCL if needed
+            # Compute WCL
             if 'wcl_coefficient' in stats_to_compute:
                 weights = torch.pow(10, neighbor_noises / 10)
                 weighted_positions = weights.unsqueeze(1) * subgraph.x[neighbors, :2]
@@ -527,6 +326,18 @@ def add_clustering_coefficients(graphs):
 
     return all_graphs_clustering_coeffs
 
+def dynamic_moving_average(x, max_window_size=10):
+    num_nodes = x.size(0)
+    window_sizes = torch.clamp(num_nodes - torch.arange(num_nodes), min=1, max=max_window_size)
+    averages = torch.zeros_like(x)
+
+    for i in range(num_nodes):
+        start = max(i - window_sizes[i] // 2, 0)
+        end = min(i + window_sizes[i] // 2 + 1, num_nodes)
+        averages[i] = x[start:end].mean(dim=0)
+
+    return averages
+
 
 def engineer_node_features(subgraph):
     if subgraph.x.size(0) == 0:
@@ -535,10 +346,11 @@ def engineer_node_features(subgraph):
     new_features = []
 
     # Calculating centroid
-    centroid = torch.mean(subgraph.x, dim=0)
+    centroid = torch.mean(subgraph.x[:, :2], dim=0)  # Select only x and y
 
     if 'dist_to_centroid' in params['additional_features']:
-        distances = torch.norm(subgraph.x - centroid, dim=1, keepdim=True)
+        distances = torch.norm(subgraph.x[:, :2] - centroid, dim=1, keepdim=True)
+        # print("dist_to_centroid: ", distances)
         new_features.append(distances)
 
     if 'sin_azimuth' in params['additional_features']:
@@ -557,61 +369,30 @@ def engineer_node_features(subgraph):
             stat_values = torch.tensor([node_stat[stat] for node_stat in noise_stats[0]], dtype=torch.float32)
             new_features.append(stat_values.unsqueeze(1))  # Unsqueeze to maintain the correct dimension
 
+    # Moving Average for node noise with adjusted padding
+    if 'moving_avg_noise' in params['additional_features']:
+        node_noise = subgraph.x[:, 2]  # noise is at position 2
+        moving_avg_noise = dynamic_moving_average(node_noise)
+        new_features.append(moving_avg_noise.unsqueeze(1))
+
+    # Example of using dynamic moving average for AoA
+    if 'moving_avg_aoa' in params['additional_features']:
+        sin_aoa = subgraph.x[:, 4]  # sin(AoA) is at position 4
+        cos_aoa = subgraph.x[:, 5]  # cos(AoA) is at position 5
+        aoa = torch.atan2(sin_aoa, cos_aoa)
+        moving_avg_aoa = dynamic_moving_average(aoa)
+        new_features.append(torch.sin(moving_avg_aoa).unsqueeze(1))
+        new_features.append(torch.cos(moving_avg_aoa).unsqueeze(1))
+
     if new_features:
-        new_features_tensor = torch.cat(new_features, dim=1)
-        subgraph.x = torch.cat((subgraph.x, new_features_tensor), dim=1)
+        try:
+            new_features_tensor = torch.cat(new_features, dim=1)
+            subgraph.x = torch.cat((subgraph.x, new_features_tensor), dim=1)
+        except RuntimeError as e:
+            raise e
 
     return subgraph
 
-
-# # Original!
-# def engineer_node_features(data, params):
-#     logging.info('Calculating node features')
-#     data['centroid'] = data['node_positions'].apply(lambda positions: np.mean(positions, axis=0))
-#
-#     if 'dist_to_centroid' in params.get('additional_features', []):
-#         data['dist_to_centroid'] = data.apply(lambda row: [np.linalg.norm(pos - row['centroid']) for pos in row['node_positions']], axis=1)
-#
-#     # Cyclical features
-#     if 'sin_azimuth' in params.get('additional_features', []) or 'cos_azimuth' in params.get('additional_features', []):
-#         add_cyclical_features(data)
-#
-#     # Proximity counts
-#     if 'proximity_count' in params.get('additional_features', []):
-#         add_proximity_count(data)
-#
-#     # Clustering coefficients
-#     if 'clustering_coefficient' in params.get('additional_features', []):
-#         graphs = create_graphs(data)
-#         clustering_coeffs = add_clustering_coefficients(graphs)
-#         data['clustering_coefficient'] = clustering_coeffs  # Assign the coefficients directly
-#
-#     # Graph-based noise stats
-#     graph_stats = ['mean_noise', 'median_noise', 'std_noise', 'range_noise', 'relative_noise', 'wcl_coefficient']
-#     noise_stats_to_compute = [stat for stat in graph_stats if stat in params.get('additional_features', [])]
-#
-#     if noise_stats_to_compute:
-#         jammer_positions = data['jammer_position'].tolist()
-#         # dataset_list = data['dataset'].tolist()
-#         graphs = create_graphs(data)
-#         # node_noise_stats = calculate_noise_statistics(graphs, jammer_positions, noise_stats_to_compute)
-#         node_noise_stats = calculate_noise_statistics(graphs, noise_stats_to_compute)
-#
-#         for stat in noise_stats_to_compute:
-#             # Initialize the column for the statistic
-#             data[stat] = pd.NA
-#
-#             # Assign the stats for each graph to the DataFrame
-#             for idx, graph_stats in enumerate(node_noise_stats):
-#                 current_stat_list = [node_stats.get(stat) for node_stats in graph_stats if stat in node_stats]
-#                 data.at[idx, stat] = current_stat_list
-#
-#     return data
-#
-#     # if params['3d']:
-#     #     if 'elevation_angle' in params.get('additional_features', []):
-#     #         data['elevation_angle'] = data.apply(
-#     #             lambda row: [np.arcsin((pos[2] - row['centroid'][2]) / np.linalg.norm(pos - row['centroid'])) for pos in row['node_positions']], axis=1)
 
 def preprocess_data(data, params):
     """
@@ -627,7 +408,6 @@ def preprocess_data(data, params):
     # Conversion from string to list type
     center_coordinates(data)
     standardize_data(data)
-    # engineer_node_features(data, params)  # if engineering node features on temporal subgraphs before passing to dataloader
     if params['coords'] == 'polar':
         convert_to_polar(data)
     return data
@@ -687,30 +467,18 @@ def convert_output_eval(output, data_batch, data_type, device):
     output = output.to(device)  # Ensure the output tensor is on the right device
 
     if params['norm'] == 'minmax':
-        # # 0. Reverse to cartesian
-        # if params['coords'] == 'polar' and data_type == 'prediction':
-        #     output = cyclical_to_angular(output)
-        #     output = polar_to_cartesian(output)
-
         # 1. Reverse normalization using min_coords and max_coords
-        min_coords = data_batch.min_coords.to(device).view(-1, 2)  # Reshape from [32] to [16, 2]
+        min_coords = data_batch.min_coords.to(device).view(-1, 2)
         max_coords = data_batch.max_coords.to(device).view(-1, 2)
 
         range_coords = max_coords - min_coords
         converted_output = (output + 1) / 2 * range_coords + min_coords
 
-    elif params['norm'] == 'unit_sphere':
-        # # 0. Reverse to cartesian
-        # if params['coords'] == 'polar' and data_type == 'prediction':
-        #     output = cyclical_to_angular(output)
-        #     output = polar_to_cartesian(output)
 
+    elif params['norm'] == 'unit_sphere':
         # 1. Reverse unit sphere normalization using max_radius
-        # print("output: ", output)
         max_radius = data_batch.max_radius.to(device).view(-1, 1)
-        # print("max radius: ", max_radius)
         converted_output = output * max_radius
-        # print("converted output: ", converted_output)
 
     # 2. Reverse centering using the stored node_positions_center
     centers = data_batch.node_positions_center.to(device).view(-1, 2)
@@ -739,7 +507,7 @@ def save_reduced_dataset(dataset, indices, path):
     torch.save(reduced_data, path)  # Save the truly reduced dataset
 
 
-def split_datasets(preprocessed_data, data, params, experiments_path):
+def split_datasets(data):
     """
     Save the preprocessed data into train, validation, and test datasets.
 
@@ -754,41 +522,37 @@ def split_datasets(preprocessed_data, data, params, experiments_path):
     """
 
     logging.info('Creating graphs...')
-    # torch_geo_dataset = [create_torch_geo_data(row, params) for _, row in preprocessed_data.iterrows()]
 
     # Stratified split using scikit-learn
     train_idx, test_idx, train_test_y, test_y = train_test_split(
-        np.arange(len(preprocessed_data)),
-        preprocessed_data['dataset'],
-        test_size=0.3,  # Split 70% train, 30% test
-        stratify=preprocessed_data['dataset'],
-        random_state=100  # For reproducibility
+        np.arange(len(data)),
+        data['dataset'],
+        test_size=0.3,
+        stratify=data['dataset'],
+        random_state=100
     )
 
     # Now split the test into validation and test
     val_idx, test_idx, _, _ = train_test_split(
         test_idx,
         test_y,
-        test_size=len(preprocessed_data) - len(train_idx) - int(0.1 * len(preprocessed_data)),
+        test_size=len(data) - len(train_idx) - int(0.1 * len(data)),
         stratify=test_y,
         random_state=100
     )
 
     # Convert indices back to DataFrame subsets
-    train_df = preprocessed_data.iloc[train_idx].reset_index(drop=True)
-    val_df = preprocessed_data.iloc[val_idx].reset_index(drop=True)
-    test_df = preprocessed_data.iloc[test_idx].reset_index(drop=True)
-
-    # Apply the same indices to the raw data
-    raw_test_df = data.iloc[test_idx].reset_index(drop=True)
+    train_df = data.iloc[train_idx].reset_index(drop=True)
+    val_df = data.iloc[val_idx].reset_index(drop=True)
+    test_df = data.iloc[test_idx].reset_index(drop=True)
 
     # return train_dataset, val_dataset, test_dataset, train_df, val_df, test_df, raw_test_df
-    return train_df, val_df, test_df, raw_test_df
+    return train_df, val_df, test_df
 
 
 
 
-def save_datasets(combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df, experiments_path):
+def save_datasets(combined_train_df, combined_val_df, combined_test_df, experiments_path):
     """
     Process the combined train, validation, and test data, and save them to disk.
 
@@ -807,7 +571,6 @@ def save_datasets(combined_train_df, combined_val_df, combined_test_df, combined
     combined_train_df.to_csv(os.path.join(experiments_path, 'train_dataset.csv'), index=False)
     combined_val_df.to_csv(os.path.join(experiments_path, 'val_dataset.csv'), index=False)
     combined_test_df.to_csv(os.path.join(experiments_path, 'test_dataset.csv'), index=False)
-    combined_raw_test_df.to_csv(os.path.join(experiments_path, 'raw_test_data.csv'), index=False)
 
     # Dataset types for specific filtering
     dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
@@ -828,8 +591,88 @@ def save_datasets(combined_train_df, combined_val_df, combined_test_df, combined
             test_subset.to_csv(os.path.join(experiments_path, f'{dataset}_test_set.csv'), index=False)
 
 
+# Sample function definition
+def calculate_perc_completion(data):
+    # Loop through each row in the dataframe
+    perc_completion_list = []
+    for _, row in data.iterrows():
+        timestamps = np.array(row['timestamps'])
+        min_time = np.min(timestamps)
+        max_time = np.max(timestamps)
+        perc_completion = (timestamps - min_time) / (max_time - min_time) if max_time != min_time else np.zeros_like(timestamps)
+        perc_completion_list.append(perc_completion)
 
-def load_data(params, train_set_name, val_set_name, test_set_name, experiments_path=None, data=None):
+    # Add the new column to the dataframe
+    data['perc_completion_full'] = perc_completion_list
+    return data
+
+
+def downsample_data(data):
+    """
+    Apply downsampling using time window averaging to reduce the number of nodes to a fixed `max_nodes`.
+
+    Args:
+        data (pd.DataFrame): The input data containing columns to be downsampled.
+        max_nodes (int): The desired number of nodes to retain after downsampling.
+
+    Returns:
+        pd.DataFrame: The downsampled dataset with the specified number of nodes.
+    """
+    max_nodes = params['max_nodes']
+    logging.info(f"Downsampling to {max_nodes} nodes...")
+
+    for idx, row in data.iterrows():
+        # Convert timestamps to numpy array
+        timestamps = np.array(row['timestamps'])
+        num_original_nodes = len(timestamps)
+
+        # Calculate the window size to downsample to `max_nodes`
+        if num_original_nodes <= max_nodes:
+            # If the number of original nodes is already less than or equal to max_nodes, skip downsampling
+            continue
+
+        window_size = num_original_nodes // max_nodes
+
+        # Calculate the number of windows based on the calculated window size
+        num_windows = max_nodes
+        downsampled_timestamps = []
+        downsampled_positions = []
+        downsampled_noise_values = []
+        downsampled_angles = []
+
+        for i in range(num_windows):
+            # Define the window range
+            start_idx = i * window_size
+            end_idx = start_idx + window_size
+
+            # Average values within the window
+            window_timestamps = timestamps[start_idx:end_idx]
+            downsampled_timestamps.append(np.mean(window_timestamps))
+
+            # For node positions, calculate the mean of x, y coordinates
+            node_positions = np.array(row['node_positions'][start_idx:end_idx])
+            downsampled_positions.append(np.mean(node_positions, axis=0).tolist())
+
+            # For noise values and angles, calculate the mean
+            noise_values = np.array(row['node_noise'][start_idx:end_idx])
+            downsampled_noise_values.append(np.mean(noise_values))
+
+            if 'angle_of_arrival' in params['required_features']:
+                angles = np.array(row['angle_of_arrival'][start_idx:end_idx])
+                downsampled_angles.append(np.mean(angles))
+
+        # Replace the original data with downsampled data
+        data.at[idx, 'timestamps'] = downsampled_timestamps
+        data.at[idx, 'node_positions'] = downsampled_positions
+        data.at[idx, 'node_noise'] = downsampled_noise_values
+        if 'angle_of_arrival' in params['required_features']:
+            data.at[idx, 'angle_of_arrival'] = downsampled_angles
+
+    return data
+
+
+
+def load_data(params, test_set_name, experiments_path=None):
     """
     Load the data from the given paths, or preprocess and save it if not already done.
 
@@ -841,17 +684,35 @@ def load_data(params, train_set_name, val_set_name, test_set_name, experiments_p
         The train, validation, and test datasets.
     """
     logging.info("Loading data...")
+    if params['inference']:
+        # load raw data csv
+        for test_data in test_set_name:
+            # TODO: add downsampling, perc completion
+            print(f"dataset: {test_data}")
+            print(f"experiments_path: {experiments_path}")
+            file_path = experiments_path + test_data
+            test_df = pd.read_csv(file_path)
+            test_df['id'] = range(1, len(test_df) + 1)
+            convert_data_type(test_df)
+            # calculate_perc_completion()
 
-    if params['save_data']:
-        combined_raw_test_data = []
+            # Apply transformations to graphs
+            if params['dynamic']:
+                test_df = apply_processing(test_df, 'test')
+                test_df = test_df.reset_index()
+
+            print("TEST")
+            test_dataset = preprocess_data(test_df, params)
+            print(test_dataset.columns)
+
+            return None, None, test_dataset
+    else:
         combined_train_df = pd.DataFrame()
         combined_val_df = pd.DataFrame()
         combined_test_df = pd.DataFrame()
-        combined_raw_test_df = pd.DataFrame()
 
         if params['all_env_data']:
             datasets = ['data/train_test_data/log_distance/urban_area/combined_urban_area.csv', 'data/train_test_data/log_distance/shadowed_urban_area/combined_shadowed_urban_area.csv']
-            # datasets = ['data/train_test_data/log_distance/urban_area/rectangle.csv'] # circle_jammer_outside_region
         else:
             datasets = [params['dataset_path']]
         for dataset in datasets:
@@ -860,44 +721,37 @@ def load_data(params, train_set_name, val_set_name, test_set_name, experiments_p
             data['id'] = range(1, len(data) + 1)
             convert_data_type(data)
 
+            # Apply downsampling
+            data = downsample_data(data)
+
+            # Calculate normalized time on full instance
+            data = calculate_perc_completion(data)
+
             # Create train test splits
-            train_df, val_df, test_df, raw_test_df = split_datasets(data, data, params, experiments_path)
+            train_df, val_df, test_df = split_datasets(data)
 
             # Apply random_crop to training and test datasets
-            train_df = apply_processing(train_df, 'train_val')
-            val_df = apply_processing(val_df, 'train_val')
-            test_df = apply_processing(test_df, 'test')
-            test_df = test_df.reset_index()
+            if params['dynamic']:
+                train_df = apply_processing(train_df, 'train')
+                val_df = apply_processing(val_df, 'val')
+                test_df = apply_processing(test_df, 'test')
+                val_df = val_df.reset_index()
+                test_df = test_df.reset_index()
 
-            # print("train_df['jammer_position']: ", train_df['jammer_position'])
+            test_df.to_csv(os.path.join(experiments_path, 'raw_test_data.csv'), index=False)
 
-            print("TRAIN\n\n")
             train_dataset = preprocess_data(train_df, params)
-            print("VAL\n\n")
             val_dataset = preprocess_data(val_df, params)
-            print("TEST\n\n")
             test_dataset = preprocess_data(test_df, params)
 
-            # print("test_dataset: ", test_dataset.iloc[0])
-
-            # DONt create graphs yet! we will do that in the dataloader because otherwise it will take up too much space to do it beforehand
-
-            combined_raw_test_data.extend(raw_test_df)
             combined_train_df = pd.concat([combined_train_df, train_dataset], ignore_index=True)
             combined_val_df = pd.concat([combined_val_df, val_dataset], ignore_index=True)
             combined_test_df = pd.concat([combined_test_df, test_dataset], ignore_index=True)
-            combined_raw_test_df = pd.concat([combined_raw_test_df, raw_test_df], ignore_index=True)
 
         # Process and save the combined data
-        save_datasets(combined_train_df, combined_val_df, combined_test_df, combined_raw_test_df,
-                                       experiments_path)
-    else:
-        # Load train, val and test sets that were saved
-        train_dataset = pd.read_csv(os.path.join(experiments_path, train_set_name))
-        val_dataset = pd.read_csv(os.path.join(experiments_path, val_set_name))
-        test_dataset = pd.read_csv(os.path.join(experiments_path, test_set_name))
+        save_datasets(combined_train_df, combined_val_df, combined_test_df, experiments_path)
 
-    return train_dataset, val_dataset, test_dataset
+        return combined_train_df, combined_val_df, combined_test_df
 
 
 def random_crop(row, min_nodes=3):
@@ -909,14 +763,27 @@ def random_crop(row, min_nodes=3):
     Returns:
         pd.Series: Modified row with cropped data.
     """
+    # Determine the features to crop
+    if 'timestamps' in params['required_features']:
+        node_features = params['required_features'] + ['perc_completion_full']
+    else:
+        node_features = params['required_features']
+
     total_nodes = len(row['node_positions'])
+
     if total_nodes > min_nodes:
-        start = np.random.randint(0, total_nodes - min_nodes)
-        end = np.random.randint(start + min_nodes, total_nodes)
-        for key in ['timestamps', 'node_positions', 'node_noise', 'angle_of_arrival']:
-            if key == 'node_positions':
+        # Fix the start index at 0
+        start = 0
+        # Randomize the end index, ensuring at least `min_nodes` nodes are kept
+        end = np.random.randint(min_nodes, total_nodes)
+
+        # Crop all the relevant features
+        for key in node_features:
+            if isinstance(row[key], list) or isinstance(row[key], np.ndarray):  # Ensure it's a list or ndarray
                 row[key] = row[key][start:end]
+
     return row
+
 
 def incremental_node_addition(row):
     """
@@ -926,16 +793,60 @@ def incremental_node_addition(row):
     Returns:
         List[pd.Series]: List of new rows each incrementing node samples by one.
     """
+    if 'timestamps' in params['required_features']:
+        node_features = params['required_features'] + ['perc_completion_full']
+    else:
+        node_features = params['required_features']
+
     min_nodes = 3
     total_nodes = len(row['node_positions'])
     new_rows = []
+
     if total_nodes >= min_nodes:
         for i in range(min_nodes, total_nodes + 1):
             new_row = row.copy()
-            for key in ['timestamps', 'node_positions', 'node_noise', 'angle_of_arrival']:
+            for key in node_features:
                 new_row[key] = row[key][:i]
             new_rows.append(new_row)
     return new_rows
+
+
+def batch_node_addition(row, granularity=25):
+    """
+    Generate incremental additions of node samples for one row based on a percentage granularity.
+    Args:
+        row (pd.Series): A single row from a DataFrame.
+        granularity (int): Percentage of total nodes to increment at each step.
+    Returns:
+        List[pd.Series]: List of new rows, each incrementing node samples by the specified percentage.
+    """
+    if 'timestamps' in params['required_features']:
+        node_features = params['required_features'] + ['perc_completion_full']
+    else:
+        node_features = params['required_features']
+
+    min_nodes = max(3, int(len(row['node_positions']) * (granularity / 100)))  # Ensuring at least 3 nodes
+    total_nodes = len(row['node_positions'])
+    new_rows = []
+
+    if total_nodes >= min_nodes:
+        step_size = max(1, int(total_nodes * (granularity / 100)))  # Calculate step size as a percentage of total nodes
+        steps = range(min_nodes, total_nodes + 1, step_size)  # Create steps from min_nodes to total_nodes with step_size
+        for i in steps:
+            new_row = row.copy()
+            for key in node_features:
+                new_row[key] = row[key][:i]
+            new_rows.append(new_row)
+
+        # Make sure to include the full node set if the last step isn't exactly total_nodes
+        if steps[-1] != total_nodes:
+            new_row = row.copy()
+            for key in node_features:
+                new_row[key] = row[key][:total_nodes]
+            new_rows.append(new_row)
+
+    return new_rows
+
 
 def apply_processing(df, mode):
     """
@@ -958,125 +869,12 @@ def process_row(row, mode):
     """
     Process a single row based on the specified mode.
     """
-    if mode == 'train_val':
+    if mode == 'train':
         return [random_crop(row)]
+    elif mode == 'val':
+        return batch_node_addition(row)
     elif mode == 'test':
         return incremental_node_addition(row)
-
-
-# def create_data_loader(train_dataset, val_dataset, test_dataset, batch_size: int):
-#     """
-#     Create data loader objects.
-#     Args:
-#         batch_size (int): Batch size for the DataLoader.
-#
-#     Returns:
-#         train_loader (DataLoader): DataLoader for the training dataset.
-#         val_loader (DataLoader): DataLoader for the validation dataset.
-#         test_loader (DataLoader): DataLoader for the testing dataset.
-#     """
-#     logging.info("Creating DataLoader objects...")
-#     if not params['inference']:
-#         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=False, num_workers=0)
-#         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
-#         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
-#
-#         return train_loader, val_loader, test_loader
-#     else:
-#         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
-#
-#         return None, None, test_loader
-
-from torch.utils.data.dataloader import DataLoader as TorchDataLoader
-from torch_geometric.data import Batch
-
-
-# class CustomDataLoader(TorchDataLoader):
-#     def __init__(self, dataset, batch_size, shuffle=False, collate_fn=None, **kwargs):
-#         super().__init__(dataset, batch_size, shuffle, collate_fn=collate_fn, **kwargs)
-
-
-def custom_collate(batch):
-    data_list = [item if isinstance(item, Data) else item[0] for item in batch]
-    batch = Batch.from_data_list(data_list)
-    return batch
-#
-# def custom_collate_eval(batch):
-#     # Assuming each item in 'batch' is a single Data object
-#     return batch  # Directly return the list of Data objects, no batching
-
-
-# def custom_collate_fn(batch):
-#     # Flatten out the lists of graphs into a single list
-#     batch_graphs = [graph for sublist in batch for graph in sublist]
-#
-#     # Ensure the batch size remains constant
-#     while len(batch_graphs) > params['batch_size']:
-#         yield batch_graphs[:params['batch_size']]
-#         batch_graphs = batch_graphs[params['batch_size']:]
-#
-#     if batch_graphs:
-#         yield batch_graphs
-
-
-# def tensor_to_list(tensor):
-#     return tensor.detach().cpu().numpy().tolist()
-
-# def process_and_save_data(processed_data, filename='processed_test_data.csv'):
-#     data_list = []
-#
-#     # Flatten the list of lists if necessary
-#     flat_list = [item for sublist in processed_data for item in sublist]
-#
-#     for data in flat_list:
-#         data_dict = {
-#             'x': tensor_to_list(data.x),
-#             'edge_index': tensor_to_list(data.edge_index),
-#             'edge_attr': tensor_to_list(data.edge_attr),
-#             'y': tensor_to_list(data.y),
-#             'min_coords': tensor_to_list(data.min_coords),
-#             'max_coords': tensor_to_list(data.max_coords),
-#             'node_positions_center': tensor_to_list(data.node_positions_center)
-#         }
-#         data_list.append(data_dict)
-#
-#     # Convert list of dictionaries to DataFrame
-#     df = pd.DataFrame(data_list)
-#     df.to_csv(filename, index=False)
-#     print(f"Data saved to {filename}")
-#
-
-# def create_data_loader(temporal_dataset, batch_size: int):
-#     """
-#     Create data loaders for training, validation, and testing sets with custom preprocessing using a custom DataLoader.
-#     Args:
-#         temporal_dataset (TemporalGraphDataset): The dataset containing train, val, and test sets.
-#         batch_size (int): Batch size for the DataLoader.
-#     Returns:
-#         Tuple[CustomDataLoader, CustomDataLoader, CustomDataLoader]: Custom DataLoader for the training, validation, and testing datasets.
-#     """
-#     # Fetch datasets
-#     train_data, train_length = temporal_dataset.get_dataset('train')
-#     val_data, val_length = temporal_dataset.get_dataset('val')
-#     test_data, test_length = temporal_dataset.get_dataset('test')
-#
-#     # Process training and validation data
-#     processed_train_data = [temporal_dataset.__getitem__(idx, 'train', evaluate=False) for idx in range(train_length)]
-#     processed_val_data = [temporal_dataset.__getitem__(idx, 'val', evaluate=False) for idx in range(val_length)]
-#
-#     # # Save processed test data to CSV
-#     # process_and_save_data(processed_test_data, 'processed_test_data.csv')
-#     #
-#     # quit()
-#
-#     # Create DataLoaders for training and validation with preprocessed data
-#     train_loader = CustomDataLoader(processed_train_data, batch_size=batch_size, shuffle=True, collate_fn=custom_collate, num_workers=4)
-#     val_loader = CustomDataLoader(processed_val_data, batch_size=batch_size, shuffle=False, collate_fn=custom_collate, num_workers=4)
-#
-#     # Create DataLoader for the test set without preprocessing
-#     test_loader = CustomDataLoader(test_data, batch_size=batch_size, shuffle=False, collate_fn=custom_collate_eval, num_workers=4)
-#
-#     return train_loader, val_loader, test_loader
 
 
 def create_data_loader(train_data, val_data, test_data, batch_size):
@@ -1090,47 +888,26 @@ def create_data_loader(train_data, val_data, test_data, batch_size):
     Returns:
         tuple: Three DataLoaders for the training, validation, and testing datasets.
     """
-    # Instantiate the dataset classes for train, val, and test
-    train_dataset = TemporalGraphDataset(train_data, mode='train')
-    val_dataset = TemporalGraphDataset(val_data, mode='val')
-    test_dataset = TemporalGraphDataset(test_data, mode='test')
+    if params['inference']:
+        # Instantiate the dataset classes for train, val, and test
+        test_dataset = TemporalGraphDataset(test_data)
 
-    # Create DataLoaders for each dataset
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0) # TODO: do we need to add drop_last=True??
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+        # Create DataLoaders for each dataset
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
-    return train_loader, val_loader, test_loader
+        return None, None, test_loader
+    else:
+        # Instantiate the dataset classes for train, val, and test
+        train_dataset = TemporalGraphDataset(train_data)
+        val_dataset = TemporalGraphDataset(val_data)
+        test_dataset = TemporalGraphDataset(test_data)
 
+        # Create DataLoaders for each dataset
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=True, num_workers=8)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
-
-# def create_data_loader(temporal_dataset, batch_size: int):
-#     """
-#     Create data loader objects for train, validation, and test datasets using temporal slicing.
-#     Args:
-#         temporal_dataset (TemporalGraphDataset): The dataset containing train, val, and test sets.
-#         batch_size (int): Batch size for the DataLoader.
-#
-#     Returns:
-#         train_loader (DataLoader): DataLoader for the training dataset.
-#         val_loader (DataLoader): DataLoader for the validation dataset.
-#         test_loader (DataLoader): DataLoader for the testing dataset.
-#     """
-#     logging.info("Creating DataLoader objects...")
-#     train_data, train_length = temporal_dataset.get_dataset('train')
-#     val_data, val_length = temporal_dataset.get_dataset('val')
-#     test_data, test_length = temporal_dataset.get_dataset('test')
-#
-#     # Create data loaders with evaluation mode specified for validation and test sets
-#     train_loader = DataLoader([temporal_dataset.__getitem__(idx, dataset_type='train', evaluate=False) for idx in range(train_length)], batch_size=params['batch_size'], shuffle=True, collate_fn=custom_collate, num_workers=4)
-#     val_loader = DataLoader([temporal_dataset.__getitem__(idx, dataset_type='val', evaluate=False) for idx in range(val_length)], batch_size=params['batch_size'],shuffle=False, collate_fn=custom_collate, num_workers=4)
-#     test_loader = DataLoader([temporal_dataset.__getitem__(idx, dataset_type='test', evaluate=True) for idx in range(test_length)], batch_size=params['batch_size'],shuffle=False, collate_fn=custom_collate, num_workers=4)
-#
-#     # Plot
-#     # for batch_data in train_loader:
-#     #     plot_graph_temporal(batch_data)
-#
-#     return train_loader, val_loader, test_loader
+        return train_loader, val_loader, test_loader
 
 
 def safe_convert_list(row: str, data_type: str) -> List[Any]:
@@ -1193,9 +970,12 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_p
 
     # Add nodes with features and positions
     for i, pos in enumerate(positions):
-        # Example feature: assuming RSSI is the last feature in node_features array
-        G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2],
-                   timestamp=node_features[i][-1], sin_aoa=node_features[i][-3], cos_aoa=node_features[i][-2])
+        # assuming RSSI is the last feature in node_features array
+        if params['dynamic']:
+            G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2],
+                       timestamp=node_features[i][-1], sin_aoa=node_features[i][-3], cos_aoa=node_features[i][-2])
+        else:
+            G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2])
 
     # Convert edge_index to a usable format if it's a tensor or similar
     if isinstance(edge_index, torch.Tensor):
@@ -1220,8 +1000,11 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_p
     nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.5)
 
     # Node labels including timestamp, sin and cos of AoA
-    node_labels = {i: f"ID:{i}\nNoise:{G.nodes[i]['noise']:.2f}\nTimestamp:{G.nodes[i]['timestamp']:.2f}\nSin AoA:{G.nodes[i]['sin_aoa']:.2f}\nCos AoA:{G.nodes[i]['cos_aoa']:.2f}"
-                   for i in G.nodes()}
+    if params['dynamic']:
+        node_labels = {i: f"ID:{i}\nNoise:{G.nodes[i]['noise']:.2f}\nTimestamp:{G.nodes[i]['timestamp']:.2f}\nSin AoA:{G.nodes[i]['sin_aoa']:.2f}\nCos AoA:{G.nodes[i]['cos_aoa']:.2f}"
+                       for i in G.nodes()}
+    else:
+        node_labels = {i: f"ID:{i}\nNoise:{G.nodes[i]['noise']:.2f}" for i in G.nodes()}
     nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
 
     # Optionally draw edge weights
@@ -1275,22 +1058,25 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
-    # print("row in torch geo data: ", row)
+    # Select and combine features
+    # all_features = ensure_complementary_features(params) #params['required_features'] + params['additional_features']
+    all_features = params['required_features'].copy()  # Copy the list
+
     # Handling Angle of Arrival (AoA)
-    aoa = np.array(row['angle_of_arrival'])
-    sin_aoa = np.sin(aoa)
-    cos_aoa = np.cos(aoa)
+    if 'angle_of_arrival' in params['required_features']:
+        # print('AOA')
+        aoa = np.array(row['angle_of_arrival'])
+        sin_aoa = np.sin(aoa)
+        cos_aoa = np.cos(aoa)
+        all_features.remove('angle_of_arrival')  # Remove original AoA feature
 
     # Convert timestamps to percentage completion
-    timestamps = np.array(row['timestamps'])
-    min_time = np.min(timestamps)
-    max_time = np.max(timestamps)
-    perc_completion = (timestamps - min_time) / (max_time - min_time) if max_time != min_time else np.zeros_like(timestamps)
-
-    # Select and combine features
-    all_features = ensure_complementary_features(params)
-    all_features.remove('angle_of_arrival')  # Remove original AoA feature
-    all_features.remove('timestamps')  # Remove original timestamps to replace with normalized ones
+    if 'timestamps' in params['required_features']:
+        timestamps = np.array(row['timestamps'])
+        min_time = np.min(timestamps)
+        max_time = np.max(timestamps)
+        perc_completion = (timestamps - min_time) / (max_time - min_time) if max_time != min_time else np.zeros_like(timestamps)
+        all_features.remove('timestamps')  # Remove original timestamps to replace with normalized ones
 
     node_features = [
         sum(([feature_value] if not isinstance(feature_value, list) else feature_value
@@ -1300,19 +1086,16 @@ def create_torch_geo_data(row: pd.Series) -> Data:
 
     # Append AoA and percentage completion as new features
     for i, feature_list in enumerate(node_features):
-        feature_list.extend([sin_aoa[i], cos_aoa[i], perc_completion[i]])
-
-    # print("all_features: ", all_features)
-    # print("node_features: ", node_features)
-    # quit()
+        if 'angle_of_arrival' in params['required_features']:
+            feature_list.extend([sin_aoa[i], cos_aoa[i]])
+        if 'timestamps' in params['required_features']:
+            feature_list.extend([perc_completion[i]])
 
     # Convert to PyTorch tensor
     node_features = torch.tensor(node_features, dtype=torch.float32)
 
     # Preparing edges and weights
     positions = np.array(row['node_positions'])
-    # print("positions: ", positions)
-    # print("len(positions): ", len(positions), '\n')
     if params['edges'] == 'knn':
         num_samples = positions.shape[0]
         k = min(params['num_neighbors'], num_samples - 1)  # num of neighbors, ensuring k < num_samples
@@ -1334,11 +1117,9 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     edge_weight = torch.tensor(edge_weight, dtype=torch.float)
 
     jammer_positions = np.array(row['jammer_position']).reshape(-1, 2)  # Assuming this reshaping is valid based on your data structure
-    # print("jammer_positions: ", jammer_positions)
     y = torch.tensor(jammer_positions, dtype=torch.float)
 
     # Plot
-    # if row['dataset'] == 'triangle':
     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True)
 
     # Create the Data object
@@ -1347,6 +1128,7 @@ def create_torch_geo_data(row: pd.Series) -> Data:
     # Convert geometric information to tensors
     data.id = row['id']  # Assign the id from the row to the Data object
     data.node_positions_center = torch.tensor(row['node_positions_center'], dtype=torch.float)
+    data.sigma = torch.tensor(row['sigma'], dtype=torch.float)
     if params['norm'] == 'minmax':
         data.min_coords = torch.tensor(row['min_coords'], dtype=torch.float)
         data.max_coords = torch.tensor(row['max_coords'], dtype=torch.float)
@@ -1354,6 +1136,8 @@ def create_torch_geo_data(row: pd.Series) -> Data:
         data.max_radius = torch.tensor(row['max_radius'], dtype=torch.float)
 
     # Store the perc_completion as part of the Data object
-    data.perc_completion = torch.tensor(perc_completion, dtype=torch.float32)
+    if 'timestamps' in params['required_features']:
+        data.perc_completion = torch.tensor(perc_completion, dtype=torch.float32)
+        data.perc_completion_full = torch.tensor(row['perc_completion_full'], dtype=torch.float)
 
     return data

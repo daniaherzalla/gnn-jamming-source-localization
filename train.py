@@ -39,15 +39,20 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
         criterion (torch.nn.Module): Loss criterion.
     """
     logging.info("Initializing model...")
+    if 'angle_of_arrival' in params['required_features']:
+        feature_dims = 2
+    else:
+        feature_dims = 1
+    if 'moving_avg_aoa' in params['additional_features']:
+        feature_dims = 3
     if params['coords'] == 'cartesian':
-        in_channels = len(params['additional_features']) + len(params['required_features']) + 2  # Add one (two for 3D) since position data is considered separately for each coordinate and one more for sin cos of aoa
+        in_channels = len(params['additional_features']) + len(params['required_features']) + feature_dims  # Add one (two for 3D) since position data is considered separately for each coordinate and one more for sin cos of aoa
     elif params['coords'] == 'polar':
         in_channels = len(params['additional_features']) + len(params['required_features']) + 3 # r, sin cos theta, sin cos aoa
     else:
         raise "Unknown coordinate system"
-    # print('params: ', params)
+
     print('in_channels: ', in_channels)
-    # print("params['additional_features']: ", params['additional_features'])
     model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'], out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
@@ -73,21 +78,13 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
     model.train()
     total_loss = 0
     num_batches = 0  # Use this to correctly compute average loss
-    # print("train_loader: ", train_loader)
     for data in train_loader:
         if steps_per_epoch is not None and num_batches >= steps_per_epoch:
             break
         data = data.to(device)
         optimizer.zero_grad()
-        # print("data: ", data)
-        # quit()
-        # print("Inputs: ", data.x)
-        # print("Targets: ", data)
         output = model(data)
-        # print("Target: ", data.y)
-        # print("output: ", output)
         loss = criterion(output, data.y)
-        # print("loss: ", loss)
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -120,7 +117,6 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         for data in validate_loader:
             data = data.to(device)
             output = model(data)
-            # output = convert_output(output, device)  # Ensure this function is suitable for validation context
             loss = criterion(output, data.y)
             total_loss += data.num_graphs * loss.item()
             total_graphs += data.num_graphs  # Accumulate the total number of graphs or samples processed
@@ -144,7 +140,7 @@ def predict_and_evaluate(model, loader, device):
             - actuals (list): The actual values after denormalization.
     """
     model.eval()
-    predictions, actuals, rmse_list, perc_completion_list = [], [], [], []
+    predictions, actuals, rmse_list, perc_completion_list, sigma_list = [], [], [], [], []
 
     with torch.no_grad():
         for data in loader:  # Each 'batch' is a DataBatch object containing multiple graphs batched together
@@ -156,21 +152,41 @@ def predict_and_evaluate(model, loader, device):
             predictions.append(predicted_coords.cpu().numpy())
             actuals.append(actual_coords.cpu().numpy())
 
-            # Save perc_completion for each graph
-            perc_completion_list.append(data.perc_completion.cpu().numpy())
+            # Save sigma and perc_completion for each graph
+            sigma_list.append(data.sigma.cpu().numpy())
+            if 'timestamps' in params['required_features']:
+                last_value = data.perc_completion_full[-1].cpu().numpy()
+                perc_completion_list.append(last_value)
 
-            mse = mean_squared_error(actual_coords.cpu().numpy(), predicted_coords.cpu().numpy())
-            rmse = math.sqrt(mse)
-            rmse_list.append(rmse)
+    # Flatten predictions and actuals if they are nested lists
+    predictions = np.concatenate(predictions)
+    actuals = np.concatenate(actuals)
 
-    predictions = np.concatenate([np.array(pred).flatten() for pred in predictions])
-    actuals = np.concatenate([np.array(act).flatten() for act in actuals])
-    rmse_list = np.concatenate([np.array(rmse).flatten() for rmse in rmse_list])
-    perc_completion_list = np.concatenate([np.array(perc).flatten() for perc in perc_completion_list])
+    # calculate metrics MSE, RMSE using predictions and actuals
+    mae = mean_absolute_error(actuals, predictions)
+    mse = mean_squared_error(actuals, predictions)
+    rmse = math.sqrt(mse)
+
+    sigma_list = np.concatenate([np.array(sigma).flatten() for sigma in sigma_list])
+    if 'timestamps' in params['required_features']:
+        perc_completion_list = np.concatenate([np.array(perc).flatten() for perc in perc_completion_list])
+
+    err_metrics = {
+        'actuals': actuals,
+        'predictions': predictions,
+        'perc_completion': perc_completion_list,
+        'sigma': sigma_list,
+        'mae': mae,
+        'mse': mse,
+        'rmse': rmse
+    }
 
     print("predictions: ", predictions)
     print("actuals: ", actuals)
     print("perc_completion_list: ", perc_completion_list)
+    print("sigma_list: ", sigma_list)
+    print(f'Mean Squared Error: {mse}')
+    print(f'Root Mean Squared Error: {rmse}')
 
     plt.figure(figsize=(10, 6))
     plt.scatter(actuals, predictions, alpha=0.5)
@@ -180,76 +196,7 @@ def predict_and_evaluate(model, loader, device):
     plt.ylabel('Predicted Values')
     plt.show()
 
-    # calculate metrics MSE, RMSE using predictions and actuals
-    mae = mean_absolute_error(actuals, predictions)
-    mse = mean_squared_error(actuals, predictions)
-    rmse = math.sqrt(mse)
-    print(f'Mean Squared Error: {mse}')
-    print(f'Root Mean Squared Error: {rmse}')
-
-    err_metrics = {
-        'actuals': actuals,
-        'predictions': predictions,
-        'perc_completion': perc_completion_list,
-        'mae': mae,
-        'mse': mse,
-        'rmse': rmse
-    }
-
-    return predictions, actuals, err_metrics, rmse_list
-
-
-def predict_and_evaluate_full(loader, model, device, original_dataset=None):
-    """
-    Extended evaluation function to gather all required details for plotting, including
-    fetching details using IDs from the data DataFrame.
-
-    Args:
-        loader: DataLoader providing the dataset for evaluation.
-        model: Trained model for evaluation.
-        device: Device to perform computations on.
-        original_dataset: Original DataFrame with additional information.
-
-    Returns:
-        Predictions, actuals, and node details including RSSI and other metrics.
-    """
-    model.eval()
-    predictions, actuals, node_details = [], [], []
-
-    with torch.no_grad():
-        for data_batch in loader:
-            data_batch = data_batch.to(device)
-            output = model(data_batch)
-
-            # Convert and uncenter using the provided conversion function
-            predicted_coords = convert_output_eval(output, data_batch, 'prediction', device)
-            actual_coords = convert_output_eval(data_batch.y, data_batch, 'target', device)
-
-            # Collect predictions and actuals
-            predictions.append(predicted_coords.cpu().numpy())
-            actuals.append(actual_coords.cpu().numpy())
-
-
-    # Flatten predictions and actuals if they are nested lists
-    predictions = np.concatenate(predictions)
-    actuals = np.concatenate(actuals)
-
-    # calculate metrics MSE, RMSE using predictions and actuals
-    mae = mean_absolute_error(actuals, predictions)
-    mse = mean_squared_error(actuals, predictions)
-    print(f'Mean Squared Error: {mse}')
-    rmse = math.sqrt(mse)
-    print(f'Root Mean Squared Error: {rmse}')
-
-    err_metrics = {
-        'actuals': actuals,
-        'predictions': predictions,
-        'mae': mae,
-        'mse': mse,
-        'rmse': rmse
-    }
-
-    return predictions, actuals, node_details, err_metrics
+    return predictions, actuals, err_metrics, perc_completion_list
 
 
 def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv') -> None:
