@@ -521,7 +521,7 @@ def split_datasets(data):
         The train, validation, and test datasets and their corresponding DataFrames.
     """
 
-    logging.info('Creating graphs...')
+    logging.info('Creating train_test splits...')
 
     # Stratified split using scikit-learn
     train_idx, test_idx, train_test_y, test_y = train_test_split(
@@ -757,9 +757,11 @@ def load_data(params, test_set_name, experiments_path=None):
 def random_crop(row, min_nodes=3):
     """
     Perform a random crop of node samples for one row.
+
     Args:
         row (pd.Series): A single row from a DataFrame.
-        min_nodes (int): Minimum number of nodes to keep, default is 3.
+        min_nodes (int): Minimum number of nodes to keep, default is 3, prob. need to increase.
+
     Returns:
         pd.Series: Modified row with cropped data.
     """
@@ -771,27 +773,32 @@ def random_crop(row, min_nodes=3):
 
     total_nodes = len(row['node_positions'])
 
-    if total_nodes > min_nodes:
-        # Fix the start index at 0
-        start = 0
-        # Randomize the end index, ensuring at least `min_nodes` nodes are kept
-        end = np.random.randint(min_nodes, total_nodes)
+    # Find the first index where noise > -55
+    noise_values = np.array(row['node_noise'])
+    jam_start_idx = np.argmax(noise_values > -55)
 
-        # Crop all the relevant features
-        for key in node_features:
-            if isinstance(row[key], list) or isinstance(row[key], np.ndarray):  # Ensure it's a list or ndarray
-                row[key] = row[key][start:end]
+    # Determine the valid range for the end index based on first encountered jammed node sample
+    end_limit = max(jam_start_idx + 1, min_nodes)  # Ensure we keep at least 'min_nodes' nodes
+    end = np.random.randint(end_limit, total_nodes + 1)  # Randomly choose the end index
+
+    # Crop all the relevant features
+    for key in node_features:
+        if isinstance(row[key], list) or isinstance(row[key], np.ndarray):  # Ensure it's a list or ndarray
+            row[key] = row[key][0:end]
 
     return row
 
 
 def incremental_node_addition(row):
     """
-    Generate incremental additions of node samples for one row.
+    Generate incremental additions of node samples for one row, starting at 0
+    and incrementing nodes only after the first node with noise > -55.
+
     Args:
         row (pd.Series): A single row from a DataFrame.
+
     Returns:
-        List[pd.Series]: List of new rows each incrementing node samples by one.
+        List[pd.Series]: List of new rows each incrementing node samples by one, starting from the first jammed sample.
     """
     if 'timestamps' in params['required_features']:
         node_features = params['required_features'] + ['perc_completion_full']
@@ -802,21 +809,31 @@ def incremental_node_addition(row):
     total_nodes = len(row['node_positions'])
     new_rows = []
 
+    # Find first index where noise > -55
+    noise_values = np.array(row['node_noise'])
+    jam_start_idx = np.argmax(noise_values > -55)
+
+    # Ensure we have at least min_nodes in the row
     if total_nodes >= min_nodes:
-        for i in range(min_nodes, total_nodes + 1):
+        # Include all nodes up to the first jammed sample
+        for i in range(jam_start_idx + 1, total_nodes + 1):
             new_row = row.copy()
             for key in node_features:
                 new_row[key] = row[key][:i]
             new_rows.append(new_row)
+
     return new_rows
 
 
 def batch_node_addition(row, granularity=25):
     """
-    Generate incremental additions of node samples for one row based on a percentage granularity.
+    Generate incremental additions of node samples for one row based on percentage granularity,
+    additions start from the first node with noise > -55.
+
     Args:
         row (pd.Series): A single row from a DataFrame.
         granularity (int): Percentage of total nodes to increment at each step.
+
     Returns:
         List[pd.Series]: List of new rows, each incrementing node samples by the specified percentage.
     """
@@ -825,20 +842,30 @@ def batch_node_addition(row, granularity=25):
     else:
         node_features = params['required_features']
 
-    min_nodes = max(3, int(len(row['node_positions']) * (granularity / 100)))  # Ensuring at least 3 nodes
+    # Determine total number of nodes and the index of the first jammed node
     total_nodes = len(row['node_positions'])
+    noise_values = np.array(row['node_noise'])
+    jam_start_idx = np.argmax(noise_values > -55)
+
+    # Ensure at least 3 nodes are included and calculate minimum nodes to start with
+    min_nodes = max(3, jam_start_idx + 1)
     new_rows = []
 
     if total_nodes >= min_nodes:
-        step_size = max(1, int(total_nodes * (granularity / 100)))  # Calculate step size as a percentage of total nodes
-        steps = range(min_nodes, total_nodes + 1, step_size)  # Create steps from min_nodes to total_nodes with step_size
+        # Calculate step size based on the granularity percentage
+        step_size = max(1, int(total_nodes * (granularity / 100)))
+
+        # Create steps starting from the first jammed node to the total number of nodes
+        steps = range(jam_start_idx + 1, total_nodes + 1, step_size)
+
+        # Include all nodes up to the first jammed node in every incremental addition
         for i in steps:
             new_row = row.copy()
             for key in node_features:
                 new_row[key] = row[key][:i]
             new_rows.append(new_row)
 
-        # Make sure to include the full node set if the last step isn't exactly total_nodes
+        # Ensure the final step includes the full set of nodes if not already included
         if steps[-1] != total_nodes:
             new_row = row.copy()
             for key in node_features:
