@@ -404,7 +404,6 @@ def preprocess_data(data, params):
    Returns:
        pd.DataFrame: The preprocessed data with transformed features.
    """
-    logging.info("Preprocessing data...")
     # Conversion from string to list type
     center_coordinates(data)
     standardize_data(data)
@@ -732,6 +731,7 @@ def load_data(params, test_set_name, experiments_path=None):
 
             # Apply random_crop to training and test datasets
             if params['dynamic']:
+                logging.info('Apply instance transformations')
                 train_df = apply_processing(train_df, 'train')
                 val_df = apply_processing(val_df, 'val')
                 test_df = apply_processing(test_df, 'test')
