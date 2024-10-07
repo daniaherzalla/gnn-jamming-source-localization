@@ -39,10 +39,31 @@ def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, flo
         writer.writerow(result)
 
 
+# def save_epochs(epoch_data, folder_path) -> None:
+#     filename = "epoch_metrics.csv"
+#     file = folder_path + filename
+#     file_exists = os.path.isfile(file)
+#
+#     # Open the CSV file in append mode
+#     with open(file, 'a', newline='') as csvfile:
+#         writer = csv.DictWriter(csvfile, fieldnames=epoch_data.keys())
+#
+#         # Write the header only if the file didn't exist before
+#         if not file_exists:
+#             writer.writeheader()
+#
+#         # Write the data
+#         writer.writerow(epoch_data)
+
 def save_epochs(epoch_data, folder_path) -> None:
     filename = "epoch_metrics.csv"
-    file = folder_path + filename
+    file = os.path.join(folder_path, filename)
     file_exists = os.path.isfile(file)
+
+    # Ensure all lists in epoch_data are converted to a JSON string
+    for key, value in epoch_data.items():
+        if isinstance(value, list):
+            epoch_data[key] = json.dumps(value)
 
     # Open the CSV file in append mode
     with open(file, 'a', newline='') as csvfile:
@@ -58,6 +79,11 @@ def save_epochs(epoch_data, folder_path) -> None:
 
 def save_study_data(trial_data, file) -> None:
     file_exists = os.path.isfile(file)
+
+    # Serialize any lists in the trial_data to JSON strings
+    for key, value in trial_data.items():
+        if isinstance(value, list):  # Check if the value is a list
+            trial_data[key] = json.dumps(value)  # Convert list to JSON string
 
     # Open the CSV file in append mode
     with open(file, 'a', newline='') as csvfile:
