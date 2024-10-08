@@ -66,9 +66,10 @@ class Instance:
 
 
 class TemporalGraphDataset(Dataset):
-    def __init__(self, data, test=False):
+    def __init__(self, data, test=False, dynamic=True):
         self.data = data
         self.test = test  # for test set
+        self.dynamic = dynamic
         self.samples = [Instance(row) for _, row in data.iterrows()]
 
     def __len__(self):
@@ -76,21 +77,26 @@ class TemporalGraphDataset(Dataset):
 
     def __getitem__(self, idx, start=0):
         instance = self.samples[idx]
-        if self.test:
-            # return instance for testing without cropping
-            downsampled_instance = downsample_data(instance)
-            graph = create_torch_geo_data(downsampled_instance)
-            graph = engineer_node_features(graph)
-            return graph
 
         # Handle test cases first
+        if self.test:
+            if self.dynamic:
+                return instance
+            else:
+                downsampled_instance = downsample_data(instance)
+                calculate_perc_completion_instance(downsampled_instance)
+                graph = create_torch_geo_data(downsampled_instance)
+                graph = engineer_node_features(graph)
+                return graph
+
         # if self.test:
-        #     if self.dynamic:
-        #         return instance
-        #     else:
-        #         graph = create_torch_geo_data(instance)
-        #         graph = engineer_node_features(graph)
-        #         return graph
+        #     # return instance for testing without cropping
+        #     downsampled_instance = downsample_data(instance)
+        #     calculate_perc_completion_instance(downsampled_instance)
+        #     graph = create_torch_geo_data(downsampled_instance)
+        #     graph = engineer_node_features(graph)
+        #     return graph
+
 
         # End index defaults to jammed_at if not NaN, otherwise, the length of node_positions
         end = instance.jammed_at if not np.isnan(instance.jammed_at) else len(instance.node_positions)
@@ -100,6 +106,9 @@ class TemporalGraphDataset(Dataset):
 
         # Downsample the cropped instance if not using the test dataset
         downsampled_instance = downsample_data(cropped_instance)
+
+        # Calculate normalized time on cropped instance
+        calculate_perc_completion_instance(downsampled_instance)
 
         # Create PyTorch Geometric data
         graph = create_torch_geo_data(downsampled_instance)
@@ -721,6 +730,32 @@ def calculate_perc_completion(data):
     data['perc_completion_full'] = perc_completion_list
     return data
 
+def calculate_perc_completion_instance(instance):
+    """
+    Calculate the percentage completion based on the timestamps attribute of an Instance object.
+
+    Args:
+        instance (Instance): The instance object containing the timestamps attribute.
+
+    Returns:
+        numpy.ndarray: Array of percentage completions for the timestamps.
+    """
+    timestamps = instance.timestamps
+    if timestamps.size == 0:
+        return np.array([])  # Return an empty array if no timestamps
+
+    min_time = np.min(timestamps)
+    max_time = np.max(timestamps)
+    if max_time != min_time:
+        perc_completion = (timestamps - min_time) / (max_time - min_time)
+    else:
+        perc_completion = np.zeros_like(timestamps)  # Avoid division by zero if all timestamps are the same
+
+    instance.perc_completion_crop = perc_completion
+
+    return instance
+
+
 
 def downsample_data(instance):
     """
@@ -816,7 +851,6 @@ def load_data(params, test_set_name, experiments_path=None):
                 test_df = apply_processing(test_df, 'test')
                 test_df = test_df.reset_index()
 
-            print("TEST")
             test_dataset = preprocess_data(test_df, params)
             print(test_dataset.columns)
 
@@ -1199,8 +1233,11 @@ def create_torch_geo_data(instance: Instance) -> Data:
         instance.node_noise[:, None],  # Ensure node_noise is reshaped to (n, 1)
         np.sin(instance.angle_of_arrival[:, None]),
         np.cos(instance.angle_of_arrival[:, None]),
-        instance.perc_completion_full[:, None]
+        instance.perc_completion_crop[:, None]
     ], axis=1)
+
+    # instance.perc_completion_full[:, None]
+
 
     # Convert to tensor, ensure it's 2D
     node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
