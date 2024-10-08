@@ -77,26 +77,13 @@ class TemporalGraphDataset(Dataset):
 
     def __getitem__(self, idx, start=0):
         instance = self.samples[idx]
-
-        # Handle test cases first
         if self.test:
-            if self.dynamic:
-                return instance
-            else:
-                downsampled_instance = downsample_data(instance)
-                calculate_perc_completion_instance(downsampled_instance)
-                graph = create_torch_geo_data(downsampled_instance)
+            if not self.dynamic:
+                graph = create_torch_geo_data(instance)
                 graph = engineer_node_features(graph)
                 return graph
-
-        # if self.test:
-        #     # return instance for testing without cropping
-        #     downsampled_instance = downsample_data(instance)
-        #     calculate_perc_completion_instance(downsampled_instance)
-        #     graph = create_torch_geo_data(downsampled_instance)
-        #     graph = engineer_node_features(graph)
-        #     return graph
-
+            elif self.test and self.dynamic:
+                raise ValueError("Iterate over dataset instances for dynamic.")
 
         # End index defaults to jammed_at if not NaN, otherwise, the length of node_positions
         end = instance.jammed_at if not np.isnan(instance.jammed_at) else len(instance.node_positions)
@@ -104,14 +91,8 @@ class TemporalGraphDataset(Dataset):
         # Get the cropped instance using start and end
         cropped_instance = instance.get_crop(start, end)
 
-        # Downsample the cropped instance if not using the test dataset
-        downsampled_instance = downsample_data(cropped_instance)
-
-        # Calculate normalized time on cropped instance
-        calculate_perc_completion_instance(downsampled_instance)
-
-        # Create PyTorch Geometric data
-        graph = create_torch_geo_data(downsampled_instance)
+        # Additional logic can go here: for example, creating PyTorch Geometric data
+        graph = create_torch_geo_data(cropped_instance)
         graph = engineer_node_features(graph)
 
         return graph
@@ -448,6 +429,7 @@ def add_clustering_coefficients(graphs):
 
     return all_graphs_clustering_coeffs
 
+
 def dynamic_moving_average(x, max_window_size=10):
     num_nodes = x.size(0)
     window_sizes = torch.clamp(num_nodes - torch.arange(num_nodes), min=1, max=max_window_size)
@@ -574,7 +556,6 @@ def polar_to_cartesian(data):
     return cartesian_coords
 
 
-
 # Original!
 def convert_output_eval(output, data_batch, data_type, device):
     """
@@ -611,7 +592,6 @@ def convert_output_eval(output, data_batch, data_type, device):
 
     # return torch.tensor(converted_output, device=device)
     return converted_output.clone().detach().to(device)
-
 
 
 def convert_output(output, device):  # for training to compute val loss
@@ -675,7 +655,6 @@ def split_datasets(data):
     return train_df, val_df, test_df
 
 
-
 def save_datasets(combined_train_df, combined_val_df, combined_test_df, experiments_path):
     """
     Process the combined train, validation, and test data, and save them to disk.
@@ -729,32 +708,6 @@ def calculate_perc_completion(data):
     # Add the new column to the dataframe
     data['perc_completion_full'] = perc_completion_list
     return data
-
-def calculate_perc_completion_instance(instance):
-    """
-    Calculate the percentage completion based on the timestamps attribute of an Instance object.
-
-    Args:
-        instance (Instance): The instance object containing the timestamps attribute.
-
-    Returns:
-        numpy.ndarray: Array of percentage completions for the timestamps.
-    """
-    timestamps = instance.timestamps
-    if timestamps.size == 0:
-        return np.array([])  # Return an empty array if no timestamps
-
-    min_time = np.min(timestamps)
-    max_time = np.max(timestamps)
-    if max_time != min_time:
-        perc_completion = (timestamps - min_time) / (max_time - min_time)
-    else:
-        perc_completion = np.zeros_like(timestamps)  # Avoid division by zero if all timestamps are the same
-
-    instance.perc_completion_crop = perc_completion
-
-    return instance
-
 
 
 def downsample_data(instance):
@@ -821,6 +774,26 @@ def add_jammed_column(data, threshold=-55):
     return data
 
 
+def add_jammed_column(data, threshold=-55):
+    data['jammed_at'] = None
+    for i, noise_list in enumerate(data['node_noise']):
+        # Check if noise_list is a valid non-empty list
+        if not isinstance(noise_list, list) or len(noise_list) == 0:
+            raise ValueError(f"Invalid or empty node_noise list at row {i}")
+
+        count = 0
+        for idx, noise in enumerate(noise_list):
+            count = count + 1 if noise > threshold else 0
+            if count == 3:
+                data.at[i, 'jammed_at'] = idx
+                break
+
+        # Optionally log if no "jammed" condition was met for a row
+        if pd.isna(data.at[i, 'jammed_at']):
+            raise ValueError(f"No jammed position found for row {i}")
+
+    return data
+
 
 def load_data(params, test_set_name, experiments_path=None):
     """
@@ -851,6 +824,7 @@ def load_data(params, test_set_name, experiments_path=None):
                 test_df = apply_processing(test_df, 'test')
                 test_df = test_df.reset_index()
 
+            print("TEST")
             test_dataset = preprocess_data(test_df, params)
             print(test_dataset.columns)
 
@@ -1029,6 +1003,7 @@ def apply_processing(df, mode):
     # Convert list of pd.Series to DataFrame
     return pd.DataFrame(processed_rows)
 
+
 def process_row(row, mode):
     """
     Process a single row based on the specified mode.
@@ -1041,7 +1016,7 @@ def process_row(row, mode):
         return incremental_node_addition(row)
 
 
-def create_data_loader(train_data, val_data, test_data, batch_size):
+def create_data_loader(train_data, val_data, test_data, batch_size, test_batch_size):
     """
     Create data loaders using the TemporalGraphDataset instances for training, validation, and testing sets.
     Args:
@@ -1057,7 +1032,7 @@ def create_data_loader(train_data, val_data, test_data, batch_size):
         test_dataset = TemporalGraphDataset(test_data)
 
         # Create DataLoaders for each dataset
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=16)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
         return None, None, test_loader
     else:
@@ -1067,9 +1042,9 @@ def create_data_loader(train_data, val_data, test_data, batch_size):
         test_dataset = TemporalGraphDataset(test_data, test=True)
 
         # Create DataLoaders for each dataset
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=True, num_workers=16)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=16)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=16)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=True, num_workers=0)
+        val_loader = DataLoader(val_dataset, batch_size=test_batch_size, shuffle=False, num_workers=0)
+        test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=0)
 
         return train_loader, val_loader, test_loader
 
@@ -1187,7 +1162,6 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_p
     plt.show()
 
 
-
 def ensure_complementary_features(params):
     """
     Ensure that if either sin_azimuth or cos_azimuth is included, then both are included.
@@ -1199,7 +1173,7 @@ def ensure_complementary_features(params):
         list: Updated list of features including both sin_azimuth and cos_azimuth if either is present.
     """
     required_features = params['required_features']
-    additional_features = [] #params['additional_features']
+    additional_features = []  # params['additional_features']
 
     if isinstance(additional_features, tuple):
         additional_features = list(additional_features)
@@ -1212,6 +1186,27 @@ def ensure_complementary_features(params):
     return all_features
 
 
+def calculate_perc_completion_instance(instance):
+    """
+    Calculate the percentage completion based on the timestamps attribute of an Instance object.
+    Args:
+        instance (Instance): The instance object containing the timestamps attribute.
+    Returns:
+        numpy.ndarray: Array of percentage completions for the timestamps.
+    """
+    timestamps = instance.timestamps
+    if timestamps.size == 0:
+        return np.array([])  # Return an empty array if no timestamps
+    min_time = np.min(timestamps)
+    max_time = np.max(timestamps)
+    if max_time != min_time:
+        perc_completion = (timestamps - min_time) / (max_time - min_time)
+    else:
+        perc_completion = np.zeros_like(timestamps)  # Avoid division by zero if all timestamps are the same
+    instance.perc_completion_crop = perc_completion
+    return instance
+
+
 def create_torch_geo_data(instance: Instance) -> Data:
     """
     Create a PyTorch Geometric Data object from a row of the dataset.
@@ -1222,12 +1217,21 @@ def create_torch_geo_data(instance: Instance) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
+    # Select and combine features
+    # all_features = ensure_complementary_features(params) #params['required_features'] + params['additional_features']
+    # all_features = params['required_features'].copy()
+
+    instance = downsample_data(instance)
+
+    # Calculate normalized time on cropped instance
+    calculate_perc_completion_instance(instance)
+
     # Preprocess instance data
     center_coordinates_instance(instance)
     if params['norm'] == 'minmax':
         apply_min_max_normalization_instance(instance)
 
-    # Create node features
+    # Create node features without adding an extra list around the numpy array
     node_features = np.concatenate([
         instance.node_positions,
         instance.node_noise[:, None],  # Ensure node_noise is reshaped to (n, 1)
@@ -1237,7 +1241,6 @@ def create_torch_geo_data(instance: Instance) -> Data:
     ], axis=1)
 
     # instance.perc_completion_full[:, None]
-
 
     # Convert to tensor, ensure it's 2D
     node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
@@ -1274,7 +1277,7 @@ def create_torch_geo_data(instance: Instance) -> Data:
     data = Data(x=node_features_tensor, edge_index=edge_index, edge_attr=edge_weight, y=y)
 
     # Convert geometric information to tensors
-    data.id = instance.id # Assign the id from the row to the Data object
+    data.id = instance.id  # Assign the id from the row to the Data object
     data.node_positions_center = torch.tensor(instance.node_positions_center, dtype=torch.float)
     data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
     if params['norm'] == 'minmax':
