@@ -18,9 +18,6 @@ from data_processing import convert_output, convert_output_eval, preprocess_data
 
 from config import params
 
-# if params['reproduce']:
-#     set_seeds_and_reproducibility()
-
 setup_logging()
 
 
@@ -132,7 +129,6 @@ def predict_and_evaluate(model, loader, device):
         model (torch.nn.Module): The trained model to evaluate.
         loader (torch.utils.data.DataLoader): The data loader providing the dataset for evaluation.
         device (torch.device): The device to perform the computations on (e.g., 'cpu' or 'cuda').
-        scaler (object): The scaler used to normalize the data, with an inverse_transform method to denormalize it.
 
     Returns:
         tuple: A tuple containing two lists:
