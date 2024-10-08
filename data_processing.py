@@ -78,9 +78,19 @@ class TemporalGraphDataset(Dataset):
         instance = self.samples[idx]
         if self.test:
             # return instance for testing without cropping
-            graph = create_torch_geo_data(instance)
+            downsampled_instance = downsample_data(instance)
+            graph = create_torch_geo_data(downsampled_instance)
             graph = engineer_node_features(graph)
             return graph
+
+        # Handle test cases first
+        # if self.test:
+        #     if self.dynamic:
+        #         return instance
+        #     else:
+        #         graph = create_torch_geo_data(instance)
+        #         graph = engineer_node_features(graph)
+        #         return graph
 
         # End index defaults to jammed_at if not NaN, otherwise, the length of node_positions
         end = instance.jammed_at if not np.isnan(instance.jammed_at) else len(instance.node_positions)
@@ -88,8 +98,11 @@ class TemporalGraphDataset(Dataset):
         # Get the cropped instance using start and end
         cropped_instance = instance.get_crop(start, end)
 
-        # Additional logic can go here: for example, creating PyTorch Geometric data
-        graph = create_torch_geo_data(cropped_instance)
+        # Downsample the cropped instance if not using the test dataset
+        downsampled_instance = downsample_data(cropped_instance)
+
+        # Create PyTorch Geometric data
+        graph = create_torch_geo_data(downsampled_instance)
         graph = engineer_node_features(graph)
 
         return graph
@@ -709,68 +722,47 @@ def calculate_perc_completion(data):
     return data
 
 
-def downsample_data(data):
+def downsample_data(instance):
     """
-    Apply downsampling using time window averaging to reduce the number of nodes to a fixed `max_nodes`.
+    Downsamples the data of an instance object based on a fixed number of maximum nodes.
 
     Args:
-        data (pd.DataFrame): The input data containing columns to be downsampled.
-        max_nodes (int): The desired number of nodes to retain after downsampling.
-
-    Returns:
-        pd.DataFrame: The downsampled dataset with the specified number of nodes.
+        instance (Instance): The instance to downsample.
     """
     max_nodes = params['max_nodes']
-    logging.info(f"Downsampling to {max_nodes} nodes...")
+    num_original_nodes = len(instance.node_positions)
 
-    for idx, row in data.iterrows():
-        # Convert timestamps to numpy array
-        timestamps = np.array(row['timestamps'])
-        num_original_nodes = len(timestamps)
+    if num_original_nodes <= max_nodes:
+        return instance  # No downsampling needed
 
-        # Calculate the window size to downsample to max_nodes
-        if num_original_nodes <= max_nodes:
-            # If the number of original nodes is already less than or equal to max_nodes, skip downsampling
-            continue
+    window_size = num_original_nodes // max_nodes
+    num_windows = max_nodes
 
-        window_size = num_original_nodes // max_nodes
+    # Create downsampled attributes
+    downsampled_timestamps = []
+    downsampled_perc_completion_full = []
+    downsampled_positions = []
+    downsampled_noise_values = []
+    downsampled_angles = []
 
-        # Calculate the number of windows based on the calculated window size
-        num_windows = max_nodes
-        downsampled_timestamps = []
-        downsampled_positions = []
-        downsampled_noise_values = []
-        downsampled_angles = []
+    for i in range(num_windows):
+        start_idx = i * window_size
+        end_idx = start_idx + window_size
 
-        for i in range(num_windows):
-            # Define the window range
-            start_idx = i * window_size
-            end_idx = start_idx + window_size
+        downsampled_timestamps.append(np.mean(instance.timestamps[start_idx:end_idx]))
+        downsampled_perc_completion_full.append(np.mean(instance.perc_completion_full[start_idx:end_idx]))
+        downsampled_positions.append(np.mean(instance.node_positions[start_idx:end_idx], axis=0))
+        downsampled_noise_values.append(np.mean(instance.node_noise[start_idx:end_idx]))
+        downsampled_angles.append(np.mean(instance.angle_of_arrival[start_idx:end_idx]))
 
-            # Average values within the window
-            window_timestamps = timestamps[start_idx:end_idx]
-            downsampled_timestamps.append(np.mean(window_timestamps))
+    # Update instance with downsampled data
+    instance.timestamps = np.array(downsampled_timestamps)
+    instance.perc_completion_full = np.array(downsampled_perc_completion_full)
+    instance.node_positions = np.array(downsampled_positions)
+    instance.node_noise = np.array(downsampled_noise_values)
+    instance.angle_of_arrival = np.array(downsampled_angles)
 
-            # For node positions, calculate the mean of x, y coordinates
-            node_positions = np.array(row['node_positions'][start_idx:end_idx])
-            downsampled_positions.append(np.mean(node_positions, axis=0).tolist())
-
-            # For noise values and angles, calculate the mean
-            noise_values = np.array(row['node_noise'][start_idx:end_idx])
-            downsampled_noise_values.append(np.mean(noise_values))
-
-            if 'angle_of_arrival' in params['required_features']:
-                angles = np.array(row['angle_of_arrival'][start_idx:end_idx])
-                downsampled_angles.append(np.mean(angles))
-
-        # Replace the original data with downsampled data
-        data.at[idx, 'timestamps'] = downsampled_timestamps
-        data.at[idx, 'node_positions'] = downsampled_positions
-        data.at[idx, 'node_noise'] = downsampled_noise_values
-        if 'angle_of_arrival' in params['required_features']:
-            data.at[idx, 'angle_of_arrival'] = downsampled_angles
-
-    return data
+    return instance
 
 
 def add_jammed_column(data, threshold=-55):
@@ -1031,7 +1023,7 @@ def create_data_loader(train_data, val_data, test_data, batch_size):
         test_dataset = TemporalGraphDataset(test_data)
 
         # Create DataLoaders for each dataset
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=16)
 
         return None, None, test_loader
     else:
@@ -1041,9 +1033,9 @@ def create_data_loader(train_data, val_data, test_data, batch_size):
         test_dataset = TemporalGraphDataset(test_data, test=True)
 
         # Create DataLoaders for each dataset
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=True, num_workers=8)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=True, num_workers=16)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=16)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=16)
 
         return train_loader, val_loader, test_loader
 
@@ -1196,22 +1188,18 @@ def create_torch_geo_data(instance: Instance) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
-    # Select and combine features
-    # all_features = ensure_complementary_features(params) #params['required_features'] + params['additional_features']
-    # all_features = params['required_features'].copy()
-
     # Preprocess instance data
     center_coordinates_instance(instance)
     if params['norm'] == 'minmax':
         apply_min_max_normalization_instance(instance)
 
-    # Create node features without adding an extra list around the numpy array
+    # Create node features
     node_features = np.concatenate([
         instance.node_positions,
         instance.node_noise[:, None],  # Ensure node_noise is reshaped to (n, 1)
         np.sin(instance.angle_of_arrival[:, None]),
         np.cos(instance.angle_of_arrival[:, None]),
-        instance.perc_completion_full[:, None]  # TODO: think about timestamps if added before or after crop
+        instance.perc_completion_full[:, None]
     ], axis=1)
 
     # Convert to tensor, ensure it's 2D
