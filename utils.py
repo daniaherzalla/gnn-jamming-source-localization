@@ -10,6 +10,25 @@ import torch
 from config import params
 
 
+class AverageMeter:
+
+    def __init__(self):
+        self.val, self.avg, self.sum, self.count = None, None, None, None
+        self.reset()
+
+    def reset(self):
+        self.val: float = 0
+        self.avg: float = 0
+        self.sum: float = 0
+        self.count: int = 0
+
+    def update(self, val: float, n: int = 1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
 def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, float], filename: str = 'results/model_metrics_and_params_converted.csv') -> None:
     """
     Save metrics and parameters to a JSON file.
@@ -138,7 +157,7 @@ def cartesian_to_polar(coords):
 
     if params['3d']:
         for x, y, z in coords:
-            r = np.sqrt(x**2 + y**2 + z**2)
+            r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
             phi = np.arccos(z / r) if r != 0 else 0  # Polar angle from the positive z-axis (colatitude)
             theta = np.arctan2(y, x)  # Azimuthal angle in the xy-plane from the positive x-axis
             polar_coords.append([r, theta, phi])
@@ -164,4 +183,3 @@ def cartesian_to_polar(coords):
     # quit()
 
     return polar_coords
-

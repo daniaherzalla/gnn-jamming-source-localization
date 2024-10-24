@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+import random
 import torch
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -18,6 +19,7 @@ from config import params
 
 from torch_geometric.utils import to_networkx
 
+
 setup_logging()
 
 
@@ -25,74 +27,155 @@ class Instance:
     def __init__(self, row):
         # Initialize attributes from the pandas row and convert appropriate fields to numpy arrays only if not already arrays
         self.num_samples = row['num_samples']
-        self.timestamps = row['timestamps'] if isinstance(row['timestamps'], np.ndarray) else np.array(row['timestamps'])
         self.node_positions = row['node_positions'] if isinstance(row['node_positions'], np.ndarray) else np.array(row['node_positions'])
         self.node_noise = row['node_noise'] if isinstance(row['node_noise'], np.ndarray) else np.array(row['node_noise'])
-        self.angle_of_arrival = row['angle_of_arrival'] if isinstance(row['angle_of_arrival'], np.ndarray) else np.array(row['angle_of_arrival'])
-        self.speed = row['speed']
         self.pl_exp = row['pl_exp']
         self.sigma = row['sigma']
-        self.alignment_coefficient = row['alignment_coefficient']
-        self.sampling_frequency = row['sampling_frequency']
         self.jammer_power = row['jammer_power']
         self.jammer_position = row['jammer_position'] if isinstance(row['jammer_position'], np.ndarray) else np.array(row['jammer_position'])
         self.jammer_gain = row['jammer_gain']
         self.id = row['id']
         self.dataset = row['dataset']
-        self.perc_completion_full = row['perc_completion_full'] if isinstance(row['perc_completion_full'], np.ndarray) else np.array(row['perc_completion_full'])
         self.jammed_at = row['jammed_at']
+        if 'angle_of_arrival' in params['required_features']:
+            self.angle_of_arrival = row['angle_of_arrival'] if isinstance(row['angle_of_arrival'], np.ndarray) else np.array(row['angle_of_arrival'])
 
     def get_crop(self, start, end):
-        cropped_instance = Instance({
-            'num_samples': end - start,
-            'timestamps': self.timestamps[start:end],
-            'node_positions': self.node_positions[start:end],
-            'node_noise': self.node_noise[start:end],
-            'angle_of_arrival': self.angle_of_arrival[start:end],
-            'speed': self.speed,
-            'pl_exp': self.pl_exp,
-            'sigma': self.sigma,
-            'alignment_coefficient': self.alignment_coefficient,
-            'sampling_frequency': self.sampling_frequency,
-            'jammer_power': self.jammer_power,
-            'jammer_position': self.jammer_position,
-            'jammer_gain': self.jammer_gain,
-            'id': self.id,
-            'dataset': self.dataset,
-            'perc_completion_full': self.perc_completion_full[start:end],
-            'jammed_at': self.jammed_at  # Jammed index remains the same, can adjust logic if needed
-        })
+        if 'angle_of_arrival' in params['required_features']:
+            cropped_instance = Instance({
+                'num_samples': end - start,
+                'node_positions': self.node_positions[start:end],
+                'node_noise': self.node_noise[start:end],
+                'angle_of_arrival': self.angle_of_arrival[start:end],
+                'pl_exp': self.pl_exp,
+                'sigma': self.sigma,
+                'jammer_power': self.jammer_power,
+                'jammer_position': self.jammer_position,
+                'jammer_gain': self.jammer_gain,
+                'id': self.id,
+                'dataset': self.dataset,
+                'jammed_at': self.jammed_at  # Jammed index remains the same, can adjust logic if needed
+            })
+        else:
+            cropped_instance = Instance({
+                'num_samples': end - start,
+                'node_positions': self.node_positions[start:end],
+                'node_noise': self.node_noise[start:end],
+                'pl_exp': self.pl_exp,
+                'sigma': self.sigma,
+                'jammer_power': self.jammer_power,
+                'jammer_position': self.jammer_position,
+                'jammer_gain': self.jammer_gain,
+                'id': self.id,
+                'dataset': self.dataset,
+                'jammed_at': self.jammed_at  # Jammed index remains the same, can adjust logic if needed
+            })
         return cropped_instance
+
+    def apply_flip(self):
+        # Generate two independent random numbers
+        r1, r2 = random.random(), random.random()
+        # Apply horizontal flip if r1 is less than 0.5
+        if r1 < 0.5:
+            self.node_positions[:, 1] = -self.node_positions[:, 1]
+            self.jammer_position[1] = -self.jammer_position[1]
+        # Apply vertical flip if r2 is less than 0.5
+        if r2 < 0.5:
+            self.node_positions[:, 0] = -self.node_positions[:, 0]
+            self.jammer_position[0] = -self.jammer_position[0]
+
+    def apply_rotation(self, degrees):
+        # Mapping degrees to numpy rotation functions
+        if degrees == 90:
+            self.node_positions = np.dot(self.node_positions, np.array([[0, 1], [-1, 0]]))
+            self.jammer_position = np.dot(self.jammer_position, np.array([[0, 1], [-1, 0]]))
+        elif degrees == 180:
+            self.node_positions = -self.node_positions
+            self.jammer_position = -self.jammer_position
+        elif degrees == 270:
+            self.node_positions = np.dot(self.node_positions, np.array([[0, -1], [1, 0]]))
+            self.jammer_position = np.dot(self.jammer_position, np.array([[0, -1], [1, 0]]))
 
 
 class TemporalGraphDataset(Dataset):
-    def __init__(self, data, test=False, dynamic=True):
+    def __init__(self, data, test=False, dynamic=True, discretization_coeff=0.25):
         self.data = data
         self.test = test  # for test set
         self.dynamic = dynamic
-        self.samples = [Instance(row) for _, row in data.iterrows()]
+        self.discretization_coeff = discretization_coeff
+
+        if self.test:
+            # Precompute the graphs during dataset initialization for the test set
+            self.samples = self.expand_samples()
+            self.precomputed_graphs = [self.precompute_graph(instance) for instance in self.samples]
+
+            # TODO: buffer this into a pickle saving within data['discritization_coeff']/data['dataset'], etc.
+            ## Check if this is saved already, if not then compute
+        #     get hash from data loader and then check if same just fecth saved data else save data
+        else:
+            self.samples = [Instance(row) for _, row in data.iterrows()]
+
+    def expand_samples(self):
+        expanded_samples = []
+        for _, row in self.data.iterrows():
+            lb_end = max(int(row['jammed_at']), min(params['max_nodes'], len(row['node_positions'])))
+            ub_end = len(row['node_positions'])
+            # lb_end = int((ub_end - lb_end) / 2)
+
+            # Define step size
+            if self.discretization_coeff == -1:
+                step_size = 1
+            elif isinstance(self.discretization_coeff, float):
+                step_size = max(1, int(self.discretization_coeff * (ub_end - lb_end)))
+            else:
+                raise ValueError("Invalid discretization coefficient type")
+
+            # Generate instances for various end points with the step size
+            for i in range(lb_end, ub_end + 1, step_size):
+                instance = Instance(row).get_crop(0, i)
+                instance.perc_completion = i/ub_end
+                expanded_samples.append(instance)
+        print("len expanded samples: ", len(expanded_samples))
+        return expanded_samples
+
+    def precompute_graph(self, instance):
+        # Create the graph once and engineer the node features
+        graph = create_torch_geo_data(instance)
+        graph = engineer_node_features(graph)
+        return graph
 
     def __len__(self):
         return len(self.samples)
 
-    def __getitem__(self, idx, start=0):
-        instance = self.samples[idx]
+    def __getitem__(self, idx, start_crop=0):
         if self.test:
-            if not self.dynamic:
-                graph = create_torch_geo_data(instance)
-                graph = engineer_node_features(graph)
-                return graph
-            elif self.test and self.dynamic:
-                raise ValueError("Iterate over dataset instances for dynamic.")
+            # Return the precomputed graph for test set
+            return self.precomputed_graphs[idx]
 
-        # End index defaults to jammed_at if not NaN, otherwise, the length of node_positions
-        end = instance.jammed_at if not np.isnan(instance.jammed_at) else len(instance.node_positions)
+        # For non-test set, perform random cropping
+        instance = self.samples[idx]
 
-        # Get the cropped instance using start and end
-        cropped_instance = instance.get_crop(start, end)
+        # Check if jammed_at is not NaN and set the lower bound for random selection
+        if np.isnan(instance.jammed_at):
+            raise ValueError("No jammed instance")
+        lb_end = int(instance.jammed_at) if not np.isnan(instance.jammed_at) else len(instance.node_positions)
+        ub_end = len(instance.node_positions)  # The upper bound is always the length of node_positions
+        end = random.randint(lb_end, ub_end)
 
-        # Additional logic can go here: for example, creating PyTorch Geometric data
-        graph = create_torch_geo_data(cropped_instance)
+        if 'crop' in params['aug']:
+            instance = instance.get_crop(start_crop, end)
+
+        # Apply flipping
+        if 'flip' in params['aug']:
+            instance.apply_flip()
+
+        if 'rot' in params['aug']:
+            instance.apply_rotation(random.choice([0, 90, 180, 270]))  # Choose randomly among 0, 90, 180, or 270 degrees
+
+        instance.perc_completion = end / ub_end
+
+        # Create and engineer the graph on the fly for training
+        graph = create_torch_geo_data(instance)
         graph = engineer_node_features(graph)
 
         return graph
@@ -162,30 +245,6 @@ def mean_centering(coords):
     return centered_coords, center
 
 
-def center_coordinates(data):
-    """Center and convert drone and jammer positions using shared bounds for each row, and save midpoints."""
-    logging.info("Centering coordinates")
-
-    # Initialize columns for storing min and max coordinates
-    data['node_positions_center'] = None
-
-    for idx, row in data.iterrows():
-        # Center coordinates using the calculated mean
-        node_positions = np.vstack(row['node_positions'])
-        centered_node_positions, center = mean_centering(node_positions)
-
-        # Convert to list and check structure
-        data.at[idx, 'node_positions'] = centered_node_positions.tolist()
-
-        # Similar centering for jammer position
-        jammer_pos = np.array(row['jammer_position'])
-        centered_jammer_position = jammer_pos - center
-        data.at[idx, 'jammer_position'] = centered_jammer_position.tolist()
-
-        # Save center for this row index
-        data.at[idx, 'node_positions_center'] = center
-
-
 def center_coordinates_instance(instance):
     """Center and convert drone and jammer positions using shared bounds for a single instance."""
     # logging.info("Centering coordinates for instance")
@@ -202,69 +261,16 @@ def center_coordinates_instance(instance):
     return center
 
 
-def standardize_data(data):
-    """Apply z-score or min-max normalization based on the feature type."""
-    if params['norm'] == 'minmax':
-        apply_min_max_normalization(data)  # For RSSI and coordinates
-    elif params['norm'] == 'unit_sphere':
-        apply_min_max_normalization(data)  # For RSSI
-        apply_unit_sphere_normalization(data)  # For coordinates
-
-
-def apply_min_max_normalization(data):
-    """Apply custom normalization to position and RSSI data."""
-    logging.info("Applying min-max normalization")
-
-    # Initialize columns for storing min and max coordinates
-    data['min_coords'] = None
-    data['max_coords'] = None
-
-    # Iterate over each row to apply normalization individually
-    for idx, row in data.iterrows():
-        # Normalize RSSI values to range [0, 1]
-        node_noise = np.array(row['node_noise'])
-        min_rssi = np.min(node_noise)
-        max_rssi = np.max(node_noise)
-
-        range_rssi = max_rssi - min_rssi if max_rssi != min_rssi else 1
-        normalized_rssi = (node_noise - min_rssi) / range_rssi
-        data.at[idx, 'node_noise'] = normalized_rssi.tolist()
-
-        if params['norm'] == 'minmax':
-            # Normalize node positions to range [-1, 1]
-            node_positions = np.vstack(row['node_positions'])
-            min_coords = np.min(node_positions, axis=0)
-            max_coords = np.max(node_positions, axis=0)
-
-            # Save min and max coordinates to the dataframe
-            if params['3d']:
-                data.at[idx, 'min_coords'] = (min_coords[0], min_coords[1], min_coords[2])
-                data.at[idx, 'max_coords'] = (max_coords[0], max_coords[1], max_coords[2])
-            else:
-                data.at[idx, 'min_coords'] = (min_coords[0], min_coords[1])
-                data.at[idx, 'max_coords'] = (max_coords[0], max_coords[1])
-
-            range_coords = np.where(max_coords - min_coords == 0, 1, max_coords - min_coords)
-            normalized_positions = 2 * ((node_positions - min_coords) / range_coords) - 1
-            data.at[idx, 'node_positions'] = normalized_positions.tolist()
-
-            # Normalize jammer position similarly if present
-            if 'jammer_position' in row:
-                jammer_position = np.array(row['jammer_position']).reshape(1, -1)
-                jammer_position = 2 * ((jammer_position - min_coords) / range_coords) - 1
-                data.at[idx, 'jammer_position'] = jammer_position.flatten().tolist()
-
-
 def apply_min_max_normalization_instance(instance):
     """Apply min-max normalization to position and RSSI data for an instance."""
     # logging.info("Applying min-max normalization for instance")
 
-    # Normalize RSSI values to range [0, 1]
-    min_rssi = np.min(instance.node_noise)
-    max_rssi = np.max(instance.node_noise)
-    range_rssi = max_rssi - min_rssi if max_rssi != min_rssi else 1
-    normalized_rssi = (instance.node_noise - min_rssi) / range_rssi
-    instance.node_noise = normalized_rssi
+    # Normalize Noise values to range [0, 1]
+    min_noise = np.min(instance.node_noise)
+    max_noise = np.max(instance.node_noise)
+    range_noise = max_noise - min_noise if max_noise != min_noise else 1
+    normalized_noise = (instance.node_noise - min_noise) / range_noise
+    instance.node_noise = normalized_noise
 
     # Normalize node positions to range [-1, 1]
     min_coords = np.min(instance.node_positions, axis=0)
@@ -346,58 +352,114 @@ def add_proximity_count(data):
     )
 
 
+# def calculate_noise_statistics(subgraphs, stats_to_compute):
+#     # all_graph_stats = []
+#     subgraph = subgraphs[0]
+#
+#     # for subgraph in subgraphs:
+#     node_stats = []
+#     edge_index = subgraph.edge_index
+#     num_nodes = subgraph.x.size(0)
+#
+#     for node_id in range(num_nodes):
+#         # Identifying the neighbors of the current node
+#         neighbors = torch.cat([
+#             edge_index[1][edge_index[0] == node_id],
+#             edge_index[0][edge_index[1] == node_id]
+#         ], dim=0).unique()
+#
+#         # Ensure neighbors indices are within bounds
+#         valid_neighbors = neighbors[neighbors < num_nodes]
+#
+#         # Access the noise feature of valid neighbors
+#         neighbor_noises = subgraph.x[valid_neighbors, 2]
+#         curr_node_noise = subgraph.x[node_id, 2]
+#
+#         # Combine current node's noise with neighbor noises
+#         all_noises = torch.cat([neighbor_noises, curr_node_noise.unsqueeze(0)], dim=0)
+#
+#         # Handle case with fewer than two neighbors safely
+#         if all_noises.size(0) > 1:
+#             std_noise = all_noises.std().item()
+#             range_noise = (all_noises.max() - all_noises.min()).item()
+#         else:
+#             std_noise = 0
+#             range_noise = 0
+#
+#         # temp_stats = {
+#         #     'mean_noise': all_noises.mean().item(),
+#         #     'median_noise': all_noises.median().item(),
+#         #     'std_noise': std_noise,
+#         #     'range_noise': range_noise,
+#         #     'relative_noise': (curr_node_noise - neighbor_noises.mean()).item() if neighbors.size(0) > 0 else 0,
+#         # }
+#         temp_stats = {
+#             'mean_noise': all_noises.mean().item(),
+#             'median_noise': all_noises.median().item(),
+#             'range_noise': range_noise
+#         }
+#
+#
+#         # Compute WCL if required
+#         if 'wcl_coefficient' in stats_to_compute:
+#             weights = torch.pow(10, neighbor_noises / 10)
+#             weighted_positions = weights.unsqueeze(1) * subgraph.x[valid_neighbors, :2]
+#             wcl_estimation = weighted_positions.sum(0) / weights.sum() if weights.sum() > 0 else subgraph.x[node_id, :2]
+#             temp_stats['wcl_coefficient'] = wcl_estimation.tolist()
+#
+#         node_stats.append(temp_stats)
+#
+#     return node_stats
+
+
+# Vectorized
 def calculate_noise_statistics(subgraphs, stats_to_compute):
-    # all_graph_stats = []
     subgraph = subgraphs[0]
-
-    # for subgraph in subgraphs:
-    node_stats = []
     edge_index = subgraph.edge_index
-    num_nodes = subgraph.x.size(0)
+    node_noises = subgraph.x[:, 2]  # Assuming the noise feature is the third feature
 
-    for node_id in range(num_nodes):
-        # Identifying the neighbors of the current node
-        neighbors = torch.cat([
-            edge_index[1][edge_index[0] == node_id],
-            edge_index[0][edge_index[1] == node_id]
-        ], dim=0).unique()
+    # Create an adjacency matrix from edge_index
+    num_nodes = node_noises.size(0)
+    # adjacency = torch.zeros(num_nodes, num_nodes, device=node_noises.device)
+    # adjacency[edge_index[0], edge_index[1]] = 1  # Assuming unweighted edges for simplicity
 
-        # Ensure neighbors indices are within bounds
-        valid_neighbors = neighbors[neighbors < num_nodes]
+    # Create an adjacency matrix from edge_index and include self-loops
+    adjacency = torch.zeros(num_nodes, num_nodes, device=node_noises.device)
+    adjacency[edge_index[0], edge_index[1]] = 1
+    torch.diagonal(adjacency).fill_(1)  # Add self-loops
 
-        # Access the noise feature of valid neighbors
-        neighbor_noises = subgraph.x[valid_neighbors, 2]
-        curr_node_noise = subgraph.x[node_id, 2]
+    # Calculate the sum and count of neighbor noises
+    neighbor_sum = torch.mm(adjacency, node_noises.unsqueeze(1)).squeeze()
+    neighbor_count = adjacency.sum(1)
 
-        # Combine current node's noise with neighbor noises
-        all_noises = torch.cat([neighbor_noises, curr_node_noise.unsqueeze(0)], dim=0)
+    # Avoid division by zero for mean calculation
+    neighbor_count = torch.where(neighbor_count == 0, torch.ones_like(neighbor_count), neighbor_count)
+    mean_neighbor_noise = neighbor_sum / neighbor_count
 
-        # Handle case with fewer than two neighbors safely
-        if all_noises.size(0) > 1:
-            std_noise = all_noises.std().item()
-            range_noise = (all_noises.max() - all_noises.min()).item()
-        else:
-            std_noise = 0
-            range_noise = 0
+    # Standard deviation
+    neighbor_variance = torch.mm(adjacency, (node_noises**2).unsqueeze(1)).squeeze() / neighbor_count - (mean_neighbor_noise**2)
+    std_noise = torch.sqrt(neighbor_variance)
 
-        temp_stats = {
-            'mean_noise': all_noises.mean().item(),
-            'median_noise': all_noises.median().item(),
-            'std_noise': std_noise,
-            'range_noise': range_noise,
-            'relative_noise': (curr_node_noise - neighbor_noises.mean()).item() if neighbors.size(0) > 0 else 0,
-        }
+    # Range: max - min for each node's neighbors
+    # Expanding the node noises for comparison using adjacency
+    expanded_noises = node_noises.unsqueeze(0).repeat(num_nodes, 1)
+    max_noise = torch.where(adjacency == 1, expanded_noises, torch.full_like(expanded_noises, float('-inf'))).max(1).values
+    min_noise = torch.where(adjacency == 1, expanded_noises, torch.full_like(expanded_noises, float('inf'))).min(1).values
+    range_noise = max_noise - min_noise
 
-        # Compute WCL if required
-        if 'wcl_coefficient' in stats_to_compute:
-            weights = torch.pow(10, neighbor_noises / 10)
-            weighted_positions = weights.unsqueeze(1) * subgraph.x[valid_neighbors, :2]
-            wcl_estimation = weighted_positions.sum(0) / weights.sum() if weights.sum() > 0 else subgraph.x[node_id, :2]
-            temp_stats['wcl_coefficient'] = wcl_estimation.tolist()
+    # Replace inf values that appear if a node has no neighbors
+    range_noise[range_noise == float('inf')] = 0
+    range_noise[range_noise == float('-inf')] = 0
 
-        node_stats.append(temp_stats)
+    # Other statistics could be added in a similar batch-processed manner
+    noise_stats = {
+        'mean_noise': mean_neighbor_noise,
+        'std_noise': std_noise,
+        'range_noise': range_noise,
+    }
 
-    return node_stats
+    return noise_stats
+
 
 
 def add_clustering_coefficients(graphs):
@@ -468,14 +530,11 @@ def engineer_node_features(subgraph):
 
     if noise_stats_to_compute:
         noise_stats = calculate_noise_statistics([subgraph], noise_stats_to_compute)
-        # print("noise_stats:", noise_stats)
-        # print("Type of noise_stats[0]:", type(noise_stats[0]))
-        # print("First element in noise_stats[0]:", noise_stats[0][0])
 
-        # Save each stat as a separate tensor
+        # Add calculated statistics directly to the features list
         for stat in noise_stats_to_compute:
-            stat_values = torch.tensor([node_stat[stat] for node_stat in noise_stats], dtype=torch.float32)
-            new_features.append(stat_values.unsqueeze(1))  # Unsqueeze to maintain the correct dimension
+            if stat in noise_stats:
+                new_features.append(noise_stats[stat].unsqueeze(1))
 
     # Moving Average for node noise with adjusted padding
     if 'moving_avg_noise' in params['additional_features']:
@@ -485,8 +544,8 @@ def engineer_node_features(subgraph):
 
     # Example of using dynamic moving average for AoA
     if 'moving_avg_aoa' in params['additional_features']:
-        sin_aoa = subgraph.x[:, 4]  # sin(AoA) is at position 4
-        cos_aoa = subgraph.x[:, 5]  # cos(AoA) is at position 5
+        sin_aoa = subgraph.x[:, 3]  # sin(AoA) is at position 3
+        cos_aoa = subgraph.x[:, 4]  # cos(AoA) is at position 4
         aoa = torch.atan2(sin_aoa, cos_aoa)
         moving_avg_aoa = dynamic_moving_average(aoa)
         new_features.append(torch.sin(moving_avg_aoa).unsqueeze(1))
@@ -500,24 +559,6 @@ def engineer_node_features(subgraph):
             raise e
 
     return subgraph
-
-
-def preprocess_data(data, params):
-    """
-   Preprocess the input data by converting lists, scaling features, and normalizing RSSI values.
-
-   Args:
-       data (pd.DataFrame): The input data containing columns to be processed.
-
-   Returns:
-       pd.DataFrame: The preprocessed data with transformed features.
-   """
-    # Conversion from string to list type
-    center_coordinates(data)
-    standardize_data(data)
-    if params['coords'] == 'polar':
-        convert_to_polar(data)
-    return data
 
 
 def convert_to_polar(data):
@@ -594,15 +635,6 @@ def convert_output_eval(output, data_batch, data_type, device):
     return converted_output.clone().detach().to(device)
 
 
-def convert_output(output, device):  # for training to compute val loss
-    output = output.to(device)  # Ensure the output is on the correct device
-    if params['coords'] == 'polar':
-        output = cyclical_to_angular(output)
-        converted_output = polar_to_cartesian(output)
-        return converted_output
-    return output  # If not polar, just pass the output through
-
-
 def save_reduced_dataset(dataset, indices, path):
     """
     Saves only the necessary data from the original dataset at specified indices,
@@ -676,15 +708,21 @@ def save_datasets(combined_train_df, combined_val_df, combined_test_df, experime
     combined_test_df.to_csv(os.path.join(experiments_path, 'test_dataset.csv'), index=False)
 
     # Dataset types for specific filtering
-    dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
-                     'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
-                     'random_jammer_outside_region', 'all_jammed', 'all_jammed_jammer_outside_region',
-                     'dynamic_guided_path', 'dynamic_linear_path']
+    if params['dynamic']:
+        dataset_types = ['guided_path_data', 'linear_path_data']
+    else:
+        dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
+                         'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
+                         'random_jammer_outside_region', 'all_jammed', 'all_jammed_jammer_outside_region']
+
+    print("combined_test_df['dataset']: ", combined_test_df['dataset'])
 
     for dataset in dataset_types:
         train_subset = combined_train_df[combined_train_df['dataset'] == dataset]
         val_subset = combined_val_df[combined_val_df['dataset'] == dataset]
         test_subset = combined_test_df[combined_test_df['dataset'] == dataset]
+
+        print("test_subset: ", test_subset)
 
         if not train_subset.empty:
             train_subset.to_csv(os.path.join(experiments_path, f'{dataset}_train_set.csv'), index=False)
@@ -692,22 +730,6 @@ def save_datasets(combined_train_df, combined_val_df, combined_test_df, experime
             val_subset.to_csv(os.path.join(experiments_path, f'{dataset}_val_set.csv'), index=False)
         if not test_subset.empty:
             test_subset.to_csv(os.path.join(experiments_path, f'{dataset}_test_set.csv'), index=False)
-
-
-# Sample function definition
-def calculate_perc_completion(data):
-    # Loop through each row in the dataframe
-    perc_completion_list = []
-    for _, row in data.iterrows():
-        timestamps = np.array(row['timestamps'])
-        min_time = np.min(timestamps)
-        max_time = np.max(timestamps)
-        perc_completion = (timestamps - min_time) / (max_time - min_time) if max_time != min_time else np.zeros_like(timestamps)
-        perc_completion_list.append(perc_completion)
-
-    # Add the new column to the dataframe
-    data['perc_completion_full'] = perc_completion_list
-    return data
 
 
 def downsample_data(instance):
@@ -727,8 +749,6 @@ def downsample_data(instance):
     num_windows = max_nodes
 
     # Create downsampled attributes
-    downsampled_timestamps = []
-    downsampled_perc_completion_full = []
     downsampled_positions = []
     downsampled_noise_values = []
     downsampled_angles = []
@@ -737,18 +757,100 @@ def downsample_data(instance):
         start_idx = i * window_size
         end_idx = start_idx + window_size
 
-        downsampled_timestamps.append(np.mean(instance.timestamps[start_idx:end_idx]))
-        downsampled_perc_completion_full.append(np.mean(instance.perc_completion_full[start_idx:end_idx]))
         downsampled_positions.append(np.mean(instance.node_positions[start_idx:end_idx], axis=0))
         downsampled_noise_values.append(np.mean(instance.node_noise[start_idx:end_idx]))
-        downsampled_angles.append(np.mean(instance.angle_of_arrival[start_idx:end_idx]))
+        if 'angle_of_arrival' in params['required_features']:
+            downsampled_angles.append(np.mean(instance.angle_of_arrival[start_idx:end_idx]))
 
     # Update instance with downsampled data
-    instance.timestamps = np.array(downsampled_timestamps)
-    instance.perc_completion_full = np.array(downsampled_perc_completion_full)
     instance.node_positions = np.array(downsampled_positions)
     instance.node_noise = np.array(downsampled_noise_values)
-    instance.angle_of_arrival = np.array(downsampled_angles)
+    if 'angle_of_arrival' in params['required_features']:
+        instance.angle_of_arrival = np.array(downsampled_angles)
+
+    return instance
+
+# Downsampling by distance
+def distance_between_points(point1, point2):
+    """
+    Calculate the Euclidean distance between two points (x, y).
+
+    Args:
+        point1 (array-like): Coordinates of the first point (x1, y1).
+        point2 (array-like): Coordinates of the second point (x2, y2).
+
+    Returns:
+        float: The distance between the two points.
+    """
+    return np.linalg.norm(np.array(point1) - np.array(point2))
+
+
+def downsample_data_by_distance(instance):
+    """
+    Downsamples the data of an instance object based on a fixed distance threshold.
+
+    Args:
+        instance (Instance): The instance to downsample.
+        distance_threshold (float): The minimum distance between consecutive samples (in meters).
+
+    Returns:
+        Instance: The downsampled instance.
+    """
+    downsampled_positions = [instance.node_positions[0]]  # Start with the first node
+    downsampled_noise_values = [instance.node_noise[0]]
+    downsampled_angles = [instance.angle_of_arrival[0]] if 'angle_of_arrival' in params['required_features'] else []
+
+    for i in range(1, len(instance.node_positions)):
+        last_position = downsampled_positions[-1]
+        current_position = instance.node_positions[i]
+
+        # Calculate the distance between the last downsampled point and the current point
+        distance = distance_between_points(last_position, current_position)
+
+        if distance >= params['dist_threshold']:
+            downsampled_positions.append(current_position)
+            downsampled_noise_values.append(instance.node_noise[i])
+            if 'angle_of_arrival' in params['required_features']:
+                downsampled_angles.append(instance.angle_of_arrival[i])
+
+    # Update instance with downsampled data
+    instance.node_positions = np.array(downsampled_positions)
+    instance.node_noise = np.array(downsampled_noise_values)
+    if 'angle_of_arrival' in params['required_features']:
+        instance.angle_of_arrival = np.array(downsampled_angles)
+
+    return instance
+
+
+# Noise based downsampling
+def downsample_data_by_highest_noise(instance):
+    """
+    Downsamples the data of an instance object by keeping the nodes with the highest noise values.
+
+    Args:
+        instance (Instance): The instance to downsample.
+        num_nodes_to_keep (int): The number of nodes to retain based on the highest noise values.
+
+    Returns:
+        Instance: The downsampled instance.
+    """
+    # Get the indices of the nodes with the highest noise values
+    top_indices = np.argsort(instance.node_noise)[-params['max_nodes']:]
+
+    # Sort the indices to maintain the order in the dataset
+    top_indices = np.sort(top_indices)
+
+    # Extract the corresponding positions, noise values, and angles (if applicable)
+    downsampled_positions = instance.node_positions[top_indices]
+    downsampled_noise_values = instance.node_noise[top_indices]
+
+    if 'angle_of_arrival' in params['required_features']:
+        downsampled_angles = instance.angle_of_arrival[top_indices]
+        instance.angle_of_arrival = np.array(downsampled_angles)
+
+    # Update instance with the downsampled data
+    instance.node_positions = np.array(downsampled_positions)
+    instance.node_noise = np.array(downsampled_noise_values)
 
     return instance
 
@@ -761,36 +863,21 @@ def add_jammed_column(data, threshold=-55):
             raise ValueError(f"Invalid or empty node_noise list at row {i}")
 
         count = 0
+        jammed_index = None  # Store the index of the third noise > threshold
+
         for idx, noise in enumerate(noise_list):
-            count = count + 1 if noise > threshold else 0
-            if count == 3:
-                data.at[i, 'jammed_at'] = idx
-                break
+            if noise > threshold:
+                count += 1
+                # Save the index of the third noise sample that exceeds the threshold
+                if count == 3:
+                    jammed_index = idx
+                    break
 
-        # Optionally log if no "jammed" condition was met for a row
-        if pd.isna(data.at[i, 'jammed_at']):
-            raise ValueError(f"No jammed position found for row {i}")
-
-    return data
-
-
-def add_jammed_column(data, threshold=-55):
-    data['jammed_at'] = None
-    for i, noise_list in enumerate(data['node_noise']):
-        # Check if noise_list is a valid non-empty list
-        if not isinstance(noise_list, list) or len(noise_list) == 0:
-            raise ValueError(f"Invalid or empty node_noise list at row {i}")
-
-        count = 0
-        for idx, noise in enumerate(noise_list):
-            count = count + 1 if noise > threshold else 0
-            if count == 3:
-                data.at[i, 'jammed_at'] = idx
-                break
-
-        # Optionally log if no "jammed" condition was met for a row
-        if pd.isna(data.at[i, 'jammed_at']):
-            raise ValueError(f"No jammed position found for row {i}")
+        # Save the index of the third "jammed" sample or handle no jamming detected
+        if jammed_index is not None:
+            data.at[i, 'jammed_at'] = jammed_index
+        else:
+            raise ValueError(f"No sufficient jammed noise samples found for row {i}")
 
     return data
 
@@ -809,26 +896,15 @@ def load_data(params, test_set_name, experiments_path=None):
     logging.info("Loading data...")
     if params['inference']:
         # load raw data csv
+        test_set_name = [test_set_name]
         for test_data in test_set_name:
-            # TODO: add downsampling, perc completion
             print(f"dataset: {test_data}")
             print(f"experiments_path: {experiments_path}")
             file_path = experiments_path + test_data
             test_df = pd.read_csv(file_path)
-            test_df['id'] = range(1, len(test_df) + 1)
             convert_data_type(test_df)
-            # calculate_perc_completion()
-
-            # Apply transformations to graphs
-            if params['dynamic']:
-                test_df = apply_processing(test_df, 'test')
-                test_df = test_df.reset_index()
-
-            print("TEST")
-            test_dataset = preprocess_data(test_df, params)
-            print(test_dataset.columns)
-
-            return None, None, test_dataset
+            print(test_df.columns)
+            return None, None, test_df
     else:
         combined_train_df = pd.DataFrame()
         combined_val_df = pd.DataFrame()
@@ -844,16 +920,11 @@ def load_data(params, test_set_name, experiments_path=None):
             data['id'] = range(1, len(data) + 1)
             convert_data_type(data)
 
-            # Calculate normalized time on full instance
-            data = calculate_perc_completion(data)
-
             # Add jammed column
             data = add_jammed_column(data, threshold=-55)
 
             # Create train test splits
             train_df, val_df, test_df = split_datasets(data)
-
-            test_df.to_csv(os.path.join(experiments_path, 'raw_test_data.csv'), index=False)
 
             combined_train_df = pd.concat([combined_train_df, train_df], ignore_index=True)
             combined_val_df = pd.concat([combined_val_df, val_df], ignore_index=True)
@@ -865,158 +936,7 @@ def load_data(params, test_set_name, experiments_path=None):
         return combined_train_df, combined_val_df, combined_test_df
 
 
-def random_crop(row, min_nodes=3):
-    """
-    Perform a random crop of node samples for one row.
-
-    Args:
-        row (pd.Series): A single row from a DataFrame.
-        min_nodes (int): Minimum number of nodes to keep, default is 3, prob. need to increase.
-
-    Returns:
-        pd.Series: Modified row with cropped data.
-    """
-    # Determine the features to crop
-    if 'timestamps' in params['required_features']:
-        node_features = params['required_features'] + ['perc_completion_full']
-    else:
-        node_features = params['required_features']
-
-    total_nodes = len(row['node_positions'])
-
-    # Find the first index where noise > -55
-    noise_values = np.array(row['node_noise'])
-    jam_start_idx = np.argmax(noise_values > -55)
-
-    # Determine the valid range for the end index based on first encountered jammed node sample
-    end_limit = max(jam_start_idx + 1, min_nodes)  # Ensure we keep at least 'min_nodes' nodes
-    end = np.random.randint(end_limit, total_nodes + 1)  # Randomly choose the end index
-
-    # Crop all the relevant features
-    for key in node_features:
-        if isinstance(row[key], list) or isinstance(row[key], np.ndarray):  # Ensure it's a list or ndarray
-            row[key] = row[key][0:end]
-
-    return row
-
-
-def incremental_node_addition(row):
-    """
-    Generate incremental additions of node samples for one row, starting at 0
-    and incrementing nodes only after the first node with noise > -55.
-
-    Args:
-        row (pd.Series): A single row from a DataFrame.
-
-    Returns:
-        List[pd.Series]: List of new rows each incrementing node samples by one, starting from the first jammed sample.
-    """
-    if 'timestamps' in params['required_features']:
-        node_features = params['required_features'] + ['perc_completion_full']
-    else:
-        node_features = params['required_features']
-
-    min_nodes = 3
-    total_nodes = len(row['node_positions'])
-    new_rows = []
-
-    # Find first index where noise > -55
-    noise_values = np.array(row['node_noise'])
-    jam_start_idx = np.argmax(noise_values > -55)
-
-    # Ensure we have at least min_nodes in the row
-    if total_nodes >= min_nodes:
-        # Include all nodes up to the first jammed sample
-        for i in range(jam_start_idx + 1, total_nodes + 1):
-            new_row = row.copy()
-            for key in node_features:
-                new_row[key] = row[key][:i]
-            new_rows.append(new_row)
-
-    return new_rows
-
-
-def batch_node_addition(row, granularity=25):
-    """
-    Generate incremental additions of node samples for one row based on percentage granularity,
-    additions start from the first node with noise > -55.
-
-    Args:
-        row (pd.Series): A single row from a DataFrame.
-        granularity (int): Percentage of total nodes to increment at each step.
-
-    Returns:
-        List[pd.Series]: List of new rows, each incrementing node samples by the specified percentage.
-    """
-    if 'timestamps' in params['required_features']:
-        node_features = params['required_features'] + ['perc_completion_full']
-    else:
-        node_features = params['required_features']
-
-    # Determine total number of nodes and the index of the first jammed node
-    total_nodes = len(row['node_positions'])
-    noise_values = np.array(row['node_noise'])
-    jam_start_idx = np.argmax(noise_values > -55)
-
-    # Ensure at least 3 nodes are included and calculate minimum nodes to start with
-    min_nodes = max(3, jam_start_idx + 1)
-    new_rows = []
-
-    if total_nodes >= min_nodes:
-        # Calculate step size based on the granularity percentage
-        step_size = max(1, int(total_nodes * (granularity / 100)))
-
-        # Create steps starting from the first jammed node to the total number of nodes
-        steps = range(jam_start_idx + 1, total_nodes + 1, step_size)
-
-        # Include all nodes up to the first jammed node in every incremental addition
-        for i in steps:
-            new_row = row.copy()
-            for key in node_features:
-                new_row[key] = row[key][:i]
-            new_rows.append(new_row)
-
-        # Ensure the final step includes the full set of nodes if not already included
-        if steps[-1] != total_nodes:
-            new_row = row.copy()
-            for key in node_features:
-                new_row[key] = row[key][:total_nodes]
-            new_rows.append(new_row)
-
-    return new_rows
-
-
-def apply_processing(df, mode):
-    """
-    Apply the specified processing mode to each row of the DataFrame.
-    Args:
-        df (pd.DataFrame): DataFrame containing the data to process.
-        mode (str): Processing mode, either 'train_val' or 'test'.
-    Returns:
-        pd.DataFrame: DataFrame containing all processed rows.
-    """
-    processed_rows = []
-    for _, row in df.iterrows():
-        processed = process_row(row, mode)
-        processed_rows.extend(processed)  # Extend to flatten list of Series into one list
-
-    # Convert list of pd.Series to DataFrame
-    return pd.DataFrame(processed_rows)
-
-
-def process_row(row, mode):
-    """
-    Process a single row based on the specified mode.
-    """
-    if mode == 'train':
-        return [random_crop(row)]
-    elif mode == 'val':
-        return batch_node_addition(row)
-    elif mode == 'test':
-        return incremental_node_addition(row)
-
-
-def create_data_loader(train_data, val_data, test_data, batch_size, test_batch_size):
+def create_data_loader(params, train_data, val_data, test_data):
     """
     Create data loaders using the TemporalGraphDataset instances for training, validation, and testing sets.
     Args:
@@ -1028,23 +948,25 @@ def create_data_loader(train_data, val_data, test_data, batch_size, test_batch_s
         tuple: Three DataLoaders for the training, validation, and testing datasets.
     """
     if params['inference']:
-        # Instantiate the dataset classes for train, val, and test
-        test_dataset = TemporalGraphDataset(test_data)
-
-        # Create DataLoaders for each dataset
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+        logging.info('Computing testing data')
+        test_dataset = TemporalGraphDataset(test_data, test=True, discretization_coeff=params['test_discrite_coeff'])
+        test_loader = DataLoader(test_dataset, batch_size=params['test_batch_size'], shuffle=False, drop_last=False, num_workers=0)
 
         return None, None, test_loader
     else:
+        # TODO: get hash for params and then check if same as last saved (in json) if no resave, pass as param to temporalgraphdataset class
         # Instantiate the dataset classes for train, val, and test
+        logging.info('Computing training data')
         train_dataset = TemporalGraphDataset(train_data, test=False)
-        val_dataset = TemporalGraphDataset(val_data, test=True)
-        test_dataset = TemporalGraphDataset(test_data, test=True)
+        train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True, drop_last=True, pin_memory=True, num_workers=params['num_workers'])
 
-        # Create DataLoaders for each dataset
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=True, num_workers=0)
-        val_loader = DataLoader(val_dataset, batch_size=test_batch_size, shuffle=False, num_workers=0)
-        test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=0)
+        logging.info('Computing validation data')
+        val_dataset = TemporalGraphDataset(val_data, test=True, discretization_coeff=params['val_discrite_coeff'])
+        val_loader = DataLoader(val_dataset, batch_size=params['test_batch_size'], shuffle=False, drop_last=False, num_workers=0)
+
+        logging.info('Computing testing data')
+        test_dataset = TemporalGraphDataset(test_data, test=True, discretization_coeff=params['test_discrite_coeff'])
+        test_loader = DataLoader(test_dataset, batch_size=params['test_batch_size'], shuffle=False, drop_last=False, num_workers=0)
 
         return train_loader, val_loader, test_loader
 
@@ -1098,14 +1020,15 @@ def plot_graph_temporal(subgraph):
     plt.axis('off')
     plt.show()
 
-
-def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_positions=None, show_weights=False):
+# Plot without edges and annotations
+def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_positions=None, show_weights=False, perc_completion=None, id=None, jammer_power=None):
     G = nx.Graph()
 
     # Ensure positions and features are numpy arrays for easier handling
     positions = np.array(positions)
     node_features = np.array(node_features)
-    jammer_positions = np.array(jammer_positions)
+    if jammer_positions is not None:
+        jammer_positions = np.array(jammer_positions)
 
     # Add nodes with features and positions
     for i, pos in enumerate(positions):
@@ -1116,97 +1039,36 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_p
         else:
             G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2])
 
-    # Convert edge_index to a usable format if it's a tensor or similar
-    if isinstance(edge_index, torch.Tensor):
-        edge_index = edge_index.numpy()
-
-    # Add edges
-    if edge_weights is not None:
-        edge_weights = edge_weights.numpy() if isinstance(edge_weights, torch.Tensor) else edge_weights
-        for idx, (start, end) in enumerate(edge_index.T):  # Ensure edge_index is transposed correctly
-            weight = edge_weights[idx]
-            if weight != 0:  # Check if weight is not zero
-                G.add_edge(start, end, weight=weight)
-    else:
-        for start, end in edge_index.T:
-            G.add_edge(start, end)
-
     # Position for drawing
     pos = {i: (p[0], p[1]) for i, p in enumerate(positions)}
 
-    # Draw the graph
-    nx.draw_networkx_nodes(G, pos, node_color='skyblue', node_size=50)
-    nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.5)
+    # Distinguish nodes based on noise value > -55
+    noise_values = np.array([G.nodes[i]['noise'] for i in G.nodes()])
+    node_colors = ['red' if noise > -55 else 'blue' for noise in noise_values]
 
-    # Node labels including timestamp, sin and cos of AoA
-    if params['dynamic']:
-        node_labels = {i: f"ID:{i}\nNoise:{G.nodes[i]['noise']:.2f}\nTimestamp:{G.nodes[i]['timestamp']:.2f}\nSin AoA:{G.nodes[i]['sin_aoa']:.2f}\nCos AoA:{G.nodes[i]['cos_aoa']:.2f}"
-                       for i in G.nodes()}
-    else:
-        node_labels = {i: f"ID:{i}\nNoise:{G.nodes[i]['noise']:.2f}" for i in G.nodes()}
-    nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
+    # Draw the graph nodes without edges and annotations
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=15)
 
-    # Optionally draw edge weights
-    if show_weights and edge_weights is not None:
-        edge_labels = {(u, v): f"{w:.2f}" for u, v, w in G.edges(data='weight')}
-        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
-
-    # Draw jammer position
+    # Optionally draw jammer position without annotations
+    # Optionally draw jammer position without annotations
     if jammer_positions is not None:
-        for jammer_pos in jammer_positions:
-            plt.scatter(*jammer_pos, color='red', s=100, label='Jammer')  # Add jammers to the plot
-            plt.annotate('Jammer', xy=jammer_pos, xytext=(5, 5), textcoords='offset points')
+        for i, jammer_pos in enumerate(jammer_positions):
+            plt.scatter(*jammer_pos, color='red', s=100, marker='x', label='Jammer')  # Add jammer to the plot as a cross
 
-    plt.title("Network Graph with Node Features")
+            # Assuming jammer_power is available in an array, where each entry corresponds to a jammer
+            # Add annotation for jammer_power
+            plt.annotate(f'Power: {jammer_power:.1f} dB',
+                         xy=jammer_pos,
+                         xytext=(5, 5),
+                         textcoords='offset points',
+                         fontsize=10, color='black')
+
+    perc_completion_title = "Graph " + str(id) + " " + str(round(perc_completion, 2)) + "% trajectory since start"
+    plt.title(perc_completion_title, fontsize=15)
     plt.axis('off')  # Turn off the axis
     plt.show()
 
-
-def ensure_complementary_features(params):
-    """
-    Ensure that if either sin_azimuth or cos_azimuth is included, then both are included.
-
-    Args:
-        params (dict): Dictionary containing 'required_features' and 'additional_features'.
-
-    Returns:
-        list: Updated list of features including both sin_azimuth and cos_azimuth if either is present.
-    """
-    required_features = params['required_features']
-    additional_features = []  # params['additional_features']
-
-    if isinstance(additional_features, tuple):
-        additional_features = list(additional_features)
-
-    if isinstance(required_features, tuple):
-        required_features = list(required_features)
-
-    # Combine required and additional features
-    all_features = required_features + additional_features
-    return all_features
-
-
-def calculate_perc_completion_instance(instance):
-    """
-    Calculate the percentage completion based on the timestamps attribute of an Instance object.
-    Args:
-        instance (Instance): The instance object containing the timestamps attribute.
-    Returns:
-        numpy.ndarray: Array of percentage completions for the timestamps.
-    """
-    timestamps = instance.timestamps
-    if timestamps.size == 0:
-        return np.array([])  # Return an empty array if no timestamps
-    min_time = np.min(timestamps)
-    max_time = np.max(timestamps)
-    if max_time != min_time:
-        perc_completion = (timestamps - min_time) / (max_time - min_time)
-    else:
-        perc_completion = np.zeros_like(timestamps)  # Avoid division by zero if all timestamps are the same
-    instance.perc_completion_crop = perc_completion
-    return instance
-
-
+# ORIGINAL
 def create_torch_geo_data(instance: Instance) -> Data:
     """
     Create a PyTorch Geometric Data object from a row of the dataset.
@@ -1217,32 +1079,34 @@ def create_torch_geo_data(instance: Instance) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
-    # Select and combine features
-    # all_features = ensure_complementary_features(params) #params['required_features'] + params['additional_features']
-    # all_features = params['required_features'].copy()
+    # Downsample
+    # instance = downsample_data(instance) # Downsample based on max num of nodes per graph
+    #
+    # instance = downsample_data_by_distance(instance)  # Downsample based on distance (every d meters)
 
-    instance = downsample_data(instance)
-
-    # Calculate normalized time on cropped instance
-    calculate_perc_completion_instance(instance)
+    instance = downsample_data_by_highest_noise(instance)  # Downsample based on highest noise (keep 15 nodes with the highest noise)
 
     # Preprocess instance data
     center_coordinates_instance(instance)
     if params['norm'] == 'minmax':
         apply_min_max_normalization_instance(instance)
 
-    # Create node features without adding an extra list around the numpy array
-    node_features = np.concatenate([
-        instance.node_positions,
-        instance.node_noise[:, None],  # Ensure node_noise is reshaped to (n, 1)
-        np.sin(instance.angle_of_arrival[:, None]),
-        np.cos(instance.angle_of_arrival[:, None]),
-        instance.perc_completion_crop[:, None]
-    ], axis=1)
+    if 'angle_of_arrival' in params['required_features']:
+        # Create node features without adding an extra list around the numpy array
+        node_features = np.concatenate([
+            instance.node_positions,
+            instance.node_noise[:, None],  # Ensure node_noise is reshaped to (n, 1)
+            np.sin(instance.angle_of_arrival[:, None]),
+            np.cos(instance.angle_of_arrival[:, None])
+        ], axis=1)
+    else:
+        node_features = np.concatenate([
+            instance.node_positions,
+            instance.node_noise[:, None]
+        ], axis=1)
 
-    # instance.perc_completion_full[:, None]
 
-    # Convert to tensor, ensure it's 2D
+    # Convert to 2D tensor
     node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
 
     # Preparing edges and weights
@@ -1271,15 +1135,14 @@ def create_torch_geo_data(instance: Instance) -> Data:
     y = torch.tensor(jammer_positions, dtype=torch.float)
 
     # Plot
-    # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True)
+    # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
 
     # Create the Data object
     data = Data(x=node_features_tensor, edge_index=edge_index, edge_attr=edge_weight, y=y)
 
     # Convert geometric information to tensors
-    data.id = instance.id  # Assign the id from the row to the Data object
+    # data.id = instance.id
     data.node_positions_center = torch.tensor(instance.node_positions_center, dtype=torch.float)
-    data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
     if params['norm'] == 'minmax':
         data.min_coords = torch.tensor(instance.min_coords, dtype=torch.float)
         data.max_coords = torch.tensor(instance.max_coords, dtype=torch.float)
@@ -1287,7 +1150,6 @@ def create_torch_geo_data(instance: Instance) -> Data:
         data.max_radius = torch.tensor(instance.max_radius, dtype=torch.float)
 
     # Store the perc_completion as part of the Data object
-    if 'timestamps' in params['required_features']:
-        data.perc_completion_full = torch.tensor(instance.perc_completion_full, dtype=torch.float)
+    data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
 
     return data

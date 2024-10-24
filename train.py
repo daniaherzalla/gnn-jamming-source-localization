@@ -1,22 +1,23 @@
 import csv
-import json
+import logging
 import math
 import os
+from typing import Tuple
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
-from model import GNN
-from typing import Tuple
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-import logging
-from custom_logging import setup_logging
-from utils import set_seeds_and_reproducibility
-from data_processing import convert_output, convert_output_eval, preprocess_data, create_torch_geo_data
+from torch.optim.lr_scheduler import OneCycleLR
+from torch_geometric.data import Batch
+from tqdm import tqdm
 
 from config import params
+from custom_logging import setup_logging
+from data_processing import convert_output_eval
+from model import GNN
+from utils import AverageMeter
 
 setup_logging()
 
@@ -43,21 +44,24 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
     if 'moving_avg_aoa' in params['additional_features']:
         feature_dims = 3
     if params['coords'] == 'cartesian':
-        in_channels = len(params['additional_features']) + len(params['required_features']) + feature_dims  # Add one (two for 3D) since position data is considered separately for each coordinate and one more for sin cos of aoa
+        in_channels = len(params['additional_features']) + len(
+            params['required_features']) + feature_dims  # Add one (two for 3D) since position data is considered separately for each coordinate and one more for sin cos of aoa
     elif params['coords'] == 'polar':
-        in_channels = len(params['additional_features']) + len(params['required_features']) + 3 # r, sin cos theta, sin cos aoa
+        in_channels = len(params['additional_features']) + len(params['required_features']) + 3  # r, sin cos theta, sin cos aoa
     else:
         raise "Unknown coordinate system"
 
     print('in_channels: ', in_channels)
-    model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'], out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
+    model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'],
+                out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
 
 
-def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, device: torch.device, steps_per_epoch: int, scheduler) -> float:
+def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, device: torch.device, steps_per_epoch: int,
+          scheduler) -> float:
     """
     Train the model for one epoch.
 
@@ -72,12 +76,17 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
     Returns:
         float: Average loss for the epoch.
     """
+    loss_meter = AverageMeter()
     model.train()
-    total_loss = 0
-    num_batches = 0  # Use this to correctly compute average loss
-    for data in train_loader:
+    progress_bar = tqdm(train_loader, total=steps_per_epoch, desc="Training", leave=True)
+
+    # Dictionary to store the results by graph index and epoch
+    detailed_metrics = []
+
+    for num_batches, data in enumerate(progress_bar):
         if steps_per_epoch is not None and num_batches >= steps_per_epoch:
             break
+
         data = data.to(device)
         optimizer.zero_grad()
         output = model(data)
@@ -85,16 +94,45 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         loss.backward()
         optimizer.step()
         scheduler.step()
-        total_loss += loss.item() * data.num_graphs  # Ensure data.num_graphs or equivalent is valid
-        num_batches += 1
 
-    # Clear CUDA cache if necessary (usually not required every batch)
-    torch.cuda.empty_cache()
+        # Update AverageMeter with the current batch loss
+        # rmse_loss = math.sqrt(loss.item())
+        loss_meter.update(loss.item(), data.num_graphs)
 
-    return total_loss / sum(data.num_graphs for data in train_loader)  # This assumes each batch might have a different size
+        # Get the current learning rate from the optimizer
+        current_lr = optimizer.param_groups[0]['lr']
+
+        # Log the average loss so far and the current learning rate in the progress bar
+        progress_bar.set_postfix({
+            "Train Loss (MSE)": loss_meter.avg,
+            "Learning Rate": current_lr
+        })
+
+        # Dictionary to store individual graph details
+        graph_details = {}
+
+        # Calculate RMSE for each graph in the batch
+        for idx in range(data.num_graphs):
+            prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
+            actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
+
+            mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
+            rmse = math.sqrt(mse)
+            perc_completion = data.perc_completion[idx].item()
+
+            # print(f"Graph {idx} {step} completion RMSE: {rmse}")
+
+            # Storing the metrics in the dictionary with graph id as key
+            graph_details[idx] = {'rmse': rmse, 'perc_completion': perc_completion}
+
+        # Append to the detailed metrics dict
+        detailed_metrics.append(graph_details)
+
+    # Return the average loss tracked by AverageMeter
+    return loss_meter.avg, detailed_metrics
 
 
-def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, criterion: torch.nn.Module, device: torch.device) -> float:
+def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, criterion: torch.nn.Module, device: torch.device, test_loader=False) -> float:
     """
     Validate the model on the validation dataset.
 
@@ -108,91 +146,82 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         float: Average validation loss.
     """
     model.eval()
-    total_loss = 0
-    total_graphs = 0  # Use this to correctly compute average loss if batch sizes vary
-    with torch.no_grad():
-        for data in validate_loader:
-            data = data.to(device)
-            output = model(data)
-            loss = criterion(output, data.y)
-            total_loss += data.num_graphs * loss.item()
-            total_graphs += data.num_graphs  # Accumulate the total number of graphs or samples processed
+    predictions, actuals, perc_completion_list = [], [], []
+    loss_meter = AverageMeter()
+    progress_bar = tqdm(validate_loader, desc="Validating", leave=True)
 
-    return total_loss / total_graphs  # Use total_graphs for a more accurate average if batch sizes are not uniform
-
-
-def predict_and_evaluate(model, loader, device):
-    """
-    Evaluate the model and compute performance metrics.
-
-    Args:
-        model (torch.nn.Module): The trained model to evaluate.
-        loader (torch.utils.data.DataLoader): The data loader providing the dataset for evaluation.
-        device (torch.device): The device to perform the computations on (e.g., 'cpu' or 'cuda').
-
-    Returns:
-        tuple: A tuple containing two lists:
-            - predictions (list): The predicted values after denormalization.
-            - actuals (list): The actual values after denormalization.
-    """
-    model.eval()
-    predictions, actuals, rmse_list, perc_completion_list, sigma_list = [], [], [], [], []
+    # Dictionary to store the results by graph index and epoch
+    detailed_metrics = []
 
     with torch.no_grad():
-        for data in loader:  # Each 'batch' is a DataBatch object containing multiple graphs batched together
+        for data in progress_bar:
             data = data.to(device)
             output = model(data)
-            predicted_coords = convert_output_eval(output, data, 'prediction', device)
-            actual_coords = convert_output_eval(data.y, data, 'target', device)
 
-            predictions.append(predicted_coords.cpu().numpy())
-            actuals.append(actual_coords.cpu().numpy())
+            if test_loader:
+                predicted_coords = convert_output_eval(output, data, 'prediction', device)
+                actual_coords = convert_output_eval(data.y, data, 'target', device)
 
-            # Save sigma and perc_completion for each graph
-            sigma_list.append(data.sigma.cpu().numpy())
-            if 'timestamps' in params['required_features']:
-                last_value = data.perc_completion_full[-1].cpu().numpy()
-                perc_completion_list.append(last_value)
+                predictions.append(predicted_coords.cpu().numpy())
+                actuals.append(actual_coords.cpu().numpy())
 
-    # Flatten predictions and actuals if they are nested lists
-    predictions = np.concatenate(predictions)
-    actuals = np.concatenate(actuals)
+                loss = criterion(predicted_coords, actual_coords)
 
-    # calculate metrics MSE, RMSE using predictions and actuals
-    mae = mean_absolute_error(actuals, predictions)
-    mse = mean_squared_error(actuals, predictions)
-    rmse = math.sqrt(mse)
+                perc_completion_list.append(data.perc_completion.cpu().numpy())
+            else:
+                loss = criterion(output, data.y)
 
-    sigma_list = np.concatenate([np.array(sigma).flatten() for sigma in sigma_list])
-    if 'timestamps' in params['required_features']:
-        perc_completion_list = np.concatenate([np.array(perc).flatten() for perc in perc_completion_list])
+                # Dictionary to store individual graph details
+                graph_details = {}
 
-    err_metrics = {
-        'actuals': actuals,
-        'predictions': predictions,
-        'perc_completion': perc_completion_list,
-        'sigma': sigma_list,
-        'mae': mae,
-        'mse': mse,
-        'rmse': rmse
-    }
+                # Calculate RMSE for each graph in the batch
+                for idx in range(data.num_graphs):
+                    prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
+                    actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
 
-    print("predictions: ", predictions)
-    print("actuals: ", actuals)
-    print("perc_completion_list: ", perc_completion_list)
-    print("sigma_list: ", sigma_list)
-    print(f'Mean Squared Error: {mse}')
-    print(f'Root Mean Squared Error: {rmse}')
+                    mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
+                    rmse = math.sqrt(mse)
+                    perc_completion = data.perc_completion[idx].item()
 
-    plt.figure(figsize=(10, 6))
-    plt.scatter(actuals, predictions, alpha=0.5)
-    plt.plot([actuals.min(), actuals.max()], [actuals.min(), actuals.max()], 'k--', lw=2)
-    plt.title('Predictions vs. Actuals')
-    plt.xlabel('Actual Values')
-    plt.ylabel('Predicted Values')
-    plt.show()
+                    # print(f"Graph {idx} {step} completion RMSE: {rmse}")
 
-    return predictions, actuals, err_metrics, perc_completion_list
+                    # Storing the metrics in the dictionary with graph id as key
+                    graph_details[idx] = {'rmse': rmse, 'perc_completion': perc_completion}
+
+                # Append to the detailed metrics dict
+                detailed_metrics.append(graph_details)
+
+            # Update AverageMeter with the current RMSE and number of graphs
+            loss_meter.update(loss.item(), data.num_graphs)
+
+            # Update the progress bar with the running average RMSE
+            progress_bar.set_postfix({"Validation Loss (MSE)": loss_meter.avg})
+
+    if test_loader:
+        # Flatten predictions and actuals if they are nested lists
+        predictions = np.concatenate(predictions)
+        actuals = np.concatenate(actuals)
+        perc_completion_list = np.concatenate(perc_completion_list)
+
+        mae = mean_absolute_error(actuals, predictions)
+        mse = mean_squared_error(actuals, predictions)
+        rmse = math.sqrt(mse)
+        print("MAE: ", mae)
+        print("MSE: ", mse)
+        print("loss_meter.avg: ", loss_meter.avg)
+        print("RMSE: ", rmse)
+
+        err_metrics = {
+            'actuals': actuals,
+            'predictions': predictions,
+            'perc_completion': perc_completion_list,
+            'mae': mae,
+            'mse': mse,
+            'rmse': rmse
+        }
+        return predictions, actuals, err_metrics, perc_completion_list
+
+    return loss_meter.avg, detailed_metrics
 
 
 def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv') -> None:
@@ -237,7 +266,7 @@ def plot_network_with_rssi(node_positions, final_rssi, jammer_position, noise_fl
 
     # Annotate the line with the RMSE
     mid_point = np.mean(line, axis=0)
-    ax.text(mid_point[0], mid_point[1]-20, f'RMSE: {rmse:.2f}m', fontsize=12, color='black')
+    ax.text(mid_point[0], mid_point[1] - 20, f'RMSE: {rmse:.2f}m', fontsize=12, color='black')
 
     coord_system = params['coords']
     # ax.set_title(f'Network Topology with RSSI, Noise Floor, and {coord_system} Jammer Prediction', fontsize=11)
