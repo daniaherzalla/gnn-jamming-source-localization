@@ -2,28 +2,30 @@ import ast
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import regex as re
 
 # Read the data from the CSV file
-data = pd.read_csv('epoch_metrics_converted.csv')
+folder_path = '/home/dania/gnn_clone_test/gnn-jamming-source-localization/experiments_datasets/datasets/dynamic/controlled/'
+file_path = folder_path + 'epoch_metrics.csv'
+data = pd.read_csv(file_path)
 
-# Prepare a new DataFrame for plotting epoch metrics
-plot_data = pd.DataFrame(columns=['Trial', 'Combination', 'Epoch', 'Val Loss'])
+# Regular expression to capture valid epoch data
+pattern = re.compile(r"Epoch: (\d+), Train Loss: ([\d.]+), Val Loss: ([\d.]+)")
 
 # Parsing the epochs data
 temp_data = []  # List to store temporary data dictionaries
 for index, row in data.iterrows():
-    # Convert the string representation of the list to an actual list
-    epoch_list = ast.literal_eval(row['epochs'])
-    for epoch_info in epoch_list:
-        parts = epoch_info.split(', ')
-        epoch_number = int(parts[0].split(': ')[1])
-        val_loss = float(parts[2].split(': ')[1])
+    # Find all matches using regex and ignore malformed endings
+    matches = pattern.findall(row['epochs'])
+    for match in matches:
+        epoch_number, train_loss, val_loss = match
         temp_data.append({
             'Trial': row['trial'],
             'Combination': row['combination'],
-            'Epoch': epoch_number,
-            'Val Loss': val_loss
+            'Epoch': int(epoch_number),
+            'Val Loss': float(val_loss)
         })
+
 
 # Convert list of dicts to DataFrame
 plot_data = pd.DataFrame(temp_data)
@@ -40,9 +42,10 @@ for label, grp in stats_data.groupby('Combination'):
 ax.set_xlabel('Epoch')
 ax.set_ylabel('Val Loss')
 ax.legend(title='Combination')
-# plt.ylim(0, 0.7)
-plt.xlim(0, 200)
-plt.savefig('epoch_metrics_converted.png', dpi=300)
+# plt.ylim(0, 0.4)
+plt.xlim(0)
+fig_path = folder_path + 'epoch_metrics.png'
+plt.savefig(fig_path, dpi=300)
 plt.show()
 
 # Plotting mean RMSE, MAE, and MSE comparison with standard deviations
@@ -52,7 +55,7 @@ stats_metrics.columns = ['combination', 'mae_mean', 'mae_std', 'mse_mean', 'mse_
 # Unique combinations for color differentiation
 combinations = stats_metrics['combination'].unique()
 
-# Bar plots for each metric with error bars
+# Bar plots for each metric with error bars and value annotations
 fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 metrics = ['mae', 'mse', 'rmse']
 
@@ -62,7 +65,15 @@ for i, metric in enumerate(metrics):
     for j, comb in enumerate(combinations):
         mean = stats_metrics.loc[stats_metrics['combination'] == comb, mean_col].values[0]
         std = stats_metrics.loc[stats_metrics['combination'] == comb, std_col].values[0]
-        axs[i].bar(comb, mean, yerr=std, capsize=4, label=comb if i == 0 else "")
+        bar = axs[i].bar(comb, mean, yerr=std, capsize=4, label=comb if i == 0 else "")
+
+        # Add annotation for each bar
+        axs[i].annotate(f'{mean:.2f}',
+                        xy=(comb, mean),
+                        xytext=(0, 3),  # 3 points vertical offset
+                        textcoords="offset points",
+                        ha='center', va='bottom')
+
     axs[i].set_title(f'Mean {metric.upper()} with Std Dev')
     axs[i].set_ylabel(metric.upper())
     axs[i].set_xticklabels(stats_metrics['combination'], rotation=45, ha="right")
@@ -70,5 +81,6 @@ for i, metric in enumerate(metrics):
 axs[0].legend(title='Combination')
 
 plt.tight_layout()
-plt.savefig('err_metrics_comparison_converted.png', dpi=300)
+fig_path = folder_path + 'err_metrics_comparison.png'
+plt.savefig(fig_path, dpi=300)
 plt.show()

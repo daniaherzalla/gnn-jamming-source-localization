@@ -1,0 +1,713 @@
+{
+    "best_hyperparameters": {
+        "batch_size": 64,
+        "dropout_rate": 0.21572827396994196,
+        "learning_rate": 0.003798188441131001,
+        "max_epochs": 150,
+        "num_heads": 4,
+        "weight_decay": 0.12803478500250418
+    },
+    "best_loss": 0.0006173196365125477,
+    "trials": [
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.2360014332396304,
+                "learning_rate": 0.0019377696821656451,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.0032862184457547205
+            },
+            "result": {
+                "loss": 0.0023517607990652324,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.20729195102764378,
+                "learning_rate": 0.00894531230250108,
+                "max_epochs": 200,
+                "num_heads": 4,
+                "weight_decay": 0.03650684831559968
+            },
+            "result": {
+                "loss": 0.0015667779510840773,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.14479249154722762,
+                "learning_rate": 0.006870438091567551,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.0059881123289096385
+            },
+            "result": {
+                "loss": 0.0012228310899809003,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.1202370924843303,
+                "learning_rate": 0.00175305326384555,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.037728015079575475
+            },
+            "result": {
+                "loss": 0.0007766498089767992,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.47006541357223586,
+                "learning_rate": 0.00615333478670878,
+                "max_epochs": 200,
+                "num_heads": 8,
+                "weight_decay": 0.07505650786124102
+            },
+            "result": {
+                "loss": 0.0017991145234555006,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.3590588097187192,
+                "learning_rate": 0.009079052712815103,
+                "max_epochs": 150,
+                "num_heads": 8,
+                "weight_decay": 0.15527135228558325
+            },
+            "result": {
+                "loss": 0.002746364213526249,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.11056259115112543,
+                "learning_rate": 0.0049023612132989,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.05150378393470532
+            },
+            "result": {
+                "loss": 0.0019301679357886315,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.4167027135419472,
+                "learning_rate": 0.004372983208871193,
+                "max_epochs": 150,
+                "num_heads": 8,
+                "weight_decay": 0.042602238458457724
+            },
+            "result": {
+                "loss": 0.001774386796168983,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.2861732444643158,
+                "learning_rate": 0.006802528245962761,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.009123674503640362
+            },
+            "result": {
+                "loss": 0.0012869325513020157,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.41222738764393785,
+                "learning_rate": 0.00915543413647253,
+                "max_epochs": 100,
+                "num_heads": 8,
+                "weight_decay": 0.05939786863170349
+            },
+            "result": {
+                "loss": 0.001895156824029982,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.2612131107566493,
+                "learning_rate": 0.005692677116019587,
+                "max_epochs": 200,
+                "num_heads": 4,
+                "weight_decay": 0.0029357329693320347
+            },
+            "result": {
+                "loss": 0.0009613253851421177,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.48248828854452963,
+                "learning_rate": 0.004103219236060735,
+                "max_epochs": 200,
+                "num_heads": 8,
+                "weight_decay": 0.006085738367259558
+            },
+            "result": {
+                "loss": 0.0021181507874280213,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.2221381001848192,
+                "learning_rate": 0.0003101395053922877,
+                "max_epochs": 200,
+                "num_heads": 2,
+                "weight_decay": 0.005056688135845899
+            },
+            "result": {
+                "loss": 0.0010678963968530296,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.20018063165648817,
+                "learning_rate": 0.00324400962621602,
+                "max_epochs": 150,
+                "num_heads": 8,
+                "weight_decay": 0.01850428447019967
+            },
+            "result": {
+                "loss": 0.0012879790971055626,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.23949938003570737,
+                "learning_rate": 0.004985302562182987,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.016600154820252785
+            },
+            "result": {
+                "loss": 0.001358575369231403,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.34902658501807304,
+                "learning_rate": 0.004345572592935864,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.06412991165850804
+            },
+            "result": {
+                "loss": 0.0009154774574562908,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.10366300109566935,
+                "learning_rate": 0.009198291108415971,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.0040934940793381745
+            },
+            "result": {
+                "loss": 0.0012050920375622808,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.10729670758653419,
+                "learning_rate": 0.009998902646174363,
+                "max_epochs": 200,
+                "num_heads": 8,
+                "weight_decay": 0.003593120029913132
+            },
+            "result": {
+                "loss": 0.001415882520377636,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.4043764811121825,
+                "learning_rate": 0.007247542161530017,
+                "max_epochs": 150,
+                "num_heads": 8,
+                "weight_decay": 0.32229233027149645
+            },
+            "result": {
+                "loss": 0.000920353033579886,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.29601611272502254,
+                "learning_rate": 0.0050953778285671245,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.029679473934005503
+            },
+            "result": {
+                "loss": 0.0016512563452124596,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.3405137228960125,
+                "learning_rate": 0.0013051887417966758,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.10604038192134585
+            },
+            "result": {
+                "loss": 0.001267699501477182,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.16721031568885544,
+                "learning_rate": 0.002603063836526032,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.21289249243656258
+            },
+            "result": {
+                "loss": 0.0007412705081515014,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.16347556283226733,
+                "learning_rate": 0.0020888008791238514,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.28918010699807223
+            },
+            "result": {
+                "loss": 0.0007737398031167686,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.1685590200644291,
+                "learning_rate": 0.0026883304812119636,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.3374599810247322
+            },
+            "result": {
+                "loss": 0.0009098148788325488,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.16401781927604467,
+                "learning_rate": 0.00032002896520593295,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.1716039493662112
+            },
+            "result": {
+                "loss": 0.002330431877635419,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.15127731596964508,
+                "learning_rate": 0.0031198853075494622,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.23620501204031777
+            },
+            "result": {
+                "loss": 0.0007208030298352241,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.18508558409721054,
+                "learning_rate": 0.0031457105567613062,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.19566680149919866
+            },
+            "result": {
+                "loss": 0.0010563705232925712,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.13509147461316556,
+                "learning_rate": 0.0012700442393702026,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.10489439408921085
+            },
+            "result": {
+                "loss": 0.0011219158675521612,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.24537567262447912,
+                "learning_rate": 0.002546739343991292,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.25505202701546004
+            },
+            "result": {
+                "loss": 0.0009571851673536003,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.31772008261027457,
+                "learning_rate": 0.003414054695420088,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.11268599048102465
+            },
+            "result": {
+                "loss": 0.0011253544688224792,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.2649812712808119,
+                "learning_rate": 0.0012780071743670957,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.22271183913433915
+            },
+            "result": {
+                "loss": 0.0012644733116030692,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.21572827396994196,
+                "learning_rate": 0.003798188441131001,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.12803478500250418
+            },
+            "result": {
+                "loss": 0.0006173196365125477,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.2103676116983633,
+                "learning_rate": 0.0037032295556471864,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.13421949716327067
+            },
+            "result": {
+                "loss": 0.0006360868853516877,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.2135433338907302,
+                "learning_rate": 0.007581498656661155,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.02449420688865418
+            },
+            "result": {
+                "loss": 0.0011605443200096489,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.2715950737135464,
+                "learning_rate": 0.008054850700494403,
+                "max_epochs": 200,
+                "num_heads": 4,
+                "weight_decay": 0.13122277428735593
+            },
+            "result": {
+                "loss": 0.0012756939278915525,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.3137769897926642,
+                "learning_rate": 0.005608740860343233,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.08365033666767582
+            },
+            "result": {
+                "loss": 0.0009705078788101673,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.19877939500232128,
+                "learning_rate": 0.004056157920856322,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.082281452428008
+            },
+            "result": {
+                "loss": 0.000933231262024492,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.22391725129335985,
+                "learning_rate": 0.0037056992460916655,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.14808288475080422
+            },
+            "result": {
+                "loss": 0.0007582455058582127,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.13291430067505575,
+                "learning_rate": 0.006294173153880892,
+                "max_epochs": 200,
+                "num_heads": 4,
+                "weight_decay": 0.041584964601329
+            },
+            "result": {
+                "loss": 0.0013846098189242183,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.38324156767771517,
+                "learning_rate": 0.0046720167546511,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.00949112611898605
+            },
+            "result": {
+                "loss": 0.0012275156332179904,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.4527595685170841,
+                "learning_rate": 0.00211914173635515,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.05627010812128624
+            },
+            "result": {
+                "loss": 0.0014021213166415692,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.18495064728864627,
+                "learning_rate": 0.005409429586615517,
+                "max_epochs": 200,
+                "num_heads": 8,
+                "weight_decay": 0.031696516919114646
+            },
+            "result": {
+                "loss": 0.0011401905585080386,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.25284803497765074,
+                "learning_rate": 0.006410703768924023,
+                "max_epochs": 100,
+                "num_heads": 4,
+                "weight_decay": 0.01298899081841131
+            },
+            "result": {
+                "loss": 0.0009070099564269185,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.2825458435236127,
+                "learning_rate": 0.0008551350228577928,
+                "max_epochs": 150,
+                "num_heads": 2,
+                "weight_decay": 0.04647905347999812
+            },
+            "result": {
+                "loss": 0.002634424390271306,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.23129874872717635,
+                "learning_rate": 0.003691166992227631,
+                "max_epochs": 150,
+                "num_heads": 8,
+                "weight_decay": 0.06711117709905937
+            },
+            "result": {
+                "loss": 0.0011194559885188938,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.3301881435903035,
+                "learning_rate": 0.005924436929922098,
+                "max_epochs": 200,
+                "num_heads": 4,
+                "weight_decay": 0.09150530264996283
+            },
+            "result": {
+                "loss": 0.000771171348169446,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 128,
+                "dropout_rate": 0.37001309639431385,
+                "learning_rate": 0.0045525255270186075,
+                "max_epochs": 100,
+                "num_heads": 2,
+                "weight_decay": 0.14940773879420824
+            },
+            "result": {
+                "loss": 0.0010214234166778624,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.12518776854953417,
+                "learning_rate": 0.008242820855177193,
+                "max_epochs": 150,
+                "num_heads": 8,
+                "weight_decay": 0.12225470283309146
+            },
+            "result": {
+                "loss": 0.0009990526339970528,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 64,
+                "dropout_rate": 0.18877509196260797,
+                "learning_rate": 0.0017593294716104317,
+                "max_epochs": 150,
+                "num_heads": 4,
+                "weight_decay": 0.36738485658036185
+            },
+            "result": {
+                "loss": 0.001069330917671323,
+                "status": "ok"
+            }
+        },
+        {
+            "hyperparameters": {
+                "batch_size": 32,
+                "dropout_rate": 0.21036610946163875,
+                "learning_rate": 0.006736753261185974,
+                "max_epochs": 100,
+                "num_heads": 4,
+                "weight_decay": 0.018785227186044143
+            },
+            "result": {
+                "loss": 0.0009367581945843995,
+                "status": "ok"
+            }
+        }
+    ]
+}
