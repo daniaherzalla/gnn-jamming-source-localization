@@ -1,17 +1,12 @@
 import math
+import pickle
 import random
 import numpy as np
 import csv
 import matplotlib.pyplot as plt
 
-# Setup CSV file
-csv_file = open('linear_path_static.csv', 'w', newline='')
-csv_writer = csv.writer(csv_file)
-csv_writer.writerow([
-    'num_samples', 'node_positions', 'node_noise', 'angle_of_arrival',
-    'pl_exp', 'sigma',
-    'jammer_power', 'jammer_position', 'jammer_gain', 'dataset'
-])
+# Setup for pickle file
+output_data = []
 
 def dbm_to_linear(dbm):
     return 10 ** (dbm / 10)
@@ -62,21 +57,21 @@ def plot_instance(positions, noise_values, angles, shadowings, rssi_values, jamm
     plt.show()
 
 def run_simulation():
-    width, height = 1000, 1000
+    width, height = 1500, 1500
     jammer_pos = (random.randint(0, width), random.randint(0, height))
     P_tx_jammer = random.uniform(20, 60)
     antenna_gain = random.uniform(0, 5)
     path_loss_exponent = random.uniform(2.7, 3.5)
+    shadowing = np.random.uniform(2, 6)
     noise_level = -100
 
     start_pos = (random.randint(0, width), random.randint(0, height))
     end_pos = (random.randint(0, width), random.randint(0, height))
-    num_points = int(np.random.beta(4, 10) * 5000) + 1
+    num_points = np.random.randint(5000, 10000) #int(np.random.beta(4, 10) * 10000) + 1
     positions = generate_points(start_pos, end_pos, num_points)
 
     positions_data, noise_values, angles, shadowings, rssi_values = [], [], [], [], []
     for pos in positions:
-        shadowing = np.random.uniform(2, 6)
         distance_to_jammer = math.hypot(jammer_pos[0] - pos[0], jammer_pos[1] - pos[1])
         rssi = calculate_omni_rssi(distance_to_jammer, P_tx_jammer, antenna_gain, path_loss_exponent, shadowing)
         noise = dbm_to_linear(rssi) + dbm_to_linear(noise_level)
@@ -97,11 +92,18 @@ def run_simulation():
     # plot_instance(positions_data, noise_values, angles, shadowings, rssi_values, jammer_pos, P_tx_jammer)
 
     if sum(noise > -55 for noise in noise_values) >= 3:
-        csv_writer.writerow([
-            len(positions_data), positions_data, noise_values, angles,
-            path_loss_exponent, shadowings, P_tx_jammer,
-            list(jammer_pos), antenna_gain, 'dynamic_linear_path'
-        ])
+        output_data.append({
+            'num_samples': len(positions_data),
+            'node_positions': positions_data,
+            'node_noise': noise_values,
+            'angle_of_arrival': angles,
+            'pl_exp': path_loss_exponent,
+            'sigma': shadowing,
+            'jammer_power': P_tx_jammer,
+            'jammer_position': list(jammer_pos),
+            'jammer_gain': antenna_gain,
+            'dataset': 'dynamic_linear_path'
+        })
         return True
     return False
 
@@ -112,5 +114,9 @@ def generate_instances(target_instances):
             valid_instances += 1
         print(f"Completed instances: {valid_instances}")
 
-generate_instances(5000)  # Demonstrative reduced number
-csv_file.close()
+generate_instances(1000)  # Demonstrative reduced number
+# csv_file.close()
+
+# Save to pickle file
+with open('linear_path_static.pkl', 'wb') as pkl_file:
+    pickle.dump(output_data, pkl_file)

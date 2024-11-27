@@ -1,9 +1,11 @@
+import json
 import math
 import random
 import time
 import numpy as np
 import csv
 import pygame
+import pickle
 
 # Initialize Pygame
 pygame.init()
@@ -20,16 +22,11 @@ green = (0, 255, 0)
 # Fonts
 font = pygame.font.Font(None, 36)
 
-# Setup the CSV file to save the data
-csv_file = open('guided_path_data.csv', 'a', newline='')
-csv_writer = csv.writer(csv_file)
+# Function to save data to .pkl file
+def save_data_as_pkl(data, filename='controlled_path_data_1000sqm.pkl'):
+    with open(filename, 'ab') as pkl_file:  # 'ab' mode to append binary data
+        pickle.dump(data, pkl_file)
 
-# Write the header row
-csv_writer.writerow([
-    'num_samples', 'timestamps', 'node_positions', 'node_noise', 'angle_of_arrival', 'speed',
-    'pl_exp', 'sigma', 'alignment_coefficient', 'sampling_frequency',
-    'jammer_power', 'jammer_position', 'jammer_gain', 'dataset'
-])
 
 def dbm_to_linear(dbm):
     """Convert dBm to linear scale (milliwatts)."""
@@ -112,7 +109,7 @@ def run_simulation():
     antenna_gain = random.uniform(0, 5)  # dBi
     path_loss_exponent = random.uniform(2.7, 3.5)
     shadowing = np.random.uniform(2, 6)
-    sampling_frequency = random.uniform(100, 500)  # Every second
+    sampling_frequency = 10000 #random.uniform(100, 1000)  # Every second
     noise_level = -100
 
     # Starting conditions for the drone
@@ -123,8 +120,8 @@ def run_simulation():
         'left': (0, random.randint(0, height)),
         'right': (width, random.randint(0, height))
     }[side]
-    alignment_coefficient = np.random.uniform(0.0025, 0.015)
-    drone_speed = np.random.uniform(10, 30)
+    alignment_coefficient = np.random.uniform(0.00015, 0.0025) # (0.00025, 0.015)
+    drone_speed = 1 #np.random.uniform(5, 15)
     velocity = (drone_speed, drone_speed)
     speed = math.hypot(*velocity)
     velocity = (velocity[0] / speed, velocity[1] / speed)
@@ -132,14 +129,15 @@ def run_simulation():
     total_angle = 0
     previous_angle = math.atan2(drone_pos[1] - point_a[1], drone_pos[0] - point_a[0])
     D = 10  # Distance threshold
-    last_sample_time = time.time()
+    # last_sample_time = time.time()
+    last_sample_time = time.perf_counter()
 
     noise_values = []
     positions = []
     angles = []
     timestamps = []
     running = True
-    clock = pygame.time.Clock()
+    # clock = pygame.time.Clock()
 
     while running:
         for event in pygame.event.get():
@@ -147,7 +145,8 @@ def run_simulation():
                 running = False
                 return False  # Indicates to stop all simulations
 
-        current_time = time.time()
+        # current_time = time.time()
+        current_time = time.perf_counter()
         if current_time - last_sample_time >= 1 / sampling_frequency:
             distance_to_jammer = math.hypot(point_a[0] - drone_pos[0], point_a[1] - drone_pos[1])
             rssi = calculate_omni_rssi(distance_to_jammer, P_tx_jammer, antenna_gain, path_loss_exponent, shadowing)
@@ -202,9 +201,9 @@ def run_simulation():
         is_within_distance = math.hypot(drone_pos[0] - point_a[0], drone_pos[1] - point_a[1]) <= D
 
         # Visualization parameters
-        screen.fill((0, 0, 0))
-        pygame.draw.circle(screen, red, point_a, 5)
-        pygame.draw.circle(screen, white, (int(drone_pos[0]), int(drone_pos[1])), 10)
+        # screen.fill((0, 0, 0))
+        # pygame.draw.circle(screen, red, point_a, 5)
+        # pygame.draw.circle(screen, white, (int(drone_pos[0]), int(drone_pos[1])), 10)
 
         # Display status text
         status_text = f"Went around: {has_completed_round} | Distance < {D}: {is_within_distance}"
@@ -213,37 +212,40 @@ def run_simulation():
 
         if has_completed_round and is_within_distance:
             if len(positions) > 2:
-                # Check if any RSSI value in the list is greater than -55 dBm
-                if sum(rssi > -55 for rssi in noise_values) >= 3: # RSSI condition
-                    data_row = [
-                        len(positions),
-                        timestamps,
-                        positions,
-                        noise_values,
-                        angles,
-                        drone_speed, path_loss_exponent, shadowing,
-                        alignment_coefficient, sampling_frequency,
-                        P_tx_jammer, list(point_a),
-                        antenna_gain,  # Assuming jammer gain is the same as antenna gain for simplicity
-                        'dynamic_controlled_path'
-                    ]
-                    csv_writer.writerow(data_row)
+                # Check RSSI condition
+                if sum(rssi > -55 for rssi in noise_values) >= 3:
+                    data_dict = {
+                        'num_samples': len(positions),
+                        'node_positions': positions,
+                        'node_noise': noise_values,
+                        'angle_of_arrival': angles,
+                        'speed': drone_speed,
+                        'pl_exp': path_loss_exponent,
+                        'sigma': shadowing,
+                        'alignment_coefficient': alignment_coefficient,
+                        'sampling_frequency': sampling_frequency,
+                        'jammer_power': P_tx_jammer,
+                        'jammer_position': list(point_a),
+                        'jammer_gain': antenna_gain,
+                        'dataset': 'dynamic_controlled_path'
+                    }
+                    save_data_as_pkl(data_dict)
                     return True
 
-        pygame.display.flip()
-        clock.tick(60)
+        # pygame.display.flip()
+        # clock.tick(60)
 
     return True  # Normal end of a simulation run
 
 
 # Run 1000 simulations until we get 1000 valid instances
 valid_instance_count = 0
-while valid_instance_count < 5000:
+while valid_instance_count < 1000:
     if run_simulation():
+        print(valid_instance_count)
         valid_instance_count += 1
     else:
         break  # Exit if the simulation signaled to stop
 
 
-csv_file.close()
 pygame.quit()
