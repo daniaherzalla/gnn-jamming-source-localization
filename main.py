@@ -23,6 +23,11 @@ def main():
     """
     seeds = [1, 23, 42]
 
+    # Early stopping parameters
+    patience = 100
+    patience_counter = 0
+    early_stop = False
+
     if params['train_per_class']:
         if params['dynamic']:
             dataset_classes = ['dynamic_linear_path', 'dynamic_controlled_path']
@@ -50,12 +55,15 @@ def main():
         print("val_set_name: ", val_set_name)
         print("test_set_name: ", test_set_name)
 
+        print("max_nodes: ", params['max_nodes'])
+        print("ds_method: ", params['ds_method'])
+
         for trial_num, seed in enumerate(seeds):
             print("\nseed: ", seed)
             set_seeds_and_reproducibility(100)
 
             # Experiment params
-            combination = params['coords'] + '_' + params['edges'] + str(params['num_neighbors']) + '_' + params['norm'] + '_' + str(params['max_nodes'])
+            combination = params['coords'] + '_' + params['edges'] + str(params['num_neighbors']) + '_' + params['norm'] + '_' + str(params['max_nodes']) + params['ds_method']
 
             if params['study'] == 'coord_system':
                 experiment_path = 'experiments_datasets/cartesian_vs_polar/' + params['experiments_folder']
@@ -77,12 +85,14 @@ def main():
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             print("device: ", device)
 
+            model_name = params['model']
+
             # Inference
             if params['inference']:
                 for test_set_name in params['test_sets']:
                     print(test_set_name)
                     train_dataset, val_dataset, test_dataset = load_data(params, test_set_name, experiment_path)
-                    _, _, test_loader = create_data_loader(params, train_dataset, val_dataset, test_dataset)
+                    _, _, test_loader = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
                     steps_per_epoch = len(test_loader)  # Calculate steps per epoch based on the training data loader
                     model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
 
@@ -93,7 +103,7 @@ def main():
 
                     # Save predictions, actuals, and perc_completion to a CSV file
                     max_nodes = params['max_nodes']
-                    file = f'{experiment_path}/predictions_{max_nodes}_{test_set_name}'
+                    file = f'{experiment_path}/predictions_{max_nodes}_{test_set_name}_{model_name}'
 
                     # Check if the file exists
                     file_exists = os.path.isfile(file)
@@ -113,7 +123,7 @@ def main():
                 set_seeds_and_reproducibility(seed)
 
                 # Create data loaders
-                train_loader, val_loader, test_loader = create_data_loader(params, train_dataset, val_dataset, test_dataset)
+                train_loader, val_loader, test_loader = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
 
                 # Initialize model
                 steps_per_epoch = len(train_loader) # Calculate steps per epoch based on the training data loader  # steps per epoch set based on 10000 samples dataset
@@ -137,14 +147,24 @@ def main():
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         best_model_state = model.state_dict()
+                        patience_counter = 0  # reset patience counter on improvement
+                    else:
+                        patience_counter += 1  # increment patience counter if no improvement
+
+                    # # Early stopping check
+                    # if patience_counter > patience:
+                    #     early_stop = True
+                    #     print("Early stopping triggered")
+                    #     break
 
                 # Save the trained model
                 torch.save(best_model_state, model_path)
 
                 # Save the graph epoch results to a pickle file
                 max_nodes = params['max_nodes']
-                validation_details_path = experiment_path + f'validation_details_{max_nodes}.pkl'
-                train_details_path = experiment_path + f'train_details_{max_nodes}.pkl'
+                ds_method = params['ds_method']
+                validation_details_path = experiment_path + f'validation_details_{max_nodes}_{ds_method}_seed{seed}.pkl' #_seed{seed}
+                train_details_path = experiment_path + f'train_details_{max_nodes}_{ds_method}_seed{seed}.pkl' #_seed{seed}
 
                 with open(validation_details_path, 'wb') as f:
                     pickle.dump(val_details, f)
@@ -170,7 +190,7 @@ def main():
                     'required_feats': params['required_features'],
                     'additional_feats': params['additional_features'],
                     'max_nodes': params['max_nodes'],
-                    'dist_threshold': params['dist_threshold'],
+                    'ds_method': params['ds_method'],
                     'epochs': epoch_info
                 }
 
@@ -182,7 +202,7 @@ def main():
                 rmse_vals.append(err_metrics['rmse'])
 
                 # Save predictions, actuals, and perc_completion to a CSV file
-                file = f'{experiment_path}/predictions_{max_nodes}.csv'
+                file = f'{experiment_path}/predictions_{max_nodes}_{ds_method}_{model_name}.csv'
 
                 # Check if the file exists
                 file_exists = os.path.isfile(file)

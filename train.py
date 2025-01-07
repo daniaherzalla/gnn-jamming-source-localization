@@ -55,7 +55,8 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
     model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'],
                 out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
-    scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear')
+    # optimizer = optim.SGD(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'], momentum=0.9)
+    scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear') # 10 epochs warmup (sgd momentum 0.9) #(10/params['max_epochs'])
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
 
@@ -115,6 +116,11 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         for idx in range(data.num_graphs):
             prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
             actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
+            #
+            # if torch.isnan(prediction).any():
+            #     print("Warning: NaN values in predictions")
+            #     print("prediction: ", prediction)
+            #     # Add code to handle or log this issue as needed
 
             mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
             rmse = math.sqrt(mse)
@@ -178,6 +184,11 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                 for idx in range(data.num_graphs):
                     prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
                     actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
+
+                    # if torch.isnan(prediction).any():
+                    #     print("Warning: NaN values in predictions")
+                    #     print("prediction: ", prediction)
+                    #     # Add code to handle or log this issue as needed
 
                     mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
                     rmse = math.sqrt(mse)

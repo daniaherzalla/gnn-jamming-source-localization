@@ -1,4 +1,8 @@
 import os
+import pickle
+import hashlib
+import json
+
 import pandas as pd
 import numpy as np
 import random
@@ -8,8 +12,7 @@ import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from torch.utils.data import Subset, Dataset
-from typing import Tuple, List, Any
-from sklearn.metrics.pairwise import euclidean_distances
+from typing import Tuple, List
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
 import logging
@@ -108,10 +111,6 @@ class TemporalGraphDataset(Dataset):
             # Precompute the graphs during dataset initialization for the test set
             self.samples = self.expand_samples()
             self.precomputed_graphs = [self.precompute_graph(instance) for instance in self.samples]
-
-            # TODO: buffer this into a pickle saving within data['discritization_coeff']/data['dataset'], etc.
-            ## Check if this is saved already, if not then compute
-        #     get hash from data loader and then check if same just fecth saved data else save data
         else:
             self.samples = [Instance(row) for _, row in data.iterrows()]
 
@@ -119,6 +118,7 @@ class TemporalGraphDataset(Dataset):
         expanded_samples = []
         for _, row in self.data.iterrows():
             lb_end = max(int(row['jammed_at']), min(params['max_nodes'], len(row['node_positions'])))
+            # lb_end = max(int(row['jammed_at']), min(10, len(row['node_positions'])))
             ub_end = len(row['node_positions'])
             # lb_end = int((ub_end - lb_end) / 2)
 
@@ -158,7 +158,8 @@ class TemporalGraphDataset(Dataset):
         # Check if jammed_at is not NaN and set the lower bound for random selection
         if np.isnan(instance.jammed_at):
             raise ValueError("No jammed instance")
-        lb_end = int(instance.jammed_at) if not np.isnan(instance.jammed_at) else len(instance.node_positions)
+        lb_end = max(int(instance.jammed_at), min(params['max_nodes'], len(instance.node_positions)))
+        # lb_end = max(int(instance.jammed_at), min(10, len(instance.node_positions)))
         ub_end = len(instance.node_positions)  # The upper bound is always the length of node_positions
         end = random.randint(lb_end, ub_end)
 
@@ -322,10 +323,12 @@ def apply_unit_sphere_normalization(data):
         data.at[idx, 'max_radius'] = max_radius
 
 
-def convert_data_type(data):
-    # Convert from str to required data type for specified features
-    dataset_features = params['required_features'] + ['jammer_position']
-
+def convert_data_type(data, load_saved_data):
+    if load_saved_data:
+        dataset_features = params['required_features'] + ['jammer_position', 'jammed_at', 'jammer_power',  'num_samples',  'sigma', 'jammer_power', 'id']
+    else:
+        # Convert from str to required data type for specified features
+        dataset_features = params['required_features'] + ['jammer_position']
     # Apply conversion to each feature directly
     for feature in dataset_features:
         data[feature] = data[feature].apply(lambda x: safe_convert_list(x, feature))
@@ -546,10 +549,12 @@ def engineer_node_features(subgraph):
     if 'moving_avg_aoa' in params['additional_features']:
         sin_aoa = subgraph.x[:, 3]  # sin(AoA) is at position 3
         cos_aoa = subgraph.x[:, 4]  # cos(AoA) is at position 4
-        aoa = torch.atan2(sin_aoa, cos_aoa)
-        moving_avg_aoa = dynamic_moving_average(aoa)
-        new_features.append(torch.sin(moving_avg_aoa).unsqueeze(1))
-        new_features.append(torch.cos(moving_avg_aoa).unsqueeze(1))
+
+        smoothed_sin = dynamic_moving_average(sin_aoa)
+        smoothed_cos = dynamic_moving_average(cos_aoa)
+
+        new_features.append(smoothed_sin.unsqueeze(1))
+        new_features.append(smoothed_cos.unsqueeze(1))
 
     if new_features:
         try:
@@ -658,7 +663,7 @@ def split_datasets(data):
         The train, validation, and test datasets and their corresponding DataFrames.
     """
 
-    logging.info('Creating train_test splits...')
+    logging.info('Creating train test splits...')
 
     # Stratified split using scikit-learn
     train_idx, test_idx, train_test_y, test_y = train_test_split(
@@ -689,23 +694,28 @@ def split_datasets(data):
 
 def save_datasets(combined_train_df, combined_val_df, combined_test_df, experiments_path):
     """
-    Process the combined train, validation, and test data, and save them to disk.
+    Process the combined train, validation, and test data, and save them to disk as .pkl files.
 
     Args:
-        combined_train_data (list): List of training data samples.
-        combined_val_data (list): List of validation data samples.
-        combined_test_data (list): List of test data samples.
         combined_train_df (pd.DataFrame): DataFrame containing combined training data.
         combined_val_df (pd.DataFrame): DataFrame containing combined validation data.
         combined_test_df (pd.DataFrame): DataFrame containing combined test data.
         experiments_path (str): The path where the processed data will be saved.
     """
-    logging.info("Saving data...")
+    logging.info("Saving data")
 
-    # Save the combined DataFrame subsets
-    combined_train_df.to_csv(os.path.join(experiments_path, 'train_dataset.csv'), index=False)
-    combined_val_df.to_csv(os.path.join(experiments_path, 'val_dataset.csv'), index=False)
-    combined_test_df.to_csv(os.path.join(experiments_path, 'test_dataset.csv'), index=False)
+    # Define file paths
+    train_file_path = os.path.join(experiments_path, 'train_dataset.pkl')
+    val_file_path = os.path.join(experiments_path, 'val_dataset.pkl')
+    test_file_path = os.path.join(experiments_path, 'test_dataset.pkl')
+
+    # Save the combined DataFrame subsets as .pkl files
+    with open(train_file_path, 'wb') as f:
+        pickle.dump(combined_train_df, f)
+    with open(val_file_path, 'wb') as f:
+        pickle.dump(combined_val_df, f)
+    with open(test_file_path, 'wb') as f:
+        pickle.dump(combined_test_df, f)
 
     # Dataset types for specific filtering
     if params['dynamic']:
@@ -715,22 +725,27 @@ def save_datasets(combined_train_df, combined_val_df, combined_test_df, experime
                          'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
                          'random_jammer_outside_region', 'all_jammed', 'all_jammed_jammer_outside_region']
 
-    print("combined_test_df['dataset']: ", combined_test_df['dataset'])
-
     for dataset in dataset_types:
+        # Create filtered subsets based on dataset type
         train_subset = combined_train_df[combined_train_df['dataset'] == dataset]
         val_subset = combined_val_df[combined_val_df['dataset'] == dataset]
         test_subset = combined_test_df[combined_test_df['dataset'] == dataset]
 
-        print("test_subset: ", test_subset)
-
+        # Save each subset as .pkl if it is not empty
         if not train_subset.empty:
-            train_subset.to_csv(os.path.join(experiments_path, f'{dataset}_train_set.csv'), index=False)
-        if not val_subset.empty:
-            val_subset.to_csv(os.path.join(experiments_path, f'{dataset}_val_set.csv'), index=False)
-        if not test_subset.empty:
-            test_subset.to_csv(os.path.join(experiments_path, f'{dataset}_test_set.csv'), index=False)
+            train_subset_path = os.path.join(experiments_path, f'{dataset}_train_set.pkl')
+            with open(train_subset_path, 'wb') as f:
+                pickle.dump(train_subset, f)
 
+        if not val_subset.empty:
+            val_subset_path = os.path.join(experiments_path, f'{dataset}_val_set.pkl')
+            with open(val_subset_path, 'wb') as f:
+                pickle.dump(val_subset, f)
+
+        if not test_subset.empty:
+            test_subset_path = os.path.join(experiments_path, f'{dataset}_test_set.pkl')
+            with open(test_subset_path, 'wb') as f:
+                pickle.dump(test_subset, f)
 
 def downsample_data(instance):
     """
@@ -770,58 +785,6 @@ def downsample_data(instance):
 
     return instance
 
-# Downsampling by distance
-def distance_between_points(point1, point2):
-    """
-    Calculate the Euclidean distance between two points (x, y).
-
-    Args:
-        point1 (array-like): Coordinates of the first point (x1, y1).
-        point2 (array-like): Coordinates of the second point (x2, y2).
-
-    Returns:
-        float: The distance between the two points.
-    """
-    return np.linalg.norm(np.array(point1) - np.array(point2))
-
-
-def downsample_data_by_distance(instance):
-    """
-    Downsamples the data of an instance object based on a fixed distance threshold.
-
-    Args:
-        instance (Instance): The instance to downsample.
-        distance_threshold (float): The minimum distance between consecutive samples (in meters).
-
-    Returns:
-        Instance: The downsampled instance.
-    """
-    downsampled_positions = [instance.node_positions[0]]  # Start with the first node
-    downsampled_noise_values = [instance.node_noise[0]]
-    downsampled_angles = [instance.angle_of_arrival[0]] if 'angle_of_arrival' in params['required_features'] else []
-
-    for i in range(1, len(instance.node_positions)):
-        last_position = downsampled_positions[-1]
-        current_position = instance.node_positions[i]
-
-        # Calculate the distance between the last downsampled point and the current point
-        distance = distance_between_points(last_position, current_position)
-
-        if distance >= params['dist_threshold']:
-            downsampled_positions.append(current_position)
-            downsampled_noise_values.append(instance.node_noise[i])
-            if 'angle_of_arrival' in params['required_features']:
-                downsampled_angles.append(instance.angle_of_arrival[i])
-
-    # Update instance with downsampled data
-    instance.node_positions = np.array(downsampled_positions)
-    instance.node_noise = np.array(downsampled_noise_values)
-    if 'angle_of_arrival' in params['required_features']:
-        instance.angle_of_arrival = np.array(downsampled_angles)
-
-    return instance
-
-
 # Noise based downsampling
 def downsample_data_by_highest_noise(instance):
     """
@@ -855,9 +818,75 @@ def downsample_data_by_highest_noise(instance):
     return instance
 
 
+def bin_nodes(nodes, grid_meters):
+    """Bin nodes by averaging positions, noise levels, and angle of arrival within each grid cell."""
+    max_nodes = params['max_nodes']
+    nodes['x_bin'] = (nodes['x'] // grid_meters).astype(int)
+    nodes['y_bin'] = (nodes['y'] // grid_meters).astype(int)
+    binned = nodes.groupby(['x_bin', 'y_bin']).mean().reset_index()
+    binned['x'] = (binned['x_bin'] + 0.5) * grid_meters
+    binned['y'] = (binned['y_bin'] + 0.5) * grid_meters
+    # Sort by noise_level and keep the top max_nodes
+    binned = binned.sort_values(by='noise_level', ascending=False).head(max_nodes)
+    return binned
+
+
+def hybrid_downsampling_pipeline(instance):
+    """
+    Combines spatial binning, time window averaging, and noise filtering in sequence.
+
+    Args:
+        instance: The data instance to downsample.
+        filtering_proportion: Proportion of nodes to retain after noise filtering (e.g., 0.6 for 60%).
+
+    Returns:
+        instance: Downsampled instance.
+    """
+    # Step 1: Spatial Binning
+    node_df = pd.DataFrame({
+        'x': instance.node_positions[:, 0],
+        'y': instance.node_positions[:, 1],
+        'noise_level': instance.node_noise
+    })
+    if 'angle_of_arrival' in params['required_features']:
+        node_df['angle_of_arrival'] = instance.angle_of_arrival
+
+    binned_nodes = bin_nodes(node_df, grid_meters=params['grid_meters'])
+
+    # Step 2: Time Window Averaging
+    downsampled_positions, downsampled_noise, downsampled_angles = [], [], []
+    max_nodes = params['max_nodes']
+    num_binned_nodes = len(binned_nodes)
+
+    window_size = max(1, num_binned_nodes // max_nodes)
+    for i in range(0, num_binned_nodes, window_size):
+        batch = binned_nodes.iloc[i:i + window_size]
+        downsampled_positions.append(batch[['x', 'y']].mean().to_numpy())
+        downsampled_noise.append(batch['noise_level'].mean())
+        if 'angle_of_arrival' in params['required_features']:
+            downsampled_angles.append(batch['angle_of_arrival'].mean())
+
+    # Update instance after time window averaging
+    instance.node_positions = np.array(downsampled_positions)
+    instance.node_noise = np.array(downsampled_noise)
+    if 'angle_of_arrival' in params['required_features']:
+        instance.angle_of_arrival = np.array(downsampled_angles)
+
+    # Step 3: Noise Filtering
+    num_filtered_nodes = max(1, int(max_nodes * params['filtering_proportion']))
+    high_noise_indices = np.argsort(instance.node_noise)[-num_filtered_nodes:]
+    instance.node_positions = instance.node_positions[high_noise_indices]
+    instance.node_noise = instance.node_noise[high_noise_indices]
+    if 'angle_of_arrival' in params['required_features']:
+        instance.angle_of_arrival = instance.angle_of_arrival[high_noise_indices]
+
+    return instance
+
+
 def add_jammed_column(data, threshold=-55):
     data['jammed_at'] = None
     for i, noise_list in enumerate(data['node_noise']):
+        # print("noise list: ", noise_list)
         # Check if noise_list is a valid non-empty list
         if not isinstance(noise_list, list) or len(noise_list) == 0:
             raise ValueError(f"Invalid or empty node_noise list at row {i}")
@@ -893,50 +922,87 @@ def load_data(params, test_set_name, experiments_path=None):
         Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
         The train, validation, and test datasets.
     """
-    logging.info("Loading data...")
     if params['inference']:
-        # load raw data csv
+        # Load the test data only for inference mode
         test_set_name = [test_set_name]
         for test_data in test_set_name:
             print(f"dataset: {test_data}")
-            print(f"experiments_path: {experiments_path}")
-            file_path = experiments_path + test_data
-            test_df = pd.read_csv(file_path)
-            convert_data_type(test_df)
+            file_path = os.path.join(experiments_path, f'{test_data}.pkl')
+            with open(file_path, 'rb') as f:
+                test_df = pickle.load(f)
             print(test_df.columns)
             return None, None, test_df
     else:
-        combined_train_df = pd.DataFrame()
-        combined_val_df = pd.DataFrame()
-        combined_test_df = pd.DataFrame()
+        # Define file paths for train, validation, and test datasets
+        train_file = os.path.join(experiments_path, 'train_dataset.pkl')
+        val_file = os.path.join(experiments_path, 'val_dataset.pkl')
+        test_file = os.path.join(experiments_path, 'test_dataset.pkl')
 
-        if params['all_env_data']:
-            datasets = ['data/train_test_data/log_distance/urban_area/combined_urban_area.csv', 'data/train_test_data/log_distance/shadowed_urban_area/combined_shadowed_urban_area.csv']
+        if all(os.path.exists(f) for f in [train_file, val_file, test_file]):
+            # Load existing datasets if they already exist
+            logging.info("Loading train test data...")
+
+            with open(train_file, 'rb') as f:
+                train_df = pickle.load(f)
+            with open(val_file, 'rb') as f:
+                val_df = pickle.load(f)
+            with open(test_file, 'rb') as f:
+                test_df = pickle.load(f)
+
         else:
-            datasets = [params['dataset_path']]
-        for dataset in datasets:
-            print(f"dataset: {dataset}")
-            data = pd.read_csv(dataset)
-            data['id'] = range(1, len(data) + 1)
-            convert_data_type(data)
+            if params['all_env_data']:
+                datasets = ['data/train_test_data/log_distance/urban_area/combined_urban_area.csv', 'data/train_test_data/log_distance/shadowed_urban_area/combined_shadowed_urban_area.csv']
+            else:
+                datasets = [params['dataset_path']]
+            for dataset in datasets:
+                print(f"dataset: {dataset}")
 
-            # Add jammed column
-            data = add_jammed_column(data, threshold=-55)
+                # Load the interpolated dataset from the pickle file
+                with open(dataset, "rb") as f:
+                    data_list = []
+                    try:
+                        # Read each dictionary entry in the list and add to data_list
+                        while True:
+                            data_list.append(pickle.load(f))
+                    except EOFError:
+                        pass  # End of file reached
 
-            # Create train test splits
-            train_df, val_df, test_df = split_datasets(data)
+                # # Load the entire list from the pickle file in one go
+                # data_list = []
+                # with open(dataset, 'rb') as f:
+                #     data_list = pickle.load(f)
 
-            combined_train_df = pd.concat([combined_train_df, train_df], ignore_index=True)
-            combined_val_df = pd.concat([combined_val_df, val_df], ignore_index=True)
-            combined_test_df = pd.concat([combined_test_df, test_df], ignore_index=True)
+                # Convert the list of dictionaries to a DataFrame
+                data = pd.DataFrame(data_list)
 
-        # Process and save the combined data
-        save_datasets(combined_train_df, combined_val_df, combined_test_df, experiments_path)
+                print(len(data))
+                print("COLUMNS: ", data.columns)
 
-        return combined_train_df, combined_val_df, combined_test_df
+                # Add additional columns required for processing
+                data['id'] = range(1, len(data) + 1)
+                data['dataset'] = 'linear_data'
+
+                # data = pd.read_csv(dataset)
+                # data['id'] = range(1, len(data) + 1)
+                # convert_data_type(data, load_saved_data=False)
+
+                # Add jammed column
+                data = add_jammed_column(data, threshold=-55)
+
+                # Create train test splits
+                train_df, val_df, test_df = split_datasets(data)
+
+            # Process and save the combined data
+            save_datasets(train_df, val_df, test_df, experiments_path)
+
+        return train_df, val_df, test_df
 
 
-def create_data_loader(params, train_data, val_data, test_data):
+def get_params_hash(params):
+    params_str = json.dumps(params, sort_keys=True)
+    return hashlib.md5(params_str.encode()).hexdigest()
+
+def create_data_loader(params, train_data, val_data, test_data, experiment_path):
     """
     Create data loaders using the TemporalGraphDataset instances for training, validation, and testing sets.
     Args:
@@ -954,24 +1020,43 @@ def create_data_loader(params, train_data, val_data, test_data):
 
         return None, None, test_loader
     else:
-        # TODO: get hash for params and then check if same as last saved (in json) if no resave, pass as param to temporalgraphdataset class
-        # Instantiate the dataset classes for train, val, and test
-        logging.info('Computing training data')
-        train_dataset = TemporalGraphDataset(train_data, test=False)
-        train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True, drop_last=True, pin_memory=True, num_workers=params['num_workers'])
+        # Generate a unique identifier for the current params
+        params_hash = get_params_hash(params)
+        cache_path = os.path.join(experiment_path, f"data_loader_{params_hash}.pkl")
+        os.makedirs(experiment_path, exist_ok=True)
 
-        logging.info('Computing validation data')
-        val_dataset = TemporalGraphDataset(val_data, test=True, discretization_coeff=params['val_discrite_coeff'])
-        val_loader = DataLoader(val_dataset, batch_size=params['test_batch_size'], shuffle=False, drop_last=False, num_workers=0)
+        if os.path.exists(cache_path):
+            # Load cached data loaders
+            with open(cache_path, 'rb') as f:
+                train_loader, val_loader, test_loader = pickle.load(f)
+            logging.info("Loaded cached data loaders")
+        else:
+            # Create data loaders and save them if cache doesn't exist
+            logging.info("Creating data loaders")
+            train_loader, val_loader, test_loader = generate_data_loaders(params, train_data, val_data, test_data)
 
-        logging.info('Computing testing data')
-        test_dataset = TemporalGraphDataset(test_data, test=True, discretization_coeff=params['test_discrite_coeff'])
-        test_loader = DataLoader(test_dataset, batch_size=params['test_batch_size'], shuffle=False, drop_last=False, num_workers=0)
+            # Save data loaders to cache
+            with open(cache_path, 'wb') as f:
+                pickle.dump((train_loader, val_loader, test_loader), f)
+            logging.info("Saved data loaders")
 
         return train_loader, val_loader, test_loader
 
 
-def safe_convert_list(row: str, data_type: str) -> List[Any]:
+def generate_data_loaders(params, train_data, val_data, test_data):
+    train_dataset = TemporalGraphDataset(train_data, test=False)
+    train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True, drop_last=True, pin_memory=True, num_workers=params['num_workers'])
+
+    val_dataset = TemporalGraphDataset(val_data, test=True, discretization_coeff=params['val_discrite_coeff'])
+    val_loader = DataLoader(val_dataset, batch_size=params['test_batch_size'], shuffle=False, drop_last=False, pin_memory=True, num_workers=0)
+
+    test_dataset = TemporalGraphDataset(test_data, test=True, discretization_coeff=params['test_discrite_coeff'])
+    test_loader = DataLoader(test_dataset, batch_size=params['test_batch_size'], shuffle=False, drop_last=False, pin_memory=True, num_workers=0)
+
+    return train_loader, val_loader, test_loader
+
+
+def safe_convert_list(row: str, data_type: str):
     """
     Safely convert a string representation of a list to an actual list,
     with type conversion tailored to specific data types including handling
@@ -1006,6 +1091,18 @@ def safe_convert_list(row: str, data_type: str) -> List[Any]:
         elif data_type == 'angle_of_arrival':
             result = row.strip('[').strip(']').split(', ')
             return [float(aoa) for aoa in result]
+        elif data_type == 'jammed_at':
+            return int(row)
+        elif data_type == 'jammer_power':
+            return float(row)
+        elif data_type == 'num_samples':
+            return float(row)
+        elif data_type == 'sigma':
+            return float(row)
+        elif data_type == 'jammer_power':
+            return float(row)
+        elif data_type == 'id':
+            return int(row)
         else:
             raise ValueError("Unknown data type")
     except (ValueError, SyntaxError, TypeError) as e:
@@ -1047,7 +1144,7 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_p
     node_colors = ['red' if noise > -55 else 'blue' for noise in noise_values]
 
     # Draw the graph nodes without edges and annotations
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=15)
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1)
 
     # Optionally draw jammer position without annotations
     # Optionally draw jammer position without annotations
@@ -1079,12 +1176,38 @@ def create_torch_geo_data(instance: Instance) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
-    # Downsample
-    # instance = downsample_data(instance) # Downsample based on max num of nodes per graph
-    #
-    # instance = downsample_data_by_distance(instance)  # Downsample based on distance (every d meters)
+    # Downsample (binning and highest noise)
+    if params['ds_method'] == 'noise':
+        # Convert positions to a DataFrame to use bin_nodes
+        if 'angle_of_arrival' in params['required_features']:
+            node_df = pd.DataFrame({
+                'x': instance.node_positions[:, 0],
+                'y': instance.node_positions[:, 1],
+                'noise_level': instance.node_noise,
+                'angle_of_arrival': instance.angle_of_arrival  # Include angle of arrival
+            })
+            binned_nodes = bin_nodes(node_df, grid_meters=params['grid_meters'])
+            instance.node_positions = binned_nodes[['x', 'y']].to_numpy()
+            instance.node_noise = binned_nodes['noise_level'].to_numpy()
+            instance.angle_of_arrival = binned_nodes['angle_of_arrival'].to_numpy()  # Update angle of arrival
+        else:
+            # Convert positions to a DataFrame to use bin_nodes
+            node_df = pd.DataFrame({
+                'x': instance.node_positions[:, 0],
+                'y': instance.node_positions[:, 1],
+                'noise_level': instance.node_noise
+            })
+            binned_nodes = bin_nodes(node_df, grid_meters=params['grid_meters'])
+            instance.node_positions = binned_nodes[['x', 'y']].to_numpy()
+            instance.node_noise = binned_nodes['noise_level'].to_numpy()
 
-    instance = downsample_data_by_highest_noise(instance)  # Downsample based on highest noise (keep 15 nodes with the highest noise)
+        # instance = downsample_data_by_highest_noise(instance)
+    elif params['ds_method'] == 'time_window_avg':
+        instance = downsample_data(instance)
+    elif params['ds_method'] == 'hybrid':
+        instance = hybrid_downsampling_pipeline(instance)
+    else:
+        raise ValueError("Undefined downsampling method")
 
     # Preprocess instance data
     center_coordinates_instance(instance)
@@ -1092,12 +1215,15 @@ def create_torch_geo_data(instance: Instance) -> Data:
         apply_min_max_normalization_instance(instance)
 
     if 'angle_of_arrival' in params['required_features']:
+        # Convert AoA from degrees to radians
+        aoa_radians = np.radians(instance.angle_of_arrival)
+
         # Create node features without adding an extra list around the numpy array
         node_features = np.concatenate([
             instance.node_positions,
             instance.node_noise[:, None],  # Ensure node_noise is reshaped to (n, 1)
-            np.sin(instance.angle_of_arrival[:, None]),
-            np.cos(instance.angle_of_arrival[:, None])
+            np.sin(aoa_radians[:, None]),
+            np.cos(aoa_radians[:, None])
         ], axis=1)
     else:
         node_features = np.concatenate([
@@ -1111,9 +1237,13 @@ def create_torch_geo_data(instance: Instance) -> Data:
 
     # Preparing edges and weights
     positions = instance.node_positions
+    if params['num_neighbors'] == 'fc':
+        num_neighbors = 10000000
+    else:
+        num_neighbors = params['num_neighbors']
     if params['edges'] == 'knn':
         num_samples = positions.shape[0]
-        k = min(params['num_neighbors'], num_samples - 1)  # num of neighbors, ensuring k < num_samples
+        k = min(num_neighbors, num_samples - 1)  # num of neighbors, ensuring k < num_samples
         nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
         distances, indices = nbrs.kneighbors(positions)
         edge_index, edge_weight = [], []
