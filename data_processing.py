@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from torch.utils.data import Subset, Dataset
+from torch_geometric.transforms import AddRandomWalkPE
 from typing import Tuple, List
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
@@ -31,6 +32,7 @@ class Instance:
         # Initialize attributes from the pandas row and convert appropriate fields to numpy arrays only if not already arrays
         self.num_samples = row['num_samples']
         self.node_positions = row['node_positions'] if isinstance(row['node_positions'], np.ndarray) else np.array(row['node_positions'])
+        self.node_positions_cart = row['node_positions_cart'] if isinstance(row['node_positions_cart'], np.ndarray) else np.array(row['node_positions_cart'])
         self.node_noise = row['node_noise'] if isinstance(row['node_noise'], np.ndarray) else np.array(row['node_noise'])
         self.pl_exp = row['pl_exp']
         self.sigma = row['sigma']
@@ -39,30 +41,49 @@ class Instance:
         self.jammer_gain = row['jammer_gain']
         self.id = row['id']
         self.dataset = row['dataset']
-        self.jammed_at = row['jammed_at']
+        if params['dynamic']:
+            self.jammed_at = row['jammed_at']
         if 'angle_of_arrival' in params['required_features']:
             self.angle_of_arrival = row['angle_of_arrival'] if isinstance(row['angle_of_arrival'], np.ndarray) else np.array(row['angle_of_arrival'])
 
     def get_crop(self, start, end):
-        if 'angle_of_arrival' in params['required_features']:
-            cropped_instance = Instance({
-                'num_samples': end - start,
-                'node_positions': self.node_positions[start:end],
-                'node_noise': self.node_noise[start:end],
-                'angle_of_arrival': self.angle_of_arrival[start:end],
-                'pl_exp': self.pl_exp,
-                'sigma': self.sigma,
-                'jammer_power': self.jammer_power,
-                'jammer_position': self.jammer_position,
-                'jammer_gain': self.jammer_gain,
-                'id': self.id,
-                'dataset': self.dataset,
-                'jammed_at': self.jammed_at  # Jammed index remains the same, can adjust logic if needed
-            })
+        if params['dynamic']:
+            if 'angle_of_arrival' in params['required_features']:
+                cropped_instance = Instance({
+                    'num_samples': end - start,
+                    'node_positions': self.node_positions[start:end],
+                    'node_positions_cart': self.node_positions_cart[start:end],
+                    'node_noise': self.node_noise[start:end],
+                    'angle_of_arrival': self.angle_of_arrival[start:end],
+                    'pl_exp': self.pl_exp,
+                    'sigma': self.sigma,
+                    'jammer_power': self.jammer_power,
+                    'jammer_position': self.jammer_position,
+                    'jammer_gain': self.jammer_gain,
+                    'id': self.id,
+                    'dataset': self.dataset,
+                    'jammed_at': self.jammed_at  # Jammed index remains the same, can adjust logic if needed
+                })
+            else:
+                cropped_instance = Instance({
+                    'num_samples': end - start,
+                    'node_positions': self.node_positions[start:end],
+                    'node_positions_cart': self.node_positions_cart[start:end],
+                    'node_noise': self.node_noise[start:end],
+                    'pl_exp': self.pl_exp,
+                    'sigma': self.sigma,
+                    'jammer_power': self.jammer_power,
+                    'jammer_position': self.jammer_position,
+                    'jammer_gain': self.jammer_gain,
+                    'id': self.id,
+                    'dataset': self.dataset,
+                    'jammed_at': self.jammed_at  # Jammed index remains the same, can adjust logic if needed
+                })
         else:
             cropped_instance = Instance({
                 'num_samples': end - start,
                 'node_positions': self.node_positions[start:end],
+                'node_positions_cart': self.node_positions_cart[start:end],
                 'node_noise': self.node_noise[start:end],
                 'pl_exp': self.pl_exp,
                 'sigma': self.sigma,
@@ -70,34 +91,147 @@ class Instance:
                 'jammer_position': self.jammer_position,
                 'jammer_gain': self.jammer_gain,
                 'id': self.id,
-                'dataset': self.dataset,
-                'jammed_at': self.jammed_at  # Jammed index remains the same, can adjust logic if needed
+                'dataset': self.dataset
             })
         return cropped_instance
 
     def apply_flip(self):
         # Generate two independent random numbers
         r1, r2 = random.random(), random.random()
-        # Apply horizontal flip if r1 is less than 0.5
-        if r1 < 0.5:
-            self.node_positions[:, 1] = -self.node_positions[:, 1]
-            self.jammer_position[1] = -self.jammer_position[1]
-        # Apply vertical flip if r2 is less than 0.5
-        if r2 < 0.5:
-            self.node_positions[:, 0] = -self.node_positions[:, 0]
-            self.jammer_position[0] = -self.jammer_position[0]
+
+        if params['coords'] == 'polar':
+            # Apply horizontal flip if r1 is less than 0.5
+            if r1 < 0.5:
+                for i in range(len(self.node_positions)):
+                    r, sin_theta, cos_theta = self.node_positions[i]
+                    theta = np.arctan2(sin_theta, cos_theta)
+                    new_theta = np.pi - theta  # Reflecting theta over the y-axis
+                    self.node_positions[i, 1] = np.sin(new_theta)  # Update sin(theta)
+                    self.node_positions[i, 2] = np.cos(new_theta)  # Update cos(theta)
+
+                # Jammer position assuming [r, theta]
+                r, theta = self.jammer_position[0]
+                new_theta = np.pi - theta
+                self.jammer_position[0][1] = new_theta  # Update theta
+
+            # Apply vertical flip if r2 is less than 0.5
+            if r2 < 0.5:
+                for i in range(len(self.node_positions)):
+                    r, sin_theta, cos_theta = self.node_positions[i]
+                    theta = np.arctan2(sin_theta, cos_theta)
+                    new_theta = -theta  # Reflecting theta over the x-axis
+                    self.node_positions[i, 1] = np.sin(new_theta)  # Update sin(theta)
+                    self.node_positions[i, 2] = np.cos(new_theta)  # Update cos(theta)
+
+                # Jammer position assuming [r, theta]
+                r, theta = self.jammer_position[0]
+                new_theta = -theta
+                self.jammer_position[0][1] = new_theta  # Update theta
+
+        elif params['coords'] == 'cartesian':
+            # Generate two independent random numbers
+            r1, r2 = random.random(), random.random()
+            # Apply horizontal flip if r1 is less than 0.5
+            if r1 < 0.5:
+                self.node_positions[:, 1] = -self.node_positions[:, 1]
+                self.jammer_position[1] = -self.jammer_position[1]
+            # Apply vertical flip if r2 is less than 0.5
+            if r2 < 0.5:
+                self.node_positions[:, 0] = -self.node_positions[:, 0]
+                self.jammer_position[0] = -self.jammer_position[0]
 
     def apply_rotation(self, degrees):
-        # Mapping degrees to numpy rotation functions
-        if degrees == 90:
-            self.node_positions = np.dot(self.node_positions, np.array([[0, 1], [-1, 0]]))
-            self.jammer_position = np.dot(self.jammer_position, np.array([[0, 1], [-1, 0]]))
-        elif degrees == 180:
-            self.node_positions = -self.node_positions
-            self.jammer_position = -self.jammer_position
-        elif degrees == 270:
-            self.node_positions = np.dot(self.node_positions, np.array([[0, -1], [1, 0]]))
-            self.jammer_position = np.dot(self.jammer_position, np.array([[0, -1], [1, 0]]))
+        if params['coords'] == 'polar':
+            radians = np.deg2rad(degrees)
+
+            # Update node_positions
+            new_node_positions = []
+            for r, sin_theta, cos_theta in self.node_positions:
+                # Convert sin(theta) and cos(theta) to theta
+                theta = np.arctan2(sin_theta, cos_theta)
+                # Add rotation
+                new_theta = theta + radians
+
+                # Calculate new sin and cos
+                new_sin_theta = np.sin(new_theta)
+                new_cos_theta = np.cos(new_theta)
+
+                # Append new values preserving the radius
+                new_node_positions.append([r, new_sin_theta, new_cos_theta])
+
+            self.node_positions = np.array(new_node_positions)
+
+            # Update jammer_position
+            r, theta = self.jammer_position[0]
+            new_theta = theta + radians  # Add rotation directly to the angle
+            self.jammer_position = np.array([r, new_theta])
+        elif params['coords'] == 'cartesian':
+            # Mapping degrees to numpy rotation functions
+            if degrees == 90:
+                self.node_positions = np.dot(self.node_positions, np.array([[0, 1], [-1, 0]]))
+                self.jammer_position = np.dot(self.jammer_position, np.array([[0, 1], [-1, 0]]))
+            elif degrees == 180:
+                self.node_positions = -self.node_positions
+                self.jammer_position = -self.jammer_position
+            elif degrees == 270:
+                self.node_positions = np.dot(self.node_positions, np.array([[0, -1], [1, 0]]))
+                self.jammer_position = np.dot(self.jammer_position, np.array([[0, -1], [1, 0]]))
+
+    def zoom_in(self, max_crop_size=None):
+        # Set max_crop_size based on the length of node_positions if not provided
+        if max_crop_size is None:
+            max_crop_size = len(self.node_positions)  # Use the length of node_positions
+
+        # Calculate the minimum number of nodes based on the crop size proportion
+        min_nodes_with_highest_noise = max(3, int(max_crop_size * 0.25))  # Ensure a minimum of 3 nodes
+
+        # Ensure the crop size is at least the minimum number of nodes
+        crop_size = random.randint(min_nodes_with_highest_noise, max_crop_size)
+
+        # Sort nodes based on noise, descending
+        indices_sorted_by_noise = np.argsort(-self.node_noise)
+
+        # Always include nodes with the highest noise
+        mandatory_indices = indices_sorted_by_noise[:min_nodes_with_highest_noise]
+
+        # If the crop size is larger than min_nodes_with_highest_noise, add random nodes
+        additional_indices = []
+        if crop_size > min_nodes_with_highest_noise:
+            remaining_indices = indices_sorted_by_noise[min_nodes_with_highest_noise:].astype(int)
+
+            # Ensure we don't select more than available and always have at least 1 additional node
+            additional_size = min(crop_size - min_nodes_with_highest_noise, len(remaining_indices))
+
+            # If there's still space to sample, select random additional nodes
+            if additional_size > 0:
+                additional_indices = np.random.choice(remaining_indices, size=additional_size, replace=False)
+            else:
+                # If there's no room for additional indices, ensure we have at least one additional index
+                additional_indices = remaining_indices[:1]  # Select just one if there's no room for more
+
+        # Combine indices and ensure unique elements
+        final_indices = np.unique(np.concatenate((mandatory_indices, additional_indices))).astype(int)
+
+        # If final_indices is empty, we guarantee at least 2 indices (1 mandatory, 1 additional)
+        if len(final_indices) < 2:
+            final_indices = np.unique(np.concatenate((mandatory_indices, indices_sorted_by_noise[1:2]))).astype(int)
+
+        # Create cropped instance
+        cropped_instance = Instance({
+            'num_samples': len(final_indices),
+            'node_positions': self.node_positions[final_indices],
+            'node_positions_cart': self.node_positions_cart[final_indices],
+            'node_noise': self.node_noise[final_indices],
+            'pl_exp': self.pl_exp,
+            'sigma': self.sigma,
+            'jammer_power': self.jammer_power,
+            'jammer_position': self.jammer_position,
+            'jammer_gain': self.jammer_gain,
+            'id': self.id,
+            'dataset': self.dataset,
+            'jammed_at': self.jammed_at
+        })
+        return cropped_instance
 
 
 class TemporalGraphDataset(Dataset):
@@ -117,26 +251,32 @@ class TemporalGraphDataset(Dataset):
     def expand_samples(self):
         expanded_samples = []
         for _, row in self.data.iterrows():
-            lb_end = max(int(row['jammed_at']), min(params['max_nodes'], len(row['node_positions'])))
-            # lb_end = max(int(row['jammed_at']), min(10, len(row['node_positions'])))
-            ub_end = len(row['node_positions'])
-            # lb_end = int((ub_end - lb_end) / 2)
+            if params['dynamic']:
+                lb_end = max(int(row['jammed_at']), min(params['max_nodes'], len(row['node_positions'])))
+                # lb_end = max(int(row['jammed_at']), min(10, len(row['node_positions'])))
+                ub_end = len(row['node_positions'])
+                # lb_end = int((ub_end - lb_end) / 2)
 
-            # Define step size
-            if self.discretization_coeff == -1:
-                step_size = 1
-            elif isinstance(self.discretization_coeff, float):
-                step_size = max(1, int(self.discretization_coeff * (ub_end - lb_end)))
+                # Define step size
+                if self.discretization_coeff == -1:
+                    step_size = 1
+                elif isinstance(self.discretization_coeff, float):
+                    step_size = max(1, int(self.discretization_coeff * (ub_end - lb_end)))
+                else:
+                    raise ValueError("Invalid discretization coefficient type")
+
+                # Generate instances for various end points with the step size
+                for i in range(lb_end, ub_end + 1, step_size):
+                    instance = Instance(row).get_crop(0, i)
+                    instance.perc_completion = i/ub_end
+                    expanded_samples.append(instance)
             else:
-                raise ValueError("Invalid discretization coefficient type")
-
-            # Generate instances for various end points with the step size
-            for i in range(lb_end, ub_end + 1, step_size):
-                instance = Instance(row).get_crop(0, i)
-                instance.perc_completion = i/ub_end
+                instance = Instance(row)
+                instance.perc_completion = 1
                 expanded_samples.append(instance)
-        print("len expanded samples: ", len(expanded_samples))
+        # print("len expanded samples: ", len(expanded_samples))
         return expanded_samples
+
 
     def precompute_graph(self, instance):
         # Create the graph once and engineer the node features
@@ -164,7 +304,8 @@ class TemporalGraphDataset(Dataset):
         end = random.randint(lb_end, ub_end)
 
         if 'crop' in params['aug']:
-            instance = instance.get_crop(start_crop, end)
+            # instance = instance.get_crop(start_crop, end)
+            instance = instance.zoom_in()
 
         # Apply flipping
         if 'flip' in params['aug']:
@@ -239,11 +380,22 @@ def cyclical_to_angular(output):
 
 
 def mean_centering(coords):
-    """Center coordinates using given or calculated bounds."""
-    # Calculate the geometric center
-    center = np.mean(coords, axis=0)
-    centered_coords = coords - center
-    return centered_coords, center
+    try:
+        # print("Received coords:", coords)
+        # Explicitly convert to a numpy array with dtype float
+        numpy_coords = np.array(coords, dtype=float)
+        # print("Numpy coords:", numpy_coords)
+        # print("Numpy coords shape:", numpy_coords.shape)
+        center = np.mean(numpy_coords, axis=0)
+        # print("Center:", center)
+        centered_coords = numpy_coords - center
+        return centered_coords, center
+    except Exception as e:
+        # print("Error in mean_centering:", e)
+        # print("Data type of coords:", [type(item) for item in coords])
+        return None, None
+
+
 
 
 def center_coordinates_instance(instance):
@@ -256,8 +408,9 @@ def center_coordinates_instance(instance):
     instance.node_positions_center = center
 
     # Center jammer position using the same center
-    centered_jammer_position = instance.jammer_position - center
-    instance.jammer_position = centered_jammer_position
+    # centered_jammer_position = instance.jammer_position - center
+    # instance.jammer_position = centered_jammer_position
+    instance.jammer_position = instance.jammer_position
 
     return center
 
@@ -287,45 +440,75 @@ def apply_min_max_normalization_instance(instance):
     instance.jammer_position = jammer_position
 
 
-def apply_unit_sphere_normalization(data):
+def apply_unit_sphere_normalization(instance):
     """
-    Apply unit sphere normalization to position data.
+    Apply unit sphere normalization to position data, normalizing only the radius.
 
     Parameters:
-    data (dict): A dictionary containing 'node_positions', an array of positions.
+    instance: An object with attributes 'node_positions' and 'jammer_position',
+              each an array of positions where the first index is the radius.
 
-    Returns:
-    tuple: A tuple containing the normalized positions and the maximum radius.
+    Modifies:
+    instance.node_positions: Normalized positions.
+    instance.jammer_position: Normalized jammer position.
+    instance.max_radius: Maximum radius used for normalization.
     """
-    logging.info("Applying unit sphere normalization")
-    # Initialize a column for maximum radius
-    data['max_radius'] = None
 
-    for idx, row in data.iterrows():
-        # Extract positions from the current row
-        positions = np.array(row['node_positions'])
-        jammer_position = np.array(row['jammer_position'])
+    # Extract the radius component from each position
+    # Assuming the radius is at index 0 of each sub-array in node_positions
+    radii = instance.node_positions[:, 0]  # Extracts the first column from the positions array
 
-        # Calculate the maximum radius from the centroid
-        max_radius = np.max(np.linalg.norm(positions, axis=1))
+    # Calculate the maximum radius from the radii
+    max_radius = np.max(radii)
 
-        # Check for zero radius to prevent division by zero
-        if max_radius == 0:
-            raise ValueError("Max radius is zero, normalization cannot be performed.")
+    # Normalize only the radius component of the positions
+    normalized_positions = instance.node_positions.copy()  # Create a copy to avoid modifying the original data
+    normalized_positions[:, 0] /= max_radius  # Normalize only the radius component
 
-        # Normalize the positions uniformly
-        normalized_positions = positions / max_radius
-        normalized_jammer_position = jammer_position / max_radius
+    # Assuming jammer_position is a single array [radius, sin, cos]
+    normalized_jammer_position = instance.jammer_position.copy()
+    normalized_jammer_position[0] /= max_radius  # Normalize only the radius component of the jammer position
 
-        # Update the DataFrame with normalized positions and maximum radius
-        data.at[idx, 'node_positions'] = normalized_positions.tolist()
-        data.at[idx, 'jammer_position'] = normalized_jammer_position.tolist()
-        data.at[idx, 'max_radius'] = max_radius
+    # Update the instance variables
+    instance.node_positions = normalized_positions
+    instance.jammer_position = normalized_jammer_position
+    instance.max_radius = max_radius
+
+
+def apply_z_score_normalization_instance(instance):
+    """Apply Z-score normalization to position and RSSI data for an instance."""
+    # logging.info("Applying Z-score normalization for instance")
+
+    # Normalize Noise values to mean = 0 and std = 1
+    mean_noise = np.mean(instance.node_noise)
+    std_noise = np.std(instance.node_noise)
+    if std_noise == 0:
+        std_noise = 1
+    normalized_noise = (instance.node_noise - mean_noise) / std_noise
+    instance.node_noise = normalized_noise
+
+    # Normalize node positions to mean = 0 and std = 1
+    mean_coords = np.mean(instance.node_positions, axis=0)
+    std_coords = np.std(instance.node_positions, axis=0, ddof=1)
+    std_coords[std_coords == 0] = 1  # Prevent division by zero
+    normalized_positions = (instance.node_positions - mean_coords) / std_coords
+    instance.mean_coords = mean_coords
+    instance.std_coords = std_coords
+    instance.node_positions = normalized_positions
+
+    # Normalize jammer position similarly
+    jammer_position = (instance.jammer_position - mean_coords) / std_coords
+    instance.jammer_position = jammer_position
+
+    return instance
 
 
 def convert_data_type(data, load_saved_data):
     if load_saved_data:
-        dataset_features = params['required_features'] + ['jammer_position', 'jammed_at', 'jammer_power',  'num_samples',  'sigma', 'jammer_power', 'id']
+        if params['dynamic']:
+            dataset_features = params['required_features'] + ['jammer_position', 'jammed_at', 'jammer_power',  'num_samples',  'sigma', 'jammer_power', 'id']
+        else:
+            dataset_features = params['required_features'] + ['jammer_position', 'jammer_power', 'num_samples', 'sigma', 'jammer_power', 'id']
     else:
         # Convert from str to required data type for specified features
         dataset_features = params['required_features'] + ['jammer_position']
@@ -341,160 +524,6 @@ def add_cyclical_features(data):
     data['cos_azimuth'] = data['azimuth_angle'].apply(lambda angles: [np.cos(angle) for angle in angles])
 
 
-def calculate_proximity_metric(positions, threshold=0.2):
-    """Calculate the number of nearby nodes within a given threshold distance."""
-    nbrs = NearestNeighbors(radius=threshold).fit(positions)
-    distances, indices = nbrs.radius_neighbors(positions)
-    return [len(idx) - 1 for idx in indices]  # subtract 1 to exclude the node itself
-
-
-def add_proximity_count(data):
-    """Add proximity feature based on a threshold distance."""
-    data['proximity_count'] = data['node_positions'].apply(
-        lambda positions: calculate_proximity_metric(np.array(positions))
-    )
-
-
-# def calculate_noise_statistics(subgraphs, stats_to_compute):
-#     # all_graph_stats = []
-#     subgraph = subgraphs[0]
-#
-#     # for subgraph in subgraphs:
-#     node_stats = []
-#     edge_index = subgraph.edge_index
-#     num_nodes = subgraph.x.size(0)
-#
-#     for node_id in range(num_nodes):
-#         # Identifying the neighbors of the current node
-#         neighbors = torch.cat([
-#             edge_index[1][edge_index[0] == node_id],
-#             edge_index[0][edge_index[1] == node_id]
-#         ], dim=0).unique()
-#
-#         # Ensure neighbors indices are within bounds
-#         valid_neighbors = neighbors[neighbors < num_nodes]
-#
-#         # Access the noise feature of valid neighbors
-#         neighbor_noises = subgraph.x[valid_neighbors, 2]
-#         curr_node_noise = subgraph.x[node_id, 2]
-#
-#         # Combine current node's noise with neighbor noises
-#         all_noises = torch.cat([neighbor_noises, curr_node_noise.unsqueeze(0)], dim=0)
-#
-#         # Handle case with fewer than two neighbors safely
-#         if all_noises.size(0) > 1:
-#             std_noise = all_noises.std().item()
-#             range_noise = (all_noises.max() - all_noises.min()).item()
-#         else:
-#             std_noise = 0
-#             range_noise = 0
-#
-#         # temp_stats = {
-#         #     'mean_noise': all_noises.mean().item(),
-#         #     'median_noise': all_noises.median().item(),
-#         #     'std_noise': std_noise,
-#         #     'range_noise': range_noise,
-#         #     'relative_noise': (curr_node_noise - neighbor_noises.mean()).item() if neighbors.size(0) > 0 else 0,
-#         # }
-#         temp_stats = {
-#             'mean_noise': all_noises.mean().item(),
-#             'median_noise': all_noises.median().item(),
-#             'range_noise': range_noise
-#         }
-#
-#
-#         # Compute WCL if required
-#         if 'wcl_coefficient' in stats_to_compute:
-#             weights = torch.pow(10, neighbor_noises / 10)
-#             weighted_positions = weights.unsqueeze(1) * subgraph.x[valid_neighbors, :2]
-#             wcl_estimation = weighted_positions.sum(0) / weights.sum() if weights.sum() > 0 else subgraph.x[node_id, :2]
-#             temp_stats['wcl_coefficient'] = wcl_estimation.tolist()
-#
-#         node_stats.append(temp_stats)
-#
-#     return node_stats
-
-
-# Vectorized
-def calculate_noise_statistics(subgraphs, stats_to_compute):
-    subgraph = subgraphs[0]
-    edge_index = subgraph.edge_index
-    node_noises = subgraph.x[:, 2]  # Assuming the noise feature is the third feature
-
-    # Create an adjacency matrix from edge_index
-    num_nodes = node_noises.size(0)
-    # adjacency = torch.zeros(num_nodes, num_nodes, device=node_noises.device)
-    # adjacency[edge_index[0], edge_index[1]] = 1  # Assuming unweighted edges for simplicity
-
-    # Create an adjacency matrix from edge_index and include self-loops
-    adjacency = torch.zeros(num_nodes, num_nodes, device=node_noises.device)
-    adjacency[edge_index[0], edge_index[1]] = 1
-    torch.diagonal(adjacency).fill_(1)  # Add self-loops
-
-    # Calculate the sum and count of neighbor noises
-    neighbor_sum = torch.mm(adjacency, node_noises.unsqueeze(1)).squeeze()
-    neighbor_count = adjacency.sum(1)
-
-    # Avoid division by zero for mean calculation
-    neighbor_count = torch.where(neighbor_count == 0, torch.ones_like(neighbor_count), neighbor_count)
-    mean_neighbor_noise = neighbor_sum / neighbor_count
-
-    # Standard deviation
-    neighbor_variance = torch.mm(adjacency, (node_noises**2).unsqueeze(1)).squeeze() / neighbor_count - (mean_neighbor_noise**2)
-    std_noise = torch.sqrt(neighbor_variance)
-
-    # Range: max - min for each node's neighbors
-    # Expanding the node noises for comparison using adjacency
-    expanded_noises = node_noises.unsqueeze(0).repeat(num_nodes, 1)
-    max_noise = torch.where(adjacency == 1, expanded_noises, torch.full_like(expanded_noises, float('-inf'))).max(1).values
-    min_noise = torch.where(adjacency == 1, expanded_noises, torch.full_like(expanded_noises, float('inf'))).min(1).values
-    range_noise = max_noise - min_noise
-
-    # Replace inf values that appear if a node has no neighbors
-    range_noise[range_noise == float('inf')] = 0
-    range_noise[range_noise == float('-inf')] = 0
-
-    # Other statistics could be added in a similar batch-processed manner
-    noise_stats = {
-        'mean_noise': mean_neighbor_noise,
-        'std_noise': std_noise,
-        'range_noise': range_noise,
-    }
-
-    return noise_stats
-
-
-
-def add_clustering_coefficients(graphs):
-    """
-    Compute the clustering coefficient for each node in each graph.
-
-    Args:
-        graphs (list): List of NetworkX graph objects.
-
-    Returns:
-        list: A list of lists, where each sublist contains the clustering coefficients for nodes in a graph.
-    """
-    all_graphs_clustering_coeffs = []  # This will hold a list of lists, each sublist for a graph
-
-    for graph in graphs:
-        graph_clustering_coeffs = []  # Initialize an empty list for current graph's node clustering coefficients
-
-        if len(graph.nodes()) > 0:
-            clustering_coeffs = nx.clustering(graph)
-            nodes = list(graph.nodes())
-
-            # Populate the clustering coefficients for each node, maintaining the order
-            for node in nodes:
-                graph_clustering_coeffs.append(clustering_coeffs[node])
-        else:
-            graph_clustering_coeffs = []
-
-        all_graphs_clustering_coeffs.append(graph_clustering_coeffs)  # Append the completed list for this graph
-
-    return all_graphs_clustering_coeffs
-
-
 def dynamic_moving_average(x, max_window_size=10):
     num_nodes = x.size(0)
     window_sizes = torch.clamp(num_nodes - torch.arange(num_nodes), min=1, max=max_window_size)
@@ -507,6 +536,116 @@ def dynamic_moving_average(x, max_window_size=10):
 
     return averages
 
+# Vectorized
+def calculate_noise_statistics(subgraphs, stats_to_compute):
+    subgraph = subgraphs[0]
+    edge_index = subgraph.edge_index
+    node_noises = subgraph.x[:, 3]  # Assuming the noise feature is the third feature
+    # the first three features are normalized radius, sin(theta), and cos(theta)
+    r = subgraph.x[:, 0]
+    sin_theta = subgraph.x[:, 1]
+    cos_theta = subgraph.x[:, 2]
+
+    # Convert from polar to Cartesian coordinates
+    x = r * cos_theta
+    y = r * sin_theta
+    node_positions = torch.stack((x, y), dim=1)
+
+    # Create an adjacency matrix from edge_index and include self-loops
+    num_nodes = node_noises.size(0)
+    adjacency = torch.zeros(num_nodes, num_nodes, device=node_noises.device)
+    adjacency[edge_index[0], edge_index[1]] = 1
+    torch.diagonal(adjacency).fill_(1)  # Add self-loops
+
+    # Calculate distances and angles between each node and its neighbors
+    distances = torch.cdist(node_positions, node_positions)
+    angles = torch.atan2(node_positions[:, 1].unsqueeze(0) - node_positions[:, 1].unsqueeze(1),
+                         node_positions[:, 0].unsqueeze(0) - node_positions[:, 0].unsqueeze(1))
+
+    # Use adjacency to filter distances and angles
+    valid_distances = distances * adjacency
+    valid_angles = angles * adjacency
+
+    # Extracting minimum distances and their corresponding angles for each node
+    min_distances, indices = torch.min(valid_distances + torch.diag(torch.full((num_nodes,), float('inf'))), dim=1)
+    min_angles = torch.gather(valid_angles, 1, indices.unsqueeze(1)).squeeze(1)
+
+    # Calculate the sum and count of neighbor noises
+    neighbor_sum = torch.mm(adjacency, node_noises.unsqueeze(1)).squeeze()
+    neighbor_count = adjacency.sum(1)
+
+    # Avoid division by zero for mean calculation
+    neighbor_count = torch.where(neighbor_count == 0, torch.ones_like(neighbor_count), neighbor_count)
+    mean_neighbor_noise = neighbor_sum / neighbor_count
+
+    # Standard deviation
+    neighbor_variance = torch.mm(adjacency, (node_noises ** 2).unsqueeze(1)).squeeze() / neighbor_count - (mean_neighbor_noise ** 2)
+    std_noise = torch.sqrt(neighbor_variance)
+
+    # Range: max - min for each node's neighbors
+    expanded_noises = node_noises.unsqueeze(0).repeat(num_nodes, 1)
+    max_noise = torch.where(adjacency == 1, expanded_noises, torch.full_like(expanded_noises, float('-inf'))).max(1).values
+    min_noise = torch.where(adjacency == 1, expanded_noises, torch.full_like(expanded_noises, float('inf'))).min(1).values
+    range_noise = max_noise - min_noise
+
+    # Median noise calculation
+    median_noise = torch.full_like(mean_neighbor_noise, float('nan'))  # Initial fill
+    for i in range(num_nodes):
+        neighbors = node_noises[adjacency[i] == 1]
+        if neighbors.numel() > 0:
+            median_noise[i] = neighbors.median()
+
+    # Replace inf values that appear if a node has no neighbors
+    range_noise[range_noise == float('inf')] = 0
+    range_noise[range_noise == float('-inf')] = 0
+
+    # Noise Differential
+    noise_differential = node_noises - mean_neighbor_noise
+
+    # Weighted Centroid Localization (WCL) calculation and conversion back to polar coordinates
+    weighted_centroid_radius = torch.zeros(num_nodes, device=node_positions.device)
+    weighted_centroid_sin_theta = torch.zeros(num_nodes, device=node_positions.device)
+    weighted_centroid_cos_theta = torch.zeros(num_nodes, device=node_positions.device)
+    weighted_centroid_positions = torch.zeros_like(node_positions)
+    for i in range(num_nodes):
+        weights = torch.pow(10, node_noises[adjacency[i] == 1] / 10)
+        valid_neighbor_positions = node_positions[adjacency[i] == 1]
+        if weights.sum() > 0:
+            centroid_cartesian = (weights.unsqueeze(1) * valid_neighbor_positions).sum(0) / weights.sum()
+            radius = torch.norm(centroid_cartesian, p=2)
+            sin_theta = centroid_cartesian[1] / radius if radius != 0 else 0
+            cos_theta = centroid_cartesian[0] / radius if radius != 0 else 0
+            weighted_centroid_radius[i] = radius
+            weighted_centroid_sin_theta[i] = sin_theta
+            weighted_centroid_cos_theta[i] = cos_theta
+            weighted_centroid_positions[i] = centroid_cartesian
+
+    # Distance from Weighted Centroid
+    distances_to_wcl = torch.norm(node_positions - weighted_centroid_positions, dim=1)
+
+    # Sin and Cos of azimuth angle to weighted centroid
+    delta_positions = node_positions - weighted_centroid_positions
+    azimuth_angles = torch.atan2(delta_positions[:, 1], delta_positions[:, 0])
+    sin_azimuth_to_wcl = torch.sin(azimuth_angles)
+    cos_azimuth_to_wcl = torch.cos(azimuth_angles)
+
+    # Compile other statistics
+    noise_stats = {
+        'mean_noise': mean_neighbor_noise,
+        'std_noise': std_noise,
+        'range_noise': range_noise,
+        'max_noise': max_noise,
+        'median_noise': median_noise,
+        'noise_differential': noise_differential,
+        'weighted_centroid_radius': weighted_centroid_radius,
+        'weighted_centroid_sin_theta': weighted_centroid_sin_theta,
+        'weighted_centroid_cos_theta': weighted_centroid_cos_theta,
+        'dist_to_wcl': distances_to_wcl,  # Adding distances as a new statistic
+        'sin_azimuth_to_wcl': sin_azimuth_to_wcl,
+        'cos_azimuth_to_wcl': cos_azimuth_to_wcl
+    }
+
+    return noise_stats
 
 def engineer_node_features(subgraph):
     if subgraph.x.size(0) == 0:
@@ -514,23 +653,41 @@ def engineer_node_features(subgraph):
 
     new_features = []
 
-    # Calculating centroid
-    centroid = torch.mean(subgraph.x[:, :2], dim=0)  # Select only x and y
+    # Extract components
+    r = subgraph.x[:, 0]  # Radii
+    sin_theta = subgraph.x[:, 1]  # Sin of angles
+    cos_theta = subgraph.x[:, 2]  # Cos of angles
+
+    # Convert to Cartesian coordinates
+    x = r * cos_theta
+    y = r * sin_theta
+    cartesian_coords = torch.stack((x, y), dim=1)
+
+    # Calculate centroid
+    centroid = torch.mean(cartesian_coords, dim=0)
 
     if 'dist_to_centroid' in params['additional_features']:
-        distances = torch.norm(subgraph.x[:, :2] - centroid, dim=1, keepdim=True)
-        # print("dist_to_centroid: ", distances)
+        # distances = torch.norm(subgraph.x[:, :2] - centroid, dim=1, keepdim=True)
+        # # print("dist_to_centroid: ", distances)
+        # new_features.append(distances)
+        distances = torch.norm(cartesian_coords - centroid, dim=1, keepdim=True)
         new_features.append(distances)
 
     if 'sin_azimuth' in params['additional_features']:
-        azimuth_angles = torch.atan2(subgraph.x[:, 1] - centroid[1], subgraph.x[:, 0] - centroid[0])
+        # azimuth_angles = torch.atan2(subgraph.x[:, 1] - centroid[1], subgraph.x[:, 0] - centroid[0])
+        # new_features.append(torch.sin(azimuth_angles).unsqueeze(1))
+        # new_features.append(torch.cos(azimuth_angles).unsqueeze(1))
+        azimuth_angles = torch.atan2(y - centroid[1], x - centroid[0])
         new_features.append(torch.sin(azimuth_angles).unsqueeze(1))
         new_features.append(torch.cos(azimuth_angles).unsqueeze(1))
 
     # Graph-based noise stats
-    graph_stats = ['mean_noise', 'median_noise', 'std_noise', 'range_noise', 'relative_noise', 'wcl_coefficient']
+    graph_stats = [
+        'mean_noise', 'median_noise', 'std_noise', 'range_noise',
+        'relative_noise', 'max_noise', 'weighted_centroid_radius',
+        'weighted_centroid_sin_theta', 'weighted_centroid_cos_theta', 'noise_differential', 'dist_to_wcl'
+    ]
     noise_stats_to_compute = [stat for stat in graph_stats if stat in params['additional_features']]
-
     if noise_stats_to_compute:
         noise_stats = calculate_noise_statistics([subgraph], noise_stats_to_compute)
 
@@ -567,8 +724,12 @@ def engineer_node_features(subgraph):
 
 
 def convert_to_polar(data):
-    data['polar_coordinates'] = data['node_positions'].apply(cartesian_to_polar)
-    data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
+    # data['polar_coordinates'] = data['node_positions'].apply(cartesian_to_polar)
+    # data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
+    data['node_positions_cart'] = data['node_positions']
+    data['node_positions'] = data['node_positions'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
+    # data['jammer_position'] = data['jammer_position'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
+    data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar)
 
 
 def polar_to_cartesian(data):
@@ -603,41 +764,76 @@ def polar_to_cartesian(data):
 
 
 # Original!
+# def convert_output_eval(output, data_batch, data_type, device):
+#     """
+#     Convert and evaluate the output coordinates by uncentering them using the stored midpoints.
+#
+#     Args:
+#         output (torch.Tensor): The model output tensor.
+#         data_batch (torch.Tensor): Data batch.
+#         data_type (str): The type of data, either 'prediction' or 'target'.
+#         device (torch.device): The device on which the computation is performed.
+#
+#     Returns:
+#         torch.Tensor: The converted coordinates after uncentering.
+#     """
+#     output = output.to(device)  # Ensure the output tensor is on the right device
+#
+#     if params['norm'] == 'minmax':
+#         # 1. Reverse normalization using min_coords and max_coords
+#         min_coords = data_batch.min_coords.to(device).view(-1, 2)
+#         max_coords = data_batch.max_coords.to(device).view(-1, 2)
+#
+#         range_coords = max_coords - min_coords
+#         converted_output = (output + 1) / 2 * range_coords + min_coords
+#
+#
+#     elif params['norm'] == 'unit_sphere':
+#         # 1. Reverse unit sphere normalization using max_radius
+#         max_radius = data_batch.max_radius.to(device).view(-1, 1)
+#         converted_output = output * max_radius
+#
+#     # 2. Reverse centering using the stored node_positions_center
+#     centers = data_batch.node_positions_center.to(device).view(-1, 2)
+#     converted_output += centers
+#
+#     # return torch.tensor(converted_output, device=device)
+#     return converted_output.clone().detach().to(device)
+
 def convert_output_eval(output, data_batch, data_type, device):
     """
-    Convert and evaluate the output coordinates by uncentering them using the stored midpoints.
+    Convert and evaluate the model output or target coordinates by reversing the preprocessing steps:
+    normalization, centering, and conversion from cyclical to angular coordinates.
 
     Args:
-        output (torch.Tensor): The model output tensor.
-        data_batch (torch.Tensor): Data batch.
+        output (torch.Tensor): The model output tensor or target tensor.
+        data_batch (dict): Dictionary containing data batch with necessary meta data.
         data_type (str): The type of data, either 'prediction' or 'target'.
         device (torch.device): The device on which the computation is performed.
 
     Returns:
-        torch.Tensor: The converted coordinates after uncentering.
+        torch.Tensor: The converted coordinates after reversing preprocessing steps.
     """
-    output = output.to(device)  # Ensure the output tensor is on the right device
+    output = output.to(device)  # Ensure the tensor is on the right device
 
-    if params['norm'] == 'minmax':
-        # 1. Reverse normalization using min_coords and max_coords
-        min_coords = data_batch.min_coords.to(device).view(-1, 2)
-        max_coords = data_batch.max_coords.to(device).view(-1, 2)
+    # Ensure output always has a batch dimension
+    if output.ndim == 1:
+        output = output.unsqueeze(0)  # Add batch dimension if missing
 
-        range_coords = max_coords - min_coords
-        converted_output = (output + 1) / 2 * range_coords + min_coords
+    # Step 1: Reverse unit sphere normalization
+    if params['norm'] == 'unit_sphere':
+        if params['norm'] == 'unit_sphere':
+            if 'max_radius' in data_batch:
+                max_radius = data_batch['max_radius'].to(device).view(-1, 1)
+                print("Output shape:", output.shape)  # Check the shape of output
+                print("Max radius shape:", max_radius.shape)  # Check the shape of max_radius
 
+                output *= max_radius #.squeeze()
 
-    elif params['norm'] == 'unit_sphere':
-        # 1. Reverse unit sphere normalization using max_radius
-        max_radius = data_batch.max_radius.to(device).view(-1, 1)
-        converted_output = output * max_radius
+    else:
+        return ValueError
 
-    # 2. Reverse centering using the stored node_positions_center
-    centers = data_batch.node_positions_center.to(device).view(-1, 2)
-    converted_output += centers
-
-    # return torch.tensor(converted_output, device=device)
-    return converted_output.clone().detach().to(device)
+    return output.clone().detach().to(device)
 
 
 def save_reduced_dataset(dataset, indices, path):
@@ -930,6 +1126,10 @@ def load_data(params, test_set_name, experiments_path=None):
             file_path = os.path.join(experiments_path, f'{test_data}.pkl')
             with open(file_path, 'rb') as f:
                 test_df = pickle.load(f)
+
+            # Process the data to include WCL pseudo-node
+            # test_df = add_wcl_to_data(test_df, params)
+            # print(f"Processed dataset to include WCL pseudo-node")
             print(test_df.columns)
             return None, None, test_df
     else:
@@ -948,7 +1148,6 @@ def load_data(params, test_set_name, experiments_path=None):
                 val_df = pickle.load(f)
             with open(test_file, 'rb') as f:
                 test_df = pickle.load(f)
-
         else:
             if params['all_env_data']:
                 datasets = ['data/train_test_data/log_distance/urban_area/combined_urban_area.csv', 'data/train_test_data/log_distance/shadowed_urban_area/combined_shadowed_urban_area.csv']
@@ -973,33 +1172,132 @@ def load_data(params, test_set_name, experiments_path=None):
                 #     data_list = pickle.load(f)
 
                 # Convert the list of dictionaries to a DataFrame
-                data = pd.DataFrame(data_list)
+                # print("data_list: ", data_list)
+                if isinstance(data_list[0], pd.DataFrame):
+                    data = data_list[0]
+                else:
+                    data = pd.DataFrame(data_list)
 
                 print(len(data))
                 print("COLUMNS: ", data.columns)
 
                 # Add additional columns required for processing
                 data['id'] = range(1, len(data) + 1)
-                data['dataset'] = 'linear_data'
+                # data['dataset'] = 'linear_data'
 
                 # data = pd.read_csv(dataset)
                 # data['id'] = range(1, len(data) + 1)
-                # convert_data_type(data, load_saved_data=False)
+
+                if not params['dynamic']:
+                    convert_data_type(data, load_saved_data=False)
+
+                # print("data: ", data)
+
+                # convert_to_polar(data)
 
                 # Add jammed column
-                data = add_jammed_column(data, threshold=-55)
+                if params['dynamic']:
+                    data = add_jammed_column(data, threshold=-55)
+
+                # Process the data to include WCL pseudo-node
+                # data = add_wcl_to_data(data, params)
+                # print(f"Processed dataset to include WCL pseudo-node")
 
                 # Create train test splits
                 train_df, val_df, test_df = split_datasets(data)
+                train_df = train_df[:100]
+                # train_df = shuffle_positions_and_noise(train_df)
+                convert_to_polar(train_df)
+                convert_to_polar(val_df)
+                convert_to_polar(test_df)
+
+                print(train_df)
 
             # Process and save the combined data
             save_datasets(train_df, val_df, test_df, experiments_path)
 
         return train_df, val_df, test_df
 
+def shuffle_positions_and_noise(data):
+    # Iterate over each row and shuffle the positions and noise
+    for idx, row in data.iterrows():
+        paired_list = list(zip(row['node_positions'], row['node_noise']))
+        random.shuffle(paired_list)  # Shuffle the paired list
+        # Unzip the paired list back into node_positions and node_noise
+        positions, noises = zip(*paired_list)
+        # Update the DataFrame with shuffled data
+        data.at[idx, 'node_positions'] = list(positions)
+        data.at[idx, 'node_noise'] = list(noises)
+
+    return data
+
+# def add_wcl_to_data(data, params):
+#     """
+#     Adds a WCL pseudo-node to each graph instance in the dataset.
+#
+#     Args:
+#         data (pd.DataFrame): The dataset containing rows, each representing a graph.
+#         params (dict): Configuration parameters, might include dimensions settings.
+#
+#     Returns:
+#         pd.DataFrame: Updated dataset with WCL pseudo-node added to each graph.
+#     """
+#     for index, row in data.iterrows():
+#         # Extract node positions and noises from the row
+#         node_positions = row['node_positions']
+#         node_noise = row['node_noise']
+#
+#         # Calculate WCL
+#         wcl_position = weighted_centroid_localization(node_positions, node_noise)
+#
+#         # Append WCL as a pseudo-node at the end of the list of nodes
+#         node_positions.append(wcl_position)
+#         # Assign a high noise value to emphasize the pseudo-node; could use np.inf or a fixed large number
+#         node_noise.append(0)
+#
+#         # Update the DataFrame with the new values
+#         data.at[index, 'node_positions'] = node_positions
+#         data.at[index, 'node_noise'] = node_noise
+#
+#     return data
+
+
+# def weighted_centroid_localization(drones_pos, drones_rssi):
+#     """Method for calculating the weighted centroid based on RSSI values and positions."""
+#     weighted_sum = [0, 0]
+#     total_weight = 0
+#
+#     # Iterate through the RSSI values and corresponding GPS coordinates
+#     for rssi, coords in zip(drones_rssi, drones_pos):
+#         weight = 10 ** (rssi / 10)  # Convert RSSI to a linear scale weight
+#         weighted_coords = [weight * coord for coord in coords]
+#
+#         # Update weighted sum and total weight
+#         weighted_sum = [sum(x) for x in zip(weighted_sum, weighted_coords)]
+#         total_weight += weight
+#
+#     # Calculate the centroid coordinates
+#     wcl = [coord / total_weight for coord in weighted_sum]
+#
+#     print("wcl: ", wcl)
+#     return wcl
+
+# def get_params_hash(params):
+#     params_str = json.dumps(params, sort_keys=True)
+#     return hashlib.md5(params_str.encode()).hexdigest()
+
 
 def get_params_hash(params):
-    params_str = json.dumps(params, sort_keys=True)
+    # Create a copy of the params dictionary.
+    params_copy = params.copy()
+    # Remove the 'num_workers' key from the copy.
+    if 'num_workers' in params_copy:
+        del params_copy['num_workers']
+    elif 'max_epochs' in params_copy:
+        del params_copy['epochs']
+    # Serialize the dictionary with sorted keys to ensure consistent order.
+    params_str = json.dumps(params_copy, sort_keys=True)
+    # Compute and return the MD5 hash of the serialized string.
     return hashlib.md5(params_str.encode()).hexdigest()
 
 def create_data_loader(params, train_data, val_data, test_data, experiment_path):
@@ -1013,6 +1311,8 @@ def create_data_loader(params, train_data, val_data, test_data, experiment_path)
     Returns:
         tuple: Three DataLoaders for the training, validation, and testing datasets.
     """
+    deg_histogram = None
+
     if params['inference']:
         logging.info('Computing testing data')
         test_dataset = TemporalGraphDataset(test_data, test=True, discretization_coeff=params['test_discrite_coeff'])
@@ -1040,7 +1340,10 @@ def create_data_loader(params, train_data, val_data, test_data, experiment_path)
                 pickle.dump((train_loader, val_loader, test_loader), f)
             logging.info("Saved data loaders")
 
-        return train_loader, val_loader, test_loader
+        if params['model'] == 'PNA':
+            deg_histogram = compute_degree_histogram(train_loader)
+
+        return train_loader, val_loader, test_loader, deg_histogram
 
 
 def generate_data_loaders(params, train_data, val_data, test_data):
@@ -1055,6 +1358,23 @@ def generate_data_loaders(params, train_data, val_data, test_data):
 
     return train_loader, val_loader, test_loader
 
+
+from torch_geometric.utils import degree
+def compute_degree_histogram(train_loader):
+    # Initialize a tensor to store the degree histogram
+    max_degree = 0  # This will need to be adjusted based on the data observed
+    for data in train_loader:
+        d = degree(data.edge_index[0], num_nodes=data.num_nodes, dtype=torch.long)
+        max_degree = max(max_degree, d.max().item())
+
+    deg_histogram = torch.zeros(max_degree + 1, dtype=torch.long)
+
+    # Reiterate through the loader to compute the histogram
+    for data in train_loader:
+        d = degree(data.edge_index[0], num_nodes=data.num_nodes, dtype=torch.long)
+        deg_histogram += torch.bincount(d, minlength=deg_histogram.numel())
+
+    return deg_histogram
 
 def safe_convert_list(row: str, data_type: str):
     """
@@ -1072,7 +1392,7 @@ def safe_convert_list(row: str, data_type: str):
     try:
         if data_type == 'jammer_position':
             result = row.strip('[').strip(']').split(', ')
-            return [float(pos) for pos in result]
+            return [[float(pos) for pos in result]]
         elif data_type == 'node_positions':
             result = row.strip('[').strip(']').split('], [')
             return [[float(num) for num in elem.split(', ')] for elem in result]
@@ -1165,6 +1485,16 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_p
     plt.axis('off')  # Turn off the axis
     plt.show()
 
+
+def create_weighted_adj_matrix(num_nodes, edge_index, edge_weight=None):
+    adj_matrix = torch.zeros((num_nodes, num_nodes))
+    for i, edge in enumerate(edge_index.t()):
+        if edge_weight is not None:
+            adj_matrix[edge[0], edge[1]] = edge_weight[i]
+        else:
+            adj_matrix[edge[0], edge[1]] = 1  # Fallback to binary if no weights provided
+    return adj_matrix
+
 # ORIGINAL
 def create_torch_geo_data(instance: Instance) -> Data:
     """
@@ -1177,42 +1507,45 @@ def create_torch_geo_data(instance: Instance) -> Data:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
     # Downsample (binning and highest noise)
-    if params['ds_method'] == 'noise':
-        # Convert positions to a DataFrame to use bin_nodes
-        if 'angle_of_arrival' in params['required_features']:
-            node_df = pd.DataFrame({
-                'x': instance.node_positions[:, 0],
-                'y': instance.node_positions[:, 1],
-                'noise_level': instance.node_noise,
-                'angle_of_arrival': instance.angle_of_arrival  # Include angle of arrival
-            })
-            binned_nodes = bin_nodes(node_df, grid_meters=params['grid_meters'])
-            instance.node_positions = binned_nodes[['x', 'y']].to_numpy()
-            instance.node_noise = binned_nodes['noise_level'].to_numpy()
-            instance.angle_of_arrival = binned_nodes['angle_of_arrival'].to_numpy()  # Update angle of arrival
-        else:
+    if params['downsampling']:
+        if params['ds_method'] == 'noise':
             # Convert positions to a DataFrame to use bin_nodes
-            node_df = pd.DataFrame({
-                'x': instance.node_positions[:, 0],
-                'y': instance.node_positions[:, 1],
-                'noise_level': instance.node_noise
-            })
-            binned_nodes = bin_nodes(node_df, grid_meters=params['grid_meters'])
-            instance.node_positions = binned_nodes[['x', 'y']].to_numpy()
-            instance.node_noise = binned_nodes['noise_level'].to_numpy()
+            if 'angle_of_arrival' in params['required_features']:
+                node_df = pd.DataFrame({
+                    'x': instance.node_positions[:, 0],
+                    'y': instance.node_positions[:, 1],
+                    'noise_level': instance.node_noise,
+                    'angle_of_arrival': instance.angle_of_arrival  # Include angle of arrival
+                })
+                binned_nodes = bin_nodes(node_df, grid_meters=params['grid_meters'])
+                instance.node_positions = binned_nodes[['x', 'y']].to_numpy()
+                instance.node_noise = binned_nodes['noise_level'].to_numpy()
+                instance.angle_of_arrival = binned_nodes['angle_of_arrival'].to_numpy()  # Update angle of arrival
+            else:
+                # Convert positions to a DataFrame to use bin_nodes
+                node_df = pd.DataFrame({
+                    'x': instance.node_positions[:, 0],
+                    'y': instance.node_positions[:, 1],
+                    'noise_level': instance.node_noise
+                })
+                binned_nodes = bin_nodes(node_df, grid_meters=params['grid_meters'])
+                instance.node_positions = binned_nodes[['x', 'y']].to_numpy()
+                instance.node_noise = binned_nodes['noise_level'].to_numpy()
 
-        # instance = downsample_data_by_highest_noise(instance)
-    elif params['ds_method'] == 'time_window_avg':
-        instance = downsample_data(instance)
-    elif params['ds_method'] == 'hybrid':
-        instance = hybrid_downsampling_pipeline(instance)
-    else:
-        raise ValueError("Undefined downsampling method")
+            # instance = downsample_data_by_highest_noise(instance)
+        elif params['ds_method'] == 'time_window_avg':
+            instance = downsample_data(instance)
+        elif params['ds_method'] == 'hybrid':
+            instance = hybrid_downsampling_pipeline(instance)
+        else:
+            raise ValueError("Undefined downsampling method")
 
     # Preprocess instance data
     center_coordinates_instance(instance)
     if params['norm'] == 'minmax':
         apply_min_max_normalization_instance(instance)
+    elif params['norm'] == 'unit_sphere':
+        apply_unit_sphere_normalization(instance)
 
     if 'angle_of_arrival' in params['required_features']:
         # Convert AoA from degrees to radians
@@ -1236,7 +1569,7 @@ def create_torch_geo_data(instance: Instance) -> Data:
     node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
 
     # Preparing edges and weights
-    positions = instance.node_positions
+    positions = instance.node_positions_cart
     if params['num_neighbors'] == 'fc':
         num_neighbors = 10000000
     else:
@@ -1255,13 +1588,17 @@ def create_torch_geo_data(instance: Instance) -> Data:
             for j in range(1, indices.shape[1]):
                 edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
                 edge_weight.extend([distances[i, j], distances[i, j]])
+
     else:
         raise ValueError("Unsupported edge specification")
 
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
     edge_weight = torch.tensor(edge_weight, dtype=torch.float)
 
-    jammer_positions = np.array(instance.jammer_position).reshape(-1, 2)  # Assuming this reshaping is valid based on your data structure
+    if params['3d']:
+        jammer_positions = np.array(instance.jammer_position).reshape(-1, 3)  # Assuming this reshaping is valid based on your data structure
+    else:
+        jammer_positions = np.array(instance.jammer_position).reshape(-1, 2)  # Assuming this reshaping is valid based on your data structure
     y = torch.tensor(jammer_positions, dtype=torch.float)
 
     # Plot
@@ -1282,4 +1619,11 @@ def create_torch_geo_data(instance: Instance) -> Data:
     # Store the perc_completion as part of the Data object
     data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
 
-    return data
+    # Apply pos encoding transform
+    if params['model'] == 'GPS':
+        transform = AddRandomWalkPE(walk_length=20, attr_name='pe')
+        transformed_data = transform(data)
+        print("shape of x with tranform: ", data.x.shape)
+
+    return transformed_data
+

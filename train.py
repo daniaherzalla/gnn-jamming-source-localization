@@ -22,7 +22,7 @@ from utils import AverageMeter
 setup_logging()
 
 
-def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -> Tuple[GNN, optim.Optimizer, OneCycleLR, torch.nn.Module]:
+def initialize_model(device: torch.device, params: dict, steps_per_epoch=None, deg_histogram=None) -> Tuple[GNN, optim.Optimizer, OneCycleLR, torch.nn.Module]:
     """
     Initialize the model, optimizer, scheduler, and loss criterion.
 
@@ -47,13 +47,13 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None) -
         in_channels = len(params['additional_features']) + len(
             params['required_features']) + feature_dims  # Add one (two for 3D) since position data is considered separately for each coordinate and one more for sin cos of aoa
     elif params['coords'] == 'polar':
-        in_channels = len(params['additional_features']) + len(params['required_features']) + 3  # r, sin cos theta, sin cos aoa
+        in_channels = len(params['additional_features']) + len(params['required_features']) + 2  # r, sin cos theta, sin cos aoa
     else:
         raise "Unknown coordinate system"
 
     print('in_channels: ', in_channels)
     model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'],
-                out_channels=params['out_channels'], num_layers=params['num_layers']).to(device)
+                out_channels=params['out_channels'], num_layers=params['num_layers'], deg=deg_histogram).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     # optimizer = optim.SGD(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'], momentum=0.9)
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear') # 10 epochs warmup (sgd momentum 0.9) #(10/params['max_epochs'])
@@ -114,6 +114,8 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
 
         # Calculate RMSE for each graph in the batch
         for idx in range(data.num_graphs):
+            # print("output[idx]: ", output[idx])
+            # print("data[idx]: ", data[idx])
             prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
             actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
             #

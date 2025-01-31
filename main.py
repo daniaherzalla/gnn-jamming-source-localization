@@ -21,12 +21,7 @@ def main():
     """
     Main function to run the training and evaluation.
     """
-    seeds = [1, 23, 42]
-
-    # Early stopping parameters
-    patience = 100
-    patience_counter = 0
-    early_stop = False
+    seeds = [1, 2, 3]
 
     if params['train_per_class']:
         if params['dynamic']:
@@ -41,6 +36,7 @@ def main():
 
     for data_class in dataset_classes:
         rmse_vals = []
+        mae_vals = []
 
         if params['train_per_class']:
             train_set_name = data_class + "_train_set.csv"
@@ -75,6 +71,8 @@ def main():
                 experiment_path = 'experiments_datasets/datasets/' + params['experiments_folder']
             elif params['study'] == 'downsampling':
                 experiment_path = 'experiments_datasets/downsampling/' + params['experiments_folder']
+            elif params['study'] == 'pooling':
+                experiment_path = 'experiments_datasets/pooling/' + params['experiments_folder']
             else:
                 raise "Unknown study type"
 
@@ -92,9 +90,9 @@ def main():
                 for test_set_name in params['test_sets']:
                     print(test_set_name)
                     train_dataset, val_dataset, test_dataset = load_data(params, test_set_name, experiment_path)
-                    _, _, test_loader = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
+                    _, _, test_loader, deg_histogram = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
                     steps_per_epoch = len(test_loader)  # Calculate steps per epoch based on the training data loader
-                    model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
+                    model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
 
                     # Load trained model
                     model.load_state_dict(torch.load(model_path))
@@ -123,12 +121,12 @@ def main():
                 set_seeds_and_reproducibility(seed)
 
                 # Create data loaders
-                train_loader, val_loader, test_loader = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
+                train_loader, val_loader, test_loader, deg_histogram = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
 
                 # Initialize model
                 steps_per_epoch = len(train_loader) # Calculate steps per epoch based on the training data loader  # steps per epoch set based on 10000 samples dataset
                 # steps_per_epoch = 875
-                model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch)
+                model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
 
                 best_val_loss = float('inf')
 
@@ -147,15 +145,6 @@ def main():
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         best_model_state = model.state_dict()
-                        patience_counter = 0  # reset patience counter on improvement
-                    else:
-                        patience_counter += 1  # increment patience counter if no improvement
-
-                    # # Early stopping check
-                    # if patience_counter > patience:
-                    #     early_stop = True
-                    #     print("Early stopping triggered")
-                    #     break
 
                 # Save the trained model
                 torch.save(best_model_state, model_path)
@@ -200,6 +189,7 @@ def main():
                 trial_data = {**epoch_data, **err_metrics}
                 save_epochs(trial_data, experiment_path)
                 rmse_vals.append(err_metrics['rmse'])
+                mae_vals.append(err_metrics['mae'])  # Collect MAE from err_metrics
 
                 # Save predictions, actuals, and perc_completion to a CSV file
                 file = f'{experiment_path}/predictions_{max_nodes}_{ds_method}_{model_name}.csv'
@@ -222,15 +212,19 @@ def main():
         print("rmse_vals: ", rmse_vals)
         print(f"Average RMSE: {round(mean_rmse, 1)}\\sd{{{round(std_rmse, 1)}}}\n")
 
-        formatted_value = f"{round(mean_rmse, 1)}\\sd{{{round(std_rmse, 1)}}}"
-        csv_file_path = experiment_path + 'rmse_statistics.csv'
+        # MAE statistics calculation
+        mean_mae = statistics.mean(mae_vals)
+        std_mae = statistics.stdev(mae_vals)
+        print("MAE values: ", mae_vals)
+        print(f"Average MAE: {round(mean_mae, 1)}\\sd{{{round(std_mae, 1)}}}")
 
-        # Open the CSV file in append mode and write the formatted value
+        # Saving RMSE and MAE statistics
+        csv_file_path = experiment_path + 'metrics_statistics.csv'
         with open(csv_file_path, mode='a', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow([params['model'], data_class, formatted_value])
+            writer.writerow([params['model'], data_class, f"{round(mean_rmse, 1)}\\sd{{{round(std_rmse, 1)}}}", f"{round(mean_mae, 1)}\\sd{{{round(std_mae, 1)}}}"])
 
-        print(f"Saved: {formatted_value} to {csv_file_path}")
+        print(f"Saved RMSE and MAE statistics to {csv_file_path}")
 
 
 if __name__ == "__main__":
