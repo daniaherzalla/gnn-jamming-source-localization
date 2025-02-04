@@ -106,13 +106,15 @@ class Instance:
                     r, sin_theta, cos_theta = self.node_positions[i]
                     theta = np.arctan2(sin_theta, cos_theta)
                     new_theta = np.pi - theta  # Reflecting theta over the y-axis
-                    self.node_positions[i, 1] = np.sin(new_theta)  # Update sin(theta)
-                    self.node_positions[i, 2] = np.cos(new_theta)  # Update cos(theta)
+                    self.node_positions[i][1] = np.sin(new_theta)  # Update sin(theta)
+                    self.node_positions[i][2] = np.cos(new_theta)  # Update cos(theta)
 
-                # Jammer position assuming [r, theta]
-                r, theta = self.jammer_position[0]
+                # Jammer position assuming [r, sin(theta), cos(theta)]
+                r, sin_theta, cos_theta = self.jammer_position
+                theta = np.arctan2(sin_theta, cos_theta)
                 new_theta = np.pi - theta
-                self.jammer_position[0][1] = new_theta  # Update theta
+                self.jammer_position[1] = np.sin(new_theta)  # Update sin(theta)
+                self.jammer_position[2] = np.cos(new_theta)  # Update cos(theta)
 
             # Apply vertical flip if r2 is less than 0.5
             if r2 < 0.5:
@@ -120,13 +122,15 @@ class Instance:
                     r, sin_theta, cos_theta = self.node_positions[i]
                     theta = np.arctan2(sin_theta, cos_theta)
                     new_theta = -theta  # Reflecting theta over the x-axis
-                    self.node_positions[i, 1] = np.sin(new_theta)  # Update sin(theta)
-                    self.node_positions[i, 2] = np.cos(new_theta)  # Update cos(theta)
+                    self.node_positions[i][1] = np.sin(new_theta)  # Update sin(theta)
+                    self.node_positions[i][2] = np.cos(new_theta)  # Update cos(theta)
 
-                # Jammer position assuming [r, theta]
-                r, theta = self.jammer_position[0]
+                # Jammer position assuming [r, sin(theta), cos(theta)]
+                r, sin_theta, cos_theta = self.jammer_position
+                theta = np.arctan2(sin_theta, cos_theta)
                 new_theta = -theta
-                self.jammer_position[0][1] = new_theta  # Update theta
+                self.jammer_position[1] = np.sin(new_theta)  # Update sin(theta)
+                self.jammer_position[2] = np.cos(new_theta)  # Update cos(theta)
 
         elif params['coords'] == 'cartesian':
             # Generate two independent random numbers
@@ -452,6 +456,7 @@ def apply_min_max_normalization_instance_noise(instance):
     # logging.info("Applying min-max normalization for instance")
 
     # Normalize Noise values to range [0, 1]
+    instance.node_noise_original = instance.node_noise.copy()
     min_noise = np.min(instance.node_noise)
     max_noise = np.max(instance.node_noise)
     range_noise = max_noise - min_noise if max_noise != min_noise else 1
@@ -459,6 +464,7 @@ def apply_min_max_normalization_instance_noise(instance):
     instance.node_noise = normalized_noise
 
     # Normalize node positions cartesian for weights to range [0, 1]
+    instance.node_positions_cart_original = instance.node_positions_cart.copy()
     min_coords = np.min(instance.node_positions_cart, axis=0)
     max_coords = np.max(instance.node_positions_cart, axis=0)
     range_coords = np.where(max_coords - min_coords == 0, 1, max_coords - min_coords)
@@ -492,12 +498,13 @@ def apply_unit_sphere_normalization(instance):
     normalized_positions[:, 0] /= max_radius  # Normalize only the radius component
 
     # Assuming jammer_position is a single array [radius, sin, cos]
-    normalized_jammer_position = instance.jammer_position.copy()
-    normalized_jammer_position[0][0] /= max_radius  # Normalize only the radius component of the jammer position
+    if not params['inference']:
+        normalized_jammer_position = instance.jammer_position.copy()
+        normalized_jammer_position[0][0] /= max_radius  # Normalize only the radius component of the jammer position
+        instance.jammer_position = normalized_jammer_position
 
     # Update the instance variables
     instance.node_positions = normalized_positions
-    instance.jammer_position = normalized_jammer_position
     instance.max_radius = max_radius
 
 
@@ -563,38 +570,18 @@ def dynamic_moving_average(x, max_window_size=10):
     return averages
 
 # Vectorized
-def calculate_noise_statistics(subgraphs, stats_to_compute):
+def calculate_noise_statistics(subgraphs, node_positions_cart_original, node_noise_original, max_radius):
     subgraph = subgraphs[0]
     edge_index = subgraph.edge_index
     node_noises = subgraph.x[:, 3]  # Assuming the noise feature is the third feature
     # the first three features are normalized radius, sin(theta), and cos(theta)
-    r = subgraph.x[:, 0]
-    sin_theta = subgraph.x[:, 1]
-    cos_theta = subgraph.x[:, 2]
-
-    # Convert from polar to Cartesian coordinates
-    x = r * cos_theta
-    y = r * sin_theta
-    node_positions = torch.stack((x, y), dim=1)
+    node_positions = subgraph.x[:, :3]  # Assuming the first three features are positions
 
     # Create an adjacency matrix from edge_index and include self-loops
     num_nodes = node_noises.size(0)
     adjacency = torch.zeros(num_nodes, num_nodes, device=node_noises.device)
     adjacency[edge_index[0], edge_index[1]] = 1
     torch.diagonal(adjacency).fill_(1)  # Add self-loops
-
-    # Calculate distances and angles between each node and its neighbors
-    distances = torch.cdist(node_positions, node_positions)
-    angles = torch.atan2(node_positions[:, 1].unsqueeze(0) - node_positions[:, 1].unsqueeze(1),
-                         node_positions[:, 0].unsqueeze(0) - node_positions[:, 0].unsqueeze(1))
-
-    # Use adjacency to filter distances and angles
-    valid_distances = distances * adjacency
-    valid_angles = angles * adjacency
-
-    # Extracting minimum distances and their corresponding angles for each node
-    min_distances, indices = torch.min(valid_distances + torch.diag(torch.full((num_nodes,), float('inf'))), dim=1)
-    min_angles = torch.gather(valid_angles, 1, indices.unsqueeze(1)).squeeze(1)
 
     # Calculate the sum and count of neighbor noises
     neighbor_sum = torch.mm(adjacency, node_noises.unsqueeze(1)).squeeze()
@@ -628,29 +615,42 @@ def calculate_noise_statistics(subgraphs, stats_to_compute):
     # Noise Differential
     noise_differential = node_noises - mean_neighbor_noise
 
-    # Weighted Centroid Localization (WCL) calculation and conversion back to polar coordinates
+    # Convert from polar to Cartesian coordinates
+    r = node_positions[:, 0]  # Radius
+    sin_theta = node_positions[:, 1]  # sin(theta)
+    cos_theta = node_positions[:, 2]  # cos(theta)
+
+    # Compute x, y in Cartesian coordinates
+    x = r * cos_theta
+    y = r * sin_theta
+    node_positions_cart = torch.stack((x, y), dim=1)  # Store Cartesian coordinates
+
+    # Weighted Centroid Localization (WCL) calculation in Cartesian space
     weighted_centroid_radius = torch.zeros(num_nodes, device=node_positions.device)
     weighted_centroid_sin_theta = torch.zeros(num_nodes, device=node_positions.device)
     weighted_centroid_cos_theta = torch.zeros(num_nodes, device=node_positions.device)
-    weighted_centroid_positions = torch.zeros_like(node_positions)
+    weighted_centroid_positions = torch.zeros_like(node_positions_cart)
+
     for i in range(num_nodes):
         weights = torch.pow(10, node_noises[adjacency[i] == 1] / 10)
-        valid_neighbor_positions = node_positions[adjacency[i] == 1]
+        valid_neighbor_positions = node_positions_cart[adjacency[i] == 1]
+
         if weights.sum() > 0:
             centroid_cartesian = (weights.unsqueeze(1) * valid_neighbor_positions).sum(0) / weights.sum()
             radius = torch.norm(centroid_cartesian, p=2)
             sin_theta = centroid_cartesian[1] / radius if radius != 0 else 0
             cos_theta = centroid_cartesian[0] / radius if radius != 0 else 0
+
             weighted_centroid_radius[i] = radius
             weighted_centroid_sin_theta[i] = sin_theta
             weighted_centroid_cos_theta[i] = cos_theta
             weighted_centroid_positions[i] = centroid_cartesian
 
     # Distance from Weighted Centroid
-    distances_to_wcl = torch.norm(node_positions - weighted_centroid_positions, dim=1)
+    distances_to_wcl = torch.norm(node_positions_cart - weighted_centroid_positions, dim=1)
 
     # Sin and Cos of azimuth angle to weighted centroid
-    delta_positions = node_positions - weighted_centroid_positions
+    delta_positions = node_positions_cart - weighted_centroid_positions
     azimuth_angles = torch.atan2(delta_positions[:, 1], delta_positions[:, 0])
     sin_azimuth_to_wcl = torch.sin(azimuth_angles)
     cos_azimuth_to_wcl = torch.cos(azimuth_angles)
@@ -700,9 +700,6 @@ def engineer_node_features(subgraph):
         new_features.append(distances)
 
     if 'sin_azimuth' in params['additional_features']:
-        # azimuth_angles = torch.atan2(subgraph.x[:, 1] - centroid[1], subgraph.x[:, 0] - centroid[0])
-        # new_features.append(torch.sin(azimuth_angles).unsqueeze(1))
-        # new_features.append(torch.cos(azimuth_angles).unsqueeze(1))
         azimuth_angles = torch.atan2(y - centroid[1], x - centroid[0])
         new_features.append(torch.sin(azimuth_angles).unsqueeze(1))
         new_features.append(torch.cos(azimuth_angles).unsqueeze(1))
@@ -711,7 +708,8 @@ def engineer_node_features(subgraph):
     graph_stats = [
         'mean_noise', 'median_noise', 'std_noise', 'range_noise',
         'relative_noise', 'max_noise', 'weighted_centroid_radius',
-        'weighted_centroid_sin_theta', 'weighted_centroid_cos_theta', 'noise_differential', 'dist_to_wcl'
+        'weighted_centroid_sin_theta', 'weighted_centroid_cos_theta',
+        'noise_differential','dist_to_wcl', 'sin_azimuth_to_wcl', 'cos_azimuth_to_wcl'
     ]
     noise_stats_to_compute = [stat for stat in graph_stats if stat in params['additional_features']]
     if noise_stats_to_compute:
@@ -752,7 +750,7 @@ def engineer_node_features(subgraph):
 def convert_to_polar(data):
     # data['polar_coordinates'] = data['node_positions'].apply(cartesian_to_polar)
     # data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
-    data['node_positions_cart'] = data['node_positions']
+    data['node_positions_cart'] = data['node_positions'].copy()
     data['node_positions'] = data['node_positions'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
     data['jammer_position'] = data['jammer_position'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
     # data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar)
@@ -1653,15 +1651,31 @@ def create_torch_geo_data(instance: Instance) -> Data:
         distances, indices = nbrs.kneighbors(positions)
         edge_index, edge_weight = [], []
 
-        # Add self loop
+        # # Add self loop
+        # for i in range(indices.shape[0]):
+        #     edge_index.extend([[i, i]])
+        #     edge_weight.extend([1.0])  # Self-loops can have a weight of 0 or another meaningful value
+        #     for j in range(1, indices.shape[1]):
+        #         edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
+        #         # Inverse the distance, adding a small epsilon to avoid division by zero
+        #         inv_distance = 1 / (distances[i, j] + 1e-5)
+        #         edge_weight.extend([inv_distance, inv_distance])
+
+        # Define the scaling parameter alpha for the Gaussian decay function
+        alpha = 1.0  # Adjust this based on your experimentation to find the best fit
+
+        # Add self-loops
         for i in range(indices.shape[0]):
             edge_index.extend([[i, i]])
-            edge_weight.extend([1.0])  # Self-loops can have a weight of 0 or another meaningful value
+            edge_weight.extend([1.0])  # Self-loops can have a weight of 1 or another meaningful value
+
             for j in range(1, indices.shape[1]):
                 edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
-                # Inverse the distance, adding a small epsilon to avoid division by zero
-                inv_distance = 1 / (distances[i, j] + 1e-5)
-                edge_weight.extend([inv_distance, inv_distance])
+
+                # Apply Gaussian decay to the distance
+                gaussian_weight = np.exp(-alpha * distances[i, j])
+                edge_weight.extend([gaussian_weight, gaussian_weight])
+
 
     else:
         raise ValueError("Unsupported edge specification")
