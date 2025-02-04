@@ -27,10 +27,10 @@ def main():
         if params['dynamic']:
             dataset_classes = ['dynamic_linear_path', 'dynamic_controlled_path']
         else:
-            dataset_classes = ['circle', 'triangle', 'rectangle', 'random',
+            dataset_classes = [
                                'all_jammed', 'circle_jammer_outside_region',
                                'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
-                               'random_jammer_outside_region', 'all_jammed_jammer_outside_region']
+                               'random_jammer_outside_region', 'all_jammed_jammer_outside_region', 'circle', 'triangle', 'rectangle', 'random']
     else:
         dataset_classes = ["combined"]
 
@@ -39,13 +39,13 @@ def main():
         mae_vals = []
 
         if params['train_per_class']:
-            train_set_name = data_class + "_train_set.csv"
-            val_set_name = data_class + "_val_set.csv"
-            test_set_name = data_class + "_test_set.csv"
+            train_set_name = data_class + "_train_dataset.pkl"
+            val_set_name = data_class + "_val_dataset.pkl"
+            test_set_name = data_class + "_test_dataset.pkl"
         else:
-            train_set_name = "train_dataset.csv"
-            val_set_name = "val_dataset.csv"
-            test_set_name = "test_dataset.csv"
+            train_set_name = "train_dataset.pkl"
+            val_set_name = "val_dataset.pkl"
+            test_set_name = "test_dataset.pkl"
 
         print("train_set_name: ", train_set_name)
         print("val_set_name: ", val_set_name)
@@ -117,7 +117,7 @@ def main():
                             writer.writerow([seed, pred, act, perc])
             else:
                 # Load the datasets
-                train_dataset, val_dataset, test_dataset = load_data(params, test_set_name, experiment_path)
+                train_dataset, val_dataset, test_dataset = load_data(params, data_class, experiment_path)
                 set_seeds_and_reproducibility(seed)
 
                 # Create data loaders
@@ -125,7 +125,6 @@ def main():
 
                 # Initialize model
                 steps_per_epoch = len(train_loader) # Calculate steps per epoch based on the training data loader  # steps per epoch set based on 10000 samples dataset
-                # steps_per_epoch = 875
                 model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
 
                 best_val_loss = float('inf')
@@ -185,14 +184,14 @@ def main():
 
                 # Evaluate the model on the test set
                 model.load_state_dict(best_model_state)
-                predictions, actuals, err_metrics, perc_completion_list = validate(model, test_loader, criterion, device, test_loader=True)
+                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = validate(model, test_loader, criterion, device, test_loader=True)
                 trial_data = {**epoch_data, **err_metrics}
                 save_epochs(trial_data, experiment_path)
                 rmse_vals.append(err_metrics['rmse'])
                 mae_vals.append(err_metrics['mae'])  # Collect MAE from err_metrics
 
                 # Save predictions, actuals, and perc_completion to a CSV file
-                file = f'{experiment_path}/predictions_{max_nodes}_{ds_method}_{model_name}.csv'
+                file = f'{experiment_path}/predictions_{max_nodes}_{ds_method}_{model_name}_{data_class}.csv'
 
                 # Check if the file exists
                 file_exists = os.path.isfile(file)
@@ -201,11 +200,11 @@ def main():
 
                     # If the file doesn't exist, write the header
                     if not file_exists:
-                        writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion'])
+                        writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion', 'PL', 'Sigma', 'JTx', 'Number Samples'])
 
                     # Write the prediction, actual, and percentage completion data
-                    for pred, act, perc in zip(predictions, actuals, perc_completion_list):
-                        writer.writerow([seed, pred, act, perc])
+                    for pred, act, perc, plexp, sigma, jtx, numsamples in zip(predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list):
+                        writer.writerow([seed, pred, act, perc, plexp, sigma, jtx, numsamples])
 
         mean_rmse = statistics.mean(rmse_vals)
         std_rmse = statistics.stdev(rmse_vals)

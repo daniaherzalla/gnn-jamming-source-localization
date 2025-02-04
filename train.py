@@ -97,7 +97,6 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         scheduler.step()
 
         # Update AverageMeter with the current batch loss
-        # rmse_loss = math.sqrt(loss.item())
         loss_meter.update(loss.item(), data.num_graphs)
 
         # Get the current learning rate from the optimizer
@@ -114,21 +113,12 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
 
         # Calculate RMSE for each graph in the batch
         for idx in range(data.num_graphs):
-            # print("output[idx]: ", output[idx])
-            # print("data[idx]: ", data[idx])
             prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
             actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
-            #
-            # if torch.isnan(prediction).any():
-            #     print("Warning: NaN values in predictions")
-            #     print("prediction: ", prediction)
-            #     # Add code to handle or log this issue as needed
 
             mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
             rmse = math.sqrt(mse)
             perc_completion = data.perc_completion[idx].item()
-
-            # print(f"Graph {idx} {step} completion RMSE: {rmse}")
 
             # Storing the metrics in the dictionary with graph id as key
             graph_details[idx] = {'rmse': rmse, 'perc_completion': perc_completion}
@@ -154,7 +144,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         float: Average validation loss.
     """
     model.eval()
-    predictions, actuals, perc_completion_list = [], [], []
+    predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = [], [], [], [], [], [], []
     loss_meter = AverageMeter()
     progress_bar = tqdm(validate_loader, desc="Validating", leave=True)
 
@@ -176,6 +166,10 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                 loss = criterion(predicted_coords, actual_coords)
 
                 perc_completion_list.append(data.perc_completion.cpu().numpy())
+                pl_exp_list.append(data.pl_exp.cpu().numpy())
+                sigma_list.append(data.sigma.cpu().numpy())
+                jtx_list.append(data.jtx.cpu().numpy())
+                num_samples_list.append(data.num_samples.cpu().numpy())
             else:
                 loss = criterion(output, data.y)
 
@@ -187,19 +181,16 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                     prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
                     actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
 
-                    # if torch.isnan(prediction).any():
-                    #     print("Warning: NaN values in predictions")
-                    #     print("prediction: ", prediction)
-                    #     # Add code to handle or log this issue as needed
-
                     mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
                     rmse = math.sqrt(mse)
                     perc_completion = data.perc_completion[idx].item()
-
-                    # print(f"Graph {idx} {step} completion RMSE: {rmse}")
+                    pl_exp = data.pl_exp[idx].item()
+                    sigma = data.sigma[idx].item()
+                    jtx = data.jtx[idx].item()
+                    num_samples = data.num_samples[idx].item()
 
                     # Storing the metrics in the dictionary with graph id as key
-                    graph_details[idx] = {'rmse': rmse, 'perc_completion': perc_completion}
+                    graph_details[idx] = {'rmse': rmse, 'perc_completion': perc_completion, 'pl_exp': pl_exp, 'sigma': sigma, 'jtx': jtx, 'num_samples': num_samples}
 
                 # Append to the detailed metrics dict
                 detailed_metrics.append(graph_details)
@@ -215,6 +206,10 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         predictions = np.concatenate(predictions)
         actuals = np.concatenate(actuals)
         perc_completion_list = np.concatenate(perc_completion_list)
+        pl_exp_list = np.concatenate(pl_exp_list)
+        sigma_list = np.concatenate(sigma_list)
+        jtx_list = np.concatenate(jtx_list)
+        num_samples_list = np.concatenate(num_samples_list)
 
         mae = mean_absolute_error(actuals, predictions)
         mse = mean_squared_error(actuals, predictions)
@@ -232,7 +227,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
             'mse': mse,
             'rmse': rmse
         }
-        return predictions, actuals, err_metrics, perc_completion_list
+        return predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list
 
     return loss_meter.avg, detailed_metrics
 

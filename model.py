@@ -17,11 +17,10 @@ import warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 
 
-class GatedGCN(GCN):
-
-    def init_conv(self, in_channels: int, out_channels: int,
-                  **kwargs):
-        return ResGatedGraphConv(in_channels, out_channels, **kwargs)
+class GatedGCN(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, **kwargs):
+        super(GatedGCN, self).__init__()
+        self.conv = ResGatedGraphConv(in_channels, out_channels, **kwargs)
 
 
 class GNN(torch.nn.Module):
@@ -49,9 +48,9 @@ class GNN(torch.nn.Module):
         elif model_type in ['GAT', 'GATv2']:
             self.gnn = GAT(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm, heads=num_heads, v2='v2' in model_type)
         elif model_type in 'GatedGCN':
-            self.gnn = GatedGCN(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm, attn_type="multihead") # check attn type from paper
+            self.gnn = GatedGCN(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm) # check attn type from paper
         elif model_type == 'PNA':
-            self.gnn = PNA(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers,aggregators=['mean', 'min', 'max', 'std'],scalers=['identity'], dropout=0.0, act=act, norm=None, jk="lstm", deg=deg)
+            self.gnn = PNA(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers,aggregators=['mean', 'min', 'max', 'std'],scalers=['identity'], dropout=0.0, act=act, norm=None, deg=deg)
         elif model_type == 'GPS':
             # Initialize GPSConv specific layers
             self.convs = torch.nn.ModuleList()
@@ -61,7 +60,7 @@ class GNN(torch.nn.Module):
                     torch.nn.ReLU(),
                     torch.nn.Linear(hidden_channels, hidden_channels),
                 )
-                conv = GPSConv(hidden_channels, GINEConv(nn), heads=num_heads, dropout=dropout_rate)
+                conv = GPSConv(in_channels, GINEConv(nn), heads=num_heads, dropout=0.0)
                 self.convs.append(conv)
 
         # Final layer
@@ -82,13 +81,20 @@ class GNN(torch.nn.Module):
         Returns:
             Tensor: The predicted coordinates of the jammer.
         """
-        x, edge_index = data.x, data.edge_index
+        x, edge_index, edge_weight = data.x, data.edge_index, data.edge_weight
 
-        if hasattr(self, 'convs'):  # Check if using GPSConv
+        if hasattr(self, 'convs'):  # If using a sequential model like GPS
             for conv in self.convs:
+                # Assuming the convs are homogeneous in terms of edge attr support
                 x = conv(x, edge_index)
         else:
-            x = self.gnn(x, edge_index)  # Fallback to previous GNN model logic
+            # Handle based on the type of GNN
+            if isinstance(self.gnn, GCN):
+                # GCN supports edge weights
+                x = self.gnn(x, edge_index, edge_weight=edge_weight)
+            else:
+                # Fallback for other types if no specific handling is needed
+                x = self.gnn(x, edge_index)
 
         # Apply GNN layers
         if params['pooling'] == 'max':
@@ -99,10 +105,6 @@ class GNN(torch.nn.Module):
             x = global_add_pool(x, data.batch)
         elif params['pooling'] == 'att':
             x = self.attention_pool(x, data.batch)
-        elif params['pooling'] == 'concat_mean_max':
-            x_max = global_max_pool(x, data.batch)
-            x_mean = global_mean_pool(x, data.batch)
-            x = torch.cat((x_max, x_mean), dim=1)  # Concatenate along the feature dimension
 
         x = self.dropout(x)  # apply dropout last layer
         x = self.regressor(x)

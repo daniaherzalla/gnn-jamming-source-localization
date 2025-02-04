@@ -165,6 +165,7 @@ class Instance:
             r, theta = self.jammer_position[0]
             new_theta = theta + radians  # Add rotation directly to the angle
             self.jammer_position = np.array([r, new_theta])
+
         elif params['coords'] == 'cartesian':
             # Mapping degrees to numpy rotation functions
             if degrees == 90:
@@ -307,9 +308,15 @@ class TemporalGraphDataset(Dataset):
             # instance = instance.get_crop(start_crop, end)
             instance = instance.zoom_in()
 
-        # Apply flipping
+        # # Apply flipping
+        # if 'flip' in params['aug']:
+        #     instance.apply_flip()
+
         if 'flip' in params['aug']:
-            instance.apply_flip()
+            # Define a probability threshold for flipping
+            flip_probability = 0.5  # 50% chance to apply flipping
+            if np.random.rand() < flip_probability:
+                instance.apply_flip()
 
         if 'rot' in params['aug']:
             instance.apply_rotation(random.choice([0, 90, 180, 270]))  # Choose randomly among 0, 90, 180, or 270 degrees
@@ -440,6 +447,25 @@ def apply_min_max_normalization_instance(instance):
     instance.jammer_position = jammer_position
 
 
+def apply_min_max_normalization_instance_noise(instance):
+    """Apply min-max normalization to position and RSSI data for an instance."""
+    # logging.info("Applying min-max normalization for instance")
+
+    # Normalize Noise values to range [0, 1]
+    min_noise = np.min(instance.node_noise)
+    max_noise = np.max(instance.node_noise)
+    range_noise = max_noise - min_noise if max_noise != min_noise else 1
+    normalized_noise = (instance.node_noise - min_noise) / range_noise
+    instance.node_noise = normalized_noise
+
+    # Normalize node positions cartesian for weights to range [0, 1]
+    min_coords = np.min(instance.node_positions_cart, axis=0)
+    max_coords = np.max(instance.node_positions_cart, axis=0)
+    range_coords = np.where(max_coords - min_coords == 0, 1, max_coords - min_coords)
+    normalized_positions = (instance.node_positions_cart - min_coords) / range_coords
+    instance.node_positions_cart = normalized_positions
+
+
 def apply_unit_sphere_normalization(instance):
     """
     Apply unit sphere normalization to position data, normalizing only the radius.
@@ -467,7 +493,7 @@ def apply_unit_sphere_normalization(instance):
 
     # Assuming jammer_position is a single array [radius, sin, cos]
     normalized_jammer_position = instance.jammer_position.copy()
-    normalized_jammer_position[0] /= max_radius  # Normalize only the radius component of the jammer position
+    normalized_jammer_position[0][0] /= max_radius  # Normalize only the radius component of the jammer position
 
     # Update the instance variables
     instance.node_positions = normalized_positions
@@ -728,8 +754,8 @@ def convert_to_polar(data):
     # data['polar_coordinates'] = data['polar_coordinates'].apply(angle_to_cyclical)
     data['node_positions_cart'] = data['node_positions']
     data['node_positions'] = data['node_positions'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
-    # data['jammer_position'] = data['jammer_position'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
-    data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar)
+    data['jammer_position'] = data['jammer_position'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
+    # data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar)
 
 
 def polar_to_cartesian(data):
@@ -800,40 +826,87 @@ def polar_to_cartesian(data):
 #     # return torch.tensor(converted_output, device=device)
 #     return converted_output.clone().detach().to(device)
 
+# def convert_output_eval(output, data_batch, data_type, device, training=False):
+#     """
+#     Convert and evaluate the model output or target coordinates by reversing the preprocessing steps:
+#     normalization, centering, and conversion from cyclical to angular coordinates.
+#
+#     Args:
+#         output (torch.Tensor): The model output tensor or target tensor.
+#         data_batch (dict): Dictionary containing data batch with necessary meta data.
+#         data_type (str): The type of data, either 'prediction' or 'target'.
+#         device (torch.device): The device on which the computation is performed.
+#
+#     Returns:
+#         torch.Tensor: The converted coordinates after reversing preprocessing steps.
+#     """
+#     output = output.to(device)  # Ensure the tensor is on the right device
+#
+#     # Ensure output always has a batch dimension
+#     if output.ndim == 1:
+#         output = output.unsqueeze(0)  # Add batch dimension if missing
+#
+#     # Step 1: Reverse unit sphere normalization
+#     if params['norm'] == 'unit_sphere':
+#         if 'max_radius' in data_batch:
+#             max_radius = data_batch['max_radius'].to(device).view(-1, 1)
+#             print("Output shape:", output.shape)  # Check the shape of output
+#             print("Max radius shape:", max_radius.shape)  # Check the shape of max_radius
+#
+#             output *= max_radius #.squeeze()
+#     else:
+#         return ValueError
+#
+#     return output.clone().detach().to(device)
+
 def convert_output_eval(output, data_batch, data_type, device):
     """
     Convert and evaluate the model output or target coordinates by reversing the preprocessing steps:
-    normalization, centering, and conversion from cyclical to angular coordinates.
+    normalization, centering, and converting polar coordinates (radius, sin(theta), cos(theta)) to Cartesian coordinates.
 
     Args:
         output (torch.Tensor): The model output tensor or target tensor.
-        data_batch (dict): Dictionary containing data batch with necessary meta data.
+        data_batch (dict): Dictionary containing data batch with necessary metadata.
         data_type (str): The type of data, either 'prediction' or 'target'.
         device (torch.device): The device on which the computation is performed.
+        training (bool): Flag indicating whether the operation is for training or not.
 
     Returns:
-        torch.Tensor: The converted coordinates after reversing preprocessing steps.
+        torch.Tensor: The converted Cartesian coordinates after reversing preprocessing steps.
     """
     output = output.to(device)  # Ensure the tensor is on the right device
 
-    # Ensure output always has a batch dimension
+    # Ensure output always has at least two dimensions [batch_size, features]
     if output.ndim == 1:
         output = output.unsqueeze(0)  # Add batch dimension if missing
 
     # Step 1: Reverse unit sphere normalization
-    if params['norm'] == 'unit_sphere':
-        if params['norm'] == 'unit_sphere':
-            if 'max_radius' in data_batch:
-                max_radius = data_batch['max_radius'].to(device).view(-1, 1)
-                print("Output shape:", output.shape)  # Check the shape of output
-                print("Max radius shape:", max_radius.shape)  # Check the shape of max_radius
+    if 'norm' in params and params['norm'] == 'unit_sphere' and 'max_radius' in data_batch:
+        max_radius = data_batch['max_radius'].to(device)
+        # Ensure max_radius is correctly shaped for broadcasting
+        if max_radius.ndim == 0:
+            max_radius = max_radius.view(1)
+        elif max_radius.ndim == 1:
+            max_radius = max_radius.view(-1, 1)
 
-                output *= max_radius #.squeeze()
+        # Normalize the first component (radius)
+        output[:, 0] *= max_radius
 
-    else:
-        return ValueError
+    # Step 2: Convert from polar (radius, sin(theta), cos(theta)) to Cartesian coordinates
+    radius = output[:, 0]
+    sin_theta = output[:, 1]
+    cos_theta = output[:, 2]
 
-    return output.clone().detach().to(device)
+    # Calculate Cartesian coordinates
+    x = radius * cos_theta
+    y = radius * sin_theta
+
+    # Stack x and y coordinates horizontally to form the Cartesian coordinate pairs
+    cartesian_coords = torch.stack((x, y), dim=1)
+
+    # print("cartesian_coords: ", cartesian_coords)
+
+    return cartesian_coords.clone().detach()
 
 
 def save_reduced_dataset(dataset, indices, path):
@@ -888,6 +961,62 @@ def split_datasets(data):
     return train_df, val_df, test_df
 
 
+# def save_datasets(combined_train_df, combined_val_df, combined_test_df, experiments_path):
+#     """
+#     Process the combined train, validation, and test data, and save them to disk as .pkl files.
+#
+#     Args:
+#         combined_train_df (pd.DataFrame): DataFrame containing combined training data.
+#         combined_val_df (pd.DataFrame): DataFrame containing combined validation data.
+#         combined_test_df (pd.DataFrame): DataFrame containing combined test data.
+#         experiments_path (str): The path where the processed data will be saved.
+#     """
+#     logging.info("Saving data")
+#
+#     # Define file paths
+#     train_file_path = os.path.join(experiments_path, 'train_dataset.pkl')
+#     val_file_path = os.path.join(experiments_path, 'val_dataset.pkl')
+#     test_file_path = os.path.join(experiments_path, 'test_dataset.pkl')
+#
+#     # Save the combined DataFrame subsets as .pkl files
+#     with open(train_file_path, 'wb') as f:
+#         pickle.dump(combined_train_df, f)
+#     with open(val_file_path, 'wb') as f:
+#         pickle.dump(combined_val_df, f)
+#     with open(test_file_path, 'wb') as f:
+#         pickle.dump(combined_test_df, f)
+#
+#     # Dataset types for specific filtering
+#     if params['dynamic']:
+#         dataset_types = ['guided_path_data', 'linear_path_data']
+#     else:
+#         dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
+#                          'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
+#                          'random_jammer_outside_region', 'all_jammed', 'all_jammed_jammer_outside_region']
+#
+#     for dataset in dataset_types:
+#         # Create filtered subsets based on dataset type
+#         train_subset = combined_train_df[combined_train_df['dataset'] == dataset]
+#         val_subset = combined_val_df[combined_val_df['dataset'] == dataset]
+#         test_subset = combined_test_df[combined_test_df['dataset'] == dataset]
+#
+#         # Save each subset as .pkl if it is not empty
+#         if not train_subset.empty:
+#             train_subset_path = os.path.join(experiments_path, f'{dataset}_train_dataset.pkl')
+#             with open(train_subset_path, 'wb') as f:
+#                 pickle.dump(train_subset, f)
+#
+#         if not val_subset.empty:
+#             val_subset_path = os.path.join(experiments_path, f'{dataset}_val_dataset.pkl')
+#             with open(val_subset_path, 'wb') as f:
+#                 pickle.dump(val_subset, f)
+#
+#         if not test_subset.empty:
+#             test_subset_path = os.path.join(experiments_path, f'{dataset}_test_dataset.pkl')
+#             with open(test_subset_path, 'wb') as f:
+#                 pickle.dump(test_subset, f)
+
+
 def save_datasets(combined_train_df, combined_val_df, combined_test_df, experiments_path):
     """
     Process the combined train, validation, and test data, and save them to disk as .pkl files.
@@ -913,35 +1042,32 @@ def save_datasets(combined_train_df, combined_val_df, combined_test_df, experime
     with open(test_file_path, 'wb') as f:
         pickle.dump(combined_test_df, f)
 
-    # Dataset types for specific filtering
-    if params['dynamic']:
-        dataset_types = ['guided_path_data', 'linear_path_data']
-    else:
-        dataset_types = ['circle', 'triangle', 'rectangle', 'random', 'circle_jammer_outside_region',
-                         'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
-                         'random_jammer_outside_region', 'all_jammed', 'all_jammed_jammer_outside_region']
+    # Define base shapes
+    base_shapes = ['circle', 'triangle', 'rectangle', 'random']
 
-    for dataset in dataset_types:
-        # Create filtered subsets based on dataset type
-        train_subset = combined_train_df[combined_train_df['dataset'] == dataset]
-        val_subset = combined_val_df[combined_val_df['dataset'] == dataset]
-        test_subset = combined_test_df[combined_test_df['dataset'] == dataset]
+    # Define dataframes for each type
+    dataframes = {'train': combined_train_df, 'val': combined_val_df, 'test': combined_test_df}
 
-        # Save each subset as .pkl if it is not empty
-        if not train_subset.empty:
-            train_subset_path = os.path.join(experiments_path, f'{dataset}_train_set.pkl')
-            with open(train_subset_path, 'wb') as f:
-                pickle.dump(train_subset, f)
+    # Filtering and saving subsets based on dataset types
+    for base_shape in base_shapes:
+        for dtype, df in dataframes.items():
+            # Exact matching for base shape and base shape all jammed
+            exact_base = df['dataset'] == base_shape
+            print(df[exact_base]['dataset'])
+            exact_base_all_jammed = df['dataset'] == f"{base_shape}_all_jammed"
+            print(df[exact_base_all_jammed]['dataset'])
+            filtered_base = df[exact_base | exact_base_all_jammed]
+            if not filtered_base.empty:
+                filtered_base.to_pickle(os.path.join(experiments_path, f'{base_shape}_{dtype}_dataset.pkl'))
 
-        if not val_subset.empty:
-            val_subset_path = os.path.join(experiments_path, f'{dataset}_val_set.pkl')
-            with open(val_subset_path, 'wb') as f:
-                pickle.dump(val_subset, f)
+            # Exact matching for base shape jammer outside region and base shape all jammed jammer outside region
+            exact_jammer_outside = df['dataset'] == f"{base_shape}_jammer_outside_region"
+            exact_jammer_outside_all_jammed = df['dataset'] == f"{base_shape}_all_jammed_jammer_outside_region"
+            # print(df[exact_jammer_outside_all_jammed]['dataset'])
+            filtered_jammer_outside = df[exact_jammer_outside | exact_jammer_outside_all_jammed]
+            if not filtered_jammer_outside.empty:
+                filtered_jammer_outside.to_pickle(os.path.join(experiments_path, f'{base_shape}_jammer_outside_region_{dtype}_dataset.pkl'))
 
-        if not test_subset.empty:
-            test_subset_path = os.path.join(experiments_path, f'{dataset}_test_set.pkl')
-            with open(test_subset_path, 'wb') as f:
-                pickle.dump(test_subset, f)
 
 def downsample_data(instance):
     """
@@ -1107,7 +1233,7 @@ def add_jammed_column(data, threshold=-55):
     return data
 
 
-def load_data(params, test_set_name, experiments_path=None):
+def load_data(params, data_class, experiments_path=None):
     """
     Load the data from the given paths, or preprocess and save it if not already done.
 
@@ -1120,23 +1246,26 @@ def load_data(params, test_set_name, experiments_path=None):
     """
     if params['inference']:
         # Load the test data only for inference mode
-        test_set_name = [test_set_name]
+        test_set_name = [data_class]
         for test_data in test_set_name:
             print(f"dataset: {test_data}")
             file_path = os.path.join(experiments_path, f'{test_data}.pkl')
             with open(file_path, 'rb') as f:
                 test_df = pickle.load(f)
 
-            # Process the data to include WCL pseudo-node
-            # test_df = add_wcl_to_data(test_df, params)
-            # print(f"Processed dataset to include WCL pseudo-node")
             print(test_df.columns)
             return None, None, test_df
     else:
-        # Define file paths for train, validation, and test datasets
-        train_file = os.path.join(experiments_path, 'train_dataset.pkl')
-        val_file = os.path.join(experiments_path, 'val_dataset.pkl')
-        test_file = os.path.join(experiments_path, 'test_dataset.pkl')
+        if params['train_per_class']:
+            train_file = os.path.join(experiments_path, f'{data_class}_train_dataset.pkl')
+            val_file = os.path.join(experiments_path, f'{data_class}_train_dataset.pkl')
+            test_file = os.path.join(experiments_path, f'{data_class}_train_dataset.pkl')
+
+        else:
+            # Define file paths for train, validation, and test datasets
+            train_file = os.path.join(experiments_path, 'train_dataset.pkl')
+            val_file = os.path.join(experiments_path, 'val_dataset.pkl')
+            test_file = os.path.join(experiments_path, 'test_dataset.pkl')
 
         if all(os.path.exists(f) for f in [train_file, val_file, test_file]):
             # Load existing datasets if they already exist
@@ -1149,10 +1278,7 @@ def load_data(params, test_set_name, experiments_path=None):
             with open(test_file, 'rb') as f:
                 test_df = pickle.load(f)
         else:
-            if params['all_env_data']:
-                datasets = ['data/train_test_data/log_distance/urban_area/combined_urban_area.csv', 'data/train_test_data/log_distance/shadowed_urban_area/combined_shadowed_urban_area.csv']
-            else:
-                datasets = [params['dataset_path']]
+            datasets = [params['dataset_path']]
             for dataset in datasets:
                 print(f"dataset: {dataset}")
 
@@ -1199,23 +1325,24 @@ def load_data(params, test_set_name, experiments_path=None):
                 if params['dynamic']:
                     data = add_jammed_column(data, threshold=-55)
 
-                # Process the data to include WCL pseudo-node
-                # data = add_wcl_to_data(data, params)
-                # print(f"Processed dataset to include WCL pseudo-node")
-
                 # Create train test splits
                 train_df, val_df, test_df = split_datasets(data)
-                train_df = train_df[:100]
-                # train_df = shuffle_positions_and_noise(train_df)
                 convert_to_polar(train_df)
                 convert_to_polar(val_df)
                 convert_to_polar(test_df)
 
-                print(train_df)
-
             # Process and save the combined data
             save_datasets(train_df, val_df, test_df, experiments_path)
 
+            if params['test_per_class']:
+                with open(train_file, 'rb') as f:
+                    train_df = pickle.load(f)
+                with open(val_file, 'rb') as f:
+                    val_df = pickle.load(f)
+                with open(test_file, 'rb') as f:
+                    test_df = pickle.load(f)
+
+        print(train_df['dataset'])
         return train_df, val_df, test_df
 
 def shuffle_positions_and_noise(data):
@@ -1230,62 +1357,6 @@ def shuffle_positions_and_noise(data):
         data.at[idx, 'node_noise'] = list(noises)
 
     return data
-
-# def add_wcl_to_data(data, params):
-#     """
-#     Adds a WCL pseudo-node to each graph instance in the dataset.
-#
-#     Args:
-#         data (pd.DataFrame): The dataset containing rows, each representing a graph.
-#         params (dict): Configuration parameters, might include dimensions settings.
-#
-#     Returns:
-#         pd.DataFrame: Updated dataset with WCL pseudo-node added to each graph.
-#     """
-#     for index, row in data.iterrows():
-#         # Extract node positions and noises from the row
-#         node_positions = row['node_positions']
-#         node_noise = row['node_noise']
-#
-#         # Calculate WCL
-#         wcl_position = weighted_centroid_localization(node_positions, node_noise)
-#
-#         # Append WCL as a pseudo-node at the end of the list of nodes
-#         node_positions.append(wcl_position)
-#         # Assign a high noise value to emphasize the pseudo-node; could use np.inf or a fixed large number
-#         node_noise.append(0)
-#
-#         # Update the DataFrame with the new values
-#         data.at[index, 'node_positions'] = node_positions
-#         data.at[index, 'node_noise'] = node_noise
-#
-#     return data
-
-
-# def weighted_centroid_localization(drones_pos, drones_rssi):
-#     """Method for calculating the weighted centroid based on RSSI values and positions."""
-#     weighted_sum = [0, 0]
-#     total_weight = 0
-#
-#     # Iterate through the RSSI values and corresponding GPS coordinates
-#     for rssi, coords in zip(drones_rssi, drones_pos):
-#         weight = 10 ** (rssi / 10)  # Convert RSSI to a linear scale weight
-#         weighted_coords = [weight * coord for coord in coords]
-#
-#         # Update weighted sum and total weight
-#         weighted_sum = [sum(x) for x in zip(weighted_sum, weighted_coords)]
-#         total_weight += weight
-#
-#     # Calculate the centroid coordinates
-#     wcl = [coord / total_weight for coord in weighted_sum]
-#
-#     print("wcl: ", wcl)
-#     return wcl
-
-# def get_params_hash(params):
-#     params_str = json.dumps(params, sort_keys=True)
-#     return hashlib.md5(params_str.encode()).hexdigest()
-
 
 def get_params_hash(params):
     # Create a copy of the params dictionary.
@@ -1320,25 +1391,25 @@ def create_data_loader(params, train_data, val_data, test_data, experiment_path)
 
         return None, None, test_loader
     else:
-        # Generate a unique identifier for the current params
-        params_hash = get_params_hash(params)
-        cache_path = os.path.join(experiment_path, f"data_loader_{params_hash}.pkl")
-        os.makedirs(experiment_path, exist_ok=True)
+        # # Generate a unique identifier for the current params
+        # params_hash = get_params_hash(params)
+        # cache_path = os.path.join(experiment_path, f"data_loader_{params_hash}.pkl")
+        # os.makedirs(experiment_path, exist_ok=True)
+        #
+        # if os.path.exists(cache_path):
+        #     # Load cached data loaders
+        #     with open(cache_path, 'rb') as f:
+        #         train_loader, val_loader, test_loader = pickle.load(f)
+        #     logging.info("Loaded cached data loaders")
+        # else:
+        # Create data loaders and save them if cache doesn't exist
+        logging.info("Creating data loaders")
+        train_loader, val_loader, test_loader = generate_data_loaders(params, train_data, val_data, test_data)
 
-        if os.path.exists(cache_path):
-            # Load cached data loaders
-            with open(cache_path, 'rb') as f:
-                train_loader, val_loader, test_loader = pickle.load(f)
-            logging.info("Loaded cached data loaders")
-        else:
-            # Create data loaders and save them if cache doesn't exist
-            logging.info("Creating data loaders")
-            train_loader, val_loader, test_loader = generate_data_loaders(params, train_data, val_data, test_data)
-
-            # Save data loaders to cache
-            with open(cache_path, 'wb') as f:
-                pickle.dump((train_loader, val_loader, test_loader), f)
-            logging.info("Saved data loaders")
+            # # Save data loaders to cache
+            # with open(cache_path, 'wb') as f:
+            #     pickle.dump((train_loader, val_loader, test_loader), f)
+            # logging.info("Saved data loaders")
 
         if params['model'] == 'PNA':
             deg_histogram = compute_degree_histogram(train_loader)
@@ -1545,6 +1616,7 @@ def create_torch_geo_data(instance: Instance) -> Data:
     if params['norm'] == 'minmax':
         apply_min_max_normalization_instance(instance)
     elif params['norm'] == 'unit_sphere':
+        apply_min_max_normalization_instance_noise(instance)
         apply_unit_sphere_normalization(instance)
 
     if 'angle_of_arrival' in params['required_features']:
@@ -1584,10 +1656,12 @@ def create_torch_geo_data(instance: Instance) -> Data:
         # Add self loop
         for i in range(indices.shape[0]):
             edge_index.extend([[i, i]])
-            edge_weight.extend([0.0])
+            edge_weight.extend([1.0])  # Self-loops can have a weight of 0 or another meaningful value
             for j in range(1, indices.shape[1]):
                 edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
-                edge_weight.extend([distances[i, j], distances[i, j]])
+                # Inverse the distance, adding a small epsilon to avoid division by zero
+                inv_distance = 1 / (distances[i, j] + 1e-5)
+                edge_weight.extend([inv_distance, inv_distance])
 
     else:
         raise ValueError("Unsupported edge specification")
@@ -1595,17 +1669,14 @@ def create_torch_geo_data(instance: Instance) -> Data:
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
     edge_weight = torch.tensor(edge_weight, dtype=torch.float)
 
-    if params['3d']:
-        jammer_positions = np.array(instance.jammer_position).reshape(-1, 3)  # Assuming this reshaping is valid based on your data structure
-    else:
-        jammer_positions = np.array(instance.jammer_position).reshape(-1, 2)  # Assuming this reshaping is valid based on your data structure
+    jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])  # Assuming this reshaping is valid based on your data structure
     y = torch.tensor(jammer_positions, dtype=torch.float)
 
     # Plot
     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
 
     # Create the Data object
-    data = Data(x=node_features_tensor, edge_index=edge_index, edge_attr=edge_weight, y=y)
+    data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y)
 
     # Convert geometric information to tensors
     # data.id = instance.id
@@ -1618,12 +1689,15 @@ def create_torch_geo_data(instance: Instance) -> Data:
 
     # Store the perc_completion as part of the Data object
     data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
+    data.pl_exp = torch.tensor(instance.pl_exp, dtype=torch.float)
+    data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
+    data.jtx = torch.tensor(instance.jammer_power, dtype=torch.float)
+    data.num_samples = torch.tensor(instance.num_samples, dtype=torch.float)
 
     # Apply pos encoding transform
     if params['model'] == 'GPS':
         transform = AddRandomWalkPE(walk_length=20, attr_name='pe')
-        transformed_data = transform(data)
-        print("shape of x with tranform: ", data.x.shape)
+        data = transform(data)
 
-    return transformed_data
+    return data
 
