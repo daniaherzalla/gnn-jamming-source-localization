@@ -3,15 +3,14 @@ from torch_geometric.graphgym import init_weights
 from torch_geometric.nn import MLP, GCN, GraphSAGE, GIN, GAT, PNA, AttentionalAggregation, global_mean_pool, global_max_pool, global_add_pool, ResGatedGraphConv
 from torch_geometric.nn import GPSConv, GINEConv
 
-
-from torch.nn import Linear
+from torch.nn import Linear, ReLU, Sequential
+from torch_geometric.nn import GINConv
+from torch.nn import Linear, ModuleList, Dropout, Sequential
+from torch_geometric.nn import GPSConv, global_mean_pool
+from torch_geometric.nn.norm import BatchNorm
+from torch_geometric.nn.models.jumping_knowledge import JumpingKnowledge
 from utils import set_seeds_and_reproducibility
 from config import params
-
-# from sem_gcn import SemGCN
-
-# from sem_gcn_mdn import SemGCN_MDN_Graph
-
 
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -21,6 +20,62 @@ class GatedGCN(torch.nn.Module):
     def __init__(self, in_channels, out_channels, **kwargs):
         super(GatedGCN, self).__init__()
         self.conv = ResGatedGraphConv(in_channels, out_channels, **kwargs)
+
+
+class GraphGPS(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, num_layers, out_channels, heads, dropout_rate, act='relu', norm='batch_norm', jk=None):
+        super(GraphGPS, self).__init__()
+        self.convs = ModuleList()
+        self.heads = heads
+        self.dropout_rate = dropout_rate
+        self.norms = ModuleList()
+        self.act = torch.nn.ReLU() if act == 'relu' else torch.nn.Identity()
+
+        # Initial linear layer to transform input features to hidden_channels
+        self.input_proj = Linear(in_channels, hidden_channels)
+
+        # Define GPSConv layers
+        for _ in range(num_layers):
+            nn = Sequential(
+                Linear(hidden_channels, hidden_channels),
+                torch.nn.ReLU(),
+                Linear(hidden_channels, hidden_channels),
+            )
+            conv = GPSConv(hidden_channels, GINConv(nn), heads=heads, dropout=0.0)
+            self.convs.append(conv)
+            self.norms.append(BatchNorm(hidden_channels))  # Adjust for multi-head attention
+
+        # Optional: Applying Jumping Knowledge
+        if jk:
+            self.jk = JumpingKnowledge(mode=jk, channels=hidden_channels, num_layers=num_layers)
+            final_channels = hidden_channels * num_layers if jk == 'cat' else hidden_channels
+        else:
+            self.jk = None
+            final_channels = hidden_channels
+
+        self.dropout = Dropout(dropout_rate)
+        self.lin = Linear(final_channels, out_channels)
+
+    def forward(self, x, edge_index, batch=None):
+        # Transform input features to hidden_channels
+        x = self.input_proj(x)
+
+        xs = []
+        for conv, norm in zip(self.convs, self.norms):
+            x = conv(x, edge_index)
+            x = norm(x)
+            x = self.act(x)
+            x = self.dropout(x)
+            xs.append(x)
+
+        if self.jk:
+            x = self.jk(xs)
+        else:
+            x = xs[-1]
+
+        x = global_max_pool(x, batch) if batch is not None else x
+        x = self.lin(x)
+        return x
 
 
 class GNN(torch.nn.Module):
@@ -52,16 +107,16 @@ class GNN(torch.nn.Module):
         elif model_type == 'PNA':
             self.gnn = PNA(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers,aggregators=['mean', 'min', 'max', 'std'],scalers=['identity'], dropout=0.0, act=act, norm=None, deg=deg)
         elif model_type == 'GPS':
-            # Initialize GPSConv specific layers
-            self.convs = torch.nn.ModuleList()
-            for _ in range(num_layers):
-                nn = torch.nn.Sequential(
-                    torch.nn.Linear(hidden_channels, hidden_channels),
-                    torch.nn.ReLU(),
-                    torch.nn.Linear(hidden_channels, hidden_channels),
-                )
-                conv = GPSConv(in_channels, GINEConv(nn), heads=num_heads, dropout=0.0)
-                self.convs.append(conv)
+            self.gnn = GraphGPS(in_channels=in_channels, hidden_channels=hidden_channels, num_layers=num_layers, out_channels=out_channels, heads=num_heads, dropout_rate=0.0, act=act, norm='batch', jk=None) # 'cat'
+            # self.convs = torch.nn.ModuleList()
+            # for _ in range(num_layers):
+            #     nn = torch.nn.Sequential(
+            #         torch.nn.Linear(hidden_channels, hidden_channels),
+            #         torch.nn.ReLU(),
+            #         torch.nn.Linear(hidden_channels, hidden_channels),
+            #     )
+            #     conv = GPSConv(in_channels, GINEConv(nn), heads=num_heads, dropout=0.0)
+            #     self.convs.append(conv)
 
         # Final layer
         self.attention_pool = AttentionalAggregation(gate_nn=Linear(out_channels, 1))
@@ -83,18 +138,18 @@ class GNN(torch.nn.Module):
         """
         x, edge_index, edge_weight = data.x, data.edge_index, data.edge_weight
 
-        if hasattr(self, 'convs'):  # If using a sequential model like GPS
-            for conv in self.convs:
-                # Assuming the convs are homogeneous in terms of edge attr support
-                x = conv(x, edge_index)
+        # if hasattr(self, 'convs'):  # If using a sequential model like GPS
+        #     for conv in self.convs:
+        #         # Assuming the convs are homogeneous in terms of edge attr support
+        #         x = conv(x, edge_index)
+        # else:
+        # Handle based on the type of GNN
+        if isinstance(self.gnn, GCN):
+            # GCN supports edge weights
+            x = self.gnn(x, edge_index, edge_weight=edge_weight)
         else:
-            # Handle based on the type of GNN
-            if isinstance(self.gnn, GCN):
-                # GCN supports edge weights
-                x = self.gnn(x, edge_index, edge_weight=edge_weight)
-            else:
-                # Fallback for other types if no specific handling is needed
-                x = self.gnn(x, edge_index)
+            # Fallback for other types if no specific handling is needed
+            x = self.gnn(x, edge_index)
 
         # Apply GNN layers
         if params['pooling'] == 'max':
