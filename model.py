@@ -45,7 +45,7 @@ class GraphGPS(torch.nn.Module):
             self.convs.append(conv)
             self.norms.append(BatchNorm(hidden_channels))  # Adjust for multi-head attention
 
-        # Optional: Applying Jumping Knowledge
+        # Applying Jumping Knowledge
         if jk:
             self.jk = JumpingKnowledge(mode=jk, channels=hidden_channels, num_layers=num_layers)
             final_channels = hidden_channels * num_layers if jk == 'cat' else hidden_channels
