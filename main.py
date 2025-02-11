@@ -27,10 +27,8 @@ def main():
         if params['dynamic']:
             dataset_classes = ['dynamic_linear_path', 'dynamic_controlled_path']
         else:
-            dataset_classes = [
-                               'all_jammed', 'circle_jammer_outside_region',
-                               'triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
-                               'random_jammer_outside_region', 'all_jammed_jammer_outside_region', 'circle', 'triangle', 'rectangle', 'random']
+            dataset_classes = ['circle_jammer_outside_region','triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
+                               'random_jammer_outside_region', 'circle', 'triangle', 'rectangle', 'random']
     else:
         dataset_classes = ["combined"]
 
