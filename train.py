@@ -158,7 +158,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
     model.eval()
     predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = [], [], [], [], [], [], []
     class_predictions, class_actuals = [], []
-    total_loss = AverageMeter()
+    # total_loss = AverageMeter()
     regression_loss_meter = AverageMeter()
     classification_loss_meter = AverageMeter()
     progress_bar = tqdm(validate_loader, desc="Validating", leave=True)
@@ -179,16 +179,28 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
             regression_loss_meter.update(regression_loss.item(), data.num_graphs)
             classification_loss_meter.update(classification_loss.item(), data.num_graphs)
 
+            # Compute predicted class labels
+            class_pred_labels = torch.argmax(classification_output, dim=1)
+            class_true_labels = data.y[:, -1]
+
+            # Store predictions and actuals for accuracy calculation
+            # class_predictions.extend(class_pred_labels.cpu().numpy())
+            # class_actuals.extend(class_true_labels.cpu().numpy())
+
+            # Ensure class_true_labels and class_pred_labels are flat arrays
+            class_true_labels = class_true_labels.flatten().cpu().numpy()  # Flatten and convert to numpy
+            class_pred_labels = class_pred_labels.flatten().cpu().numpy()  # Flatten and convert to numpy
+
+            # Store predictions and actuals for accuracy calculation
+            class_predictions.extend(class_pred_labels)
+            class_actuals.extend(class_true_labels)
+
             if test_loader:
                 predicted_coords = convert_output_eval(regression_output, data, 'prediction', device)
                 actual_coords = convert_output_eval(data.y[:, :-1], data, 'target', device)
-                class_pred_labels = torch.argmax(classification_output, dim=1)
-                class_true_labels = data.y
 
                 predictions.append(predicted_coords.cpu().numpy())
                 actuals.append(actual_coords.cpu().numpy())
-                class_predictions.extend(class_pred_labels.cpu().numpy())
-                class_actuals.extend(class_true_labels.cpu().numpy())
 
                 # Storing detailed metrics for further analysis
                 graph_details = {
@@ -203,11 +215,6 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                 jtx_list.append(data.jtx.cpu().numpy())
                 num_samples_list.append(data.num_samples.cpu().numpy())
             else:
-                regression_output, classification_output = model(data)
-                regression_loss = regression_criterion(regression_output,data.y[:, :-1])
-                classification_loss = classification_criterion(classification_output, data.y[:, -1].long())
-
-                # Dictionary to store individual graph details
                 graph_details = {}
 
                 # Calculate RMSE for each graph in the batch
@@ -232,11 +239,13 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                 # Append to the detailed metrics dict
                 detailed_metrics.append(graph_details)
 
-            # Update AverageMeter with the current RMSE and number of graphs
-            regression_loss_meter.update(regression_loss.item(), data.num_graphs)
-
             # Update the progress bar with the running average RMSE
             progress_bar.set_postfix({"Validation Loss (MSE)": regression_loss_meter.avg})
+
+    # Calculate classification accuracy
+    class_predictions = np.array(class_predictions)
+    class_actuals = np.array(class_actuals)
+    accuracy = np.mean(class_predictions == class_actuals) * 100  # Accuracy in percentage
 
     if test_loader:
         # Flatten predictions and actuals if they are nested lists
@@ -255,6 +264,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         print("MSE: ", mse)
         print("loss_meter.avg: ", regression_loss_meter.avg)
         print("RMSE: ", rmse)
+        print("Classification Accuracy: ", accuracy)
 
         err_metrics = {
             'actuals': actuals,
@@ -262,7 +272,8 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
             'perc_completion': perc_completion_list,
             'mae': mae,
             'mse': mse,
-            'rmse': rmse
+            'rmse': rmse,
+            'classification_accuracy': accuracy
         }
         return predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list
 
