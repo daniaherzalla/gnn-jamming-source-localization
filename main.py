@@ -123,7 +123,7 @@ def main():
 
                 # Initialize model
                 steps_per_epoch = len(train_loader) # Calculate steps per epoch based on the training data loader  # steps per epoch set based on 10000 samples dataset
-                model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
+                model, optimizer, scheduler, regression_criterion, classification_criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
 
                 best_val_loss = float('inf')
 
@@ -132,8 +132,8 @@ def main():
                 train_details ={}
                 val_details ={}
                 for epoch in range(params['max_epochs']):
-                    train_loss, train_detailed_metrics = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
-                    val_loss, val_detailed_metrics = validate(model, val_loader, criterion, device)
+                    train_loss, train_detailed_metrics = train(model, train_loader, optimizer, regression_criterion, classification_criterion, device, steps_per_epoch, scheduler)
+                    val_loss, val_detailed_metrics = validate(model, val_loader, regression_criterion, classification_criterion, device)
                     train_details[epoch] = train_detailed_metrics
                     val_details[epoch] = val_detailed_metrics
                     logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
@@ -182,7 +182,7 @@ def main():
 
                 # Evaluate the model on the test set
                 model.load_state_dict(best_model_state)
-                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = validate(model, test_loader, criterion, device, test_loader=True)
+                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = validate(model, test_loader, regression_criterion, classification_criterion, device, test_loader=True)
                 trial_data = {**epoch_data, **err_metrics}
                 save_epochs(trial_data, experiment_path)
                 rmse_vals.append(err_metrics['rmse'])

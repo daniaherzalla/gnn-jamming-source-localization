@@ -41,6 +41,7 @@ class Instance:
         self.jammer_gain = row['jammer_gain']
         self.id = row['id']
         self.dataset = row['dataset']
+        self.jammer_placement_bin = row['jammer_placement_bin']
         if params['dynamic']:
             self.jammed_at = row['jammed_at']
         if 'angle_of_arrival' in params['required_features']:
@@ -365,7 +366,7 @@ class TemporalGraphDataset(Dataset):
         if 'rot' in params['aug']:
             instance.apply_rotation(random.randint(0, 360))
 
-        if 'dropnode' in params['aug']:
+        if 'drop_node' in params['aug']:
             instance.drop_node()
 
         instance.perc_completion = end / ub_end
@@ -998,6 +999,23 @@ def split_datasets(data):
     val_df = data.iloc[val_idx].reset_index(drop=True)
     test_df = data.iloc[test_idx].reset_index(drop=True)
 
+    # Define base shapes
+    base_shapes = ['circle', 'triangle', 'rectangle', 'random']
+
+    # Create jammer_placement_bin column in each DataFrame
+    dataframes = {'train': train_df, 'val': val_df, 'test': test_df}
+    for base_shape in base_shapes:
+        for dtype, df in dataframes.items():
+            # Assign 0 to exact base shape and base shape all jammed
+            exact_base = df['dataset'] == base_shape
+            exact_base_all_jammed = df['dataset'] == f"{base_shape}_all_jammed"
+            df.loc[exact_base | exact_base_all_jammed, 'jammer_placement_bin'] = 0
+
+            # Assign 1 to base shape jammer outside region and base shape all jammed jammer outside region
+            exact_jammer_outside = df['dataset'] == f"{base_shape}_jammer_outside_region"
+            exact_jammer_outside_all_jammed = df['dataset'] == f"{base_shape}_all_jammed_jammer_outside_region"
+            df.loc[exact_jammer_outside | exact_jammer_outside_all_jammed, 'jammer_placement_bin'] = 1
+
     # return train_dataset, val_dataset, test_dataset, train_df, val_df, test_df, raw_test_df
     return train_df, val_df, test_df
 
@@ -1092,11 +1110,15 @@ def save_datasets(combined_train_df, combined_val_df, combined_test_df, experime
     # Filtering and saving subsets based on dataset types
     for base_shape in base_shapes:
         for dtype, df in dataframes.items():
+            # Add jammer_placement_bin column with default as None for safety
+            # df['jammer_placement_bin'] = None
+
             # Exact matching for base shape and base shape all jammed
             exact_base = df['dataset'] == base_shape
             print(df[exact_base]['dataset'])
             exact_base_all_jammed = df['dataset'] == f"{base_shape}_all_jammed"
             print(df[exact_base_all_jammed]['dataset'])
+            # df.loc[exact_base | exact_base_all_jammed, 'jammer_placement_bin'] = 0
             filtered_base = df[exact_base | exact_base_all_jammed]
             if not filtered_base.empty:
                 filtered_base.to_pickle(os.path.join(experiments_path, f'{base_shape}_{dtype}_dataset.pkl'))
@@ -1104,6 +1126,7 @@ def save_datasets(combined_train_df, combined_val_df, combined_test_df, experime
             # Exact matching for base shape jammer outside region and base shape all jammed jammer outside region
             exact_jammer_outside = df['dataset'] == f"{base_shape}_jammer_outside_region"
             exact_jammer_outside_all_jammed = df['dataset'] == f"{base_shape}_all_jammed_jammer_outside_region"
+            # df.loc[exact_jammer_outside | exact_jammer_outside_all_jammed, 'jammer_placement_bin'] = 1
             # print(df[exact_jammer_outside_all_jammed]['dataset'])
             filtered_jammer_outside = df[exact_jammer_outside | exact_jammer_outside_all_jammed]
             if not filtered_jammer_outside.empty:
@@ -1905,32 +1928,33 @@ def create_torch_geo_data(instance: Instance) -> Data:
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
     edge_weight = torch.tensor(edge_weight, dtype=torch.float)
 
-    # Apply DropEdge
-    drop_edge_rate = 0.1
-    if drop_edge_rate > 0:
-        num_edges = edge_index.size(1)
-        num_edges_to_drop = int(drop_edge_rate * num_edges)
+    # # Assuming instance.jammer_position is a list or array that can be reshaped
+    # jammer_positions = np.array(instance.jammer_position).reshape(-1, 3)
+    #
+    # # Convert jammer_positions to a tensor
+    # y = torch.tensor(jammer_positions, dtype=torch.float)
 
-        # Randomly select edges to drop
-        edges_to_drop = torch.randperm(num_edges)[:num_edges_to_drop]
-        mask = torch.ones(num_edges, dtype=torch.bool)
-        mask[edges_to_drop] = False
-
-        # Apply mask to edge_index and edge_weight
-        edge_index = edge_index[:, mask]
-        edge_weight = edge_weight[mask]
-
-    # Assuming instance.jammer_position is a list or array that can be reshaped
-    jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])
-
-    # Convert jammer_positions to a tensor
+    # Prepare target variables
+    jammer_positions = np.array(instance.jammer_position).reshape(-1, 3)
+    print('jammer_positions: ', jammer_positions)
     y = torch.tensor(jammer_positions, dtype=torch.float)
 
-    # Convert instance.jammer_power to a tensor and reshape it to match the dimensions of y
-    jammer_power = torch.tensor(instance.jammer_power, dtype=torch.float).reshape(-1, 1)
+    # Assume instance.jammer_placement_bin is accessible
+    # Assuming `instance.jammer_placement_bin` is a scalar representing class index
+    # jammer_placement_bin = torch.tensor([instance.jammer_placement_bin], dtype=torch.long)
+    # print('jammer_placement_bin: ', jammer_placement_bin)
 
-    # Concatenate jammer_power to y along the appropriate dimension
-    y = torch.cat((y, jammer_power), dim=1)
+    # Assuming instance.jammer_placement_bin is already an array with the same length as jammer_positions
+    jammer_placement_bin = torch.tensor(instance.jammer_placement_bin, dtype=torch.long)
+
+    # Ensure jammer_placement_bin is a 2D tensor with the second dimension being 1 to match y for concatenation
+    jammer_placement_bin = jammer_placement_bin.view(-1, 1)
+
+    # Concatenate position and placement classification into a single tensor
+    y_tensor = torch.cat([y, jammer_placement_bin], dim=1)
+
+    # Create the Data object
+    data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y_tensor)
 
 
     # jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])  # Assuming this reshaping is valid based on your data structure
@@ -1940,7 +1964,7 @@ def create_torch_geo_data(instance: Instance) -> Data:
     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
 
     # Create the Data object
-    data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y)
+    # data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y)
 
     # Convert geometric information to tensors
     # data.id = instance.id

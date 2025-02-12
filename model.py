@@ -108,21 +108,12 @@ class GNN(torch.nn.Module):
             self.gnn = PNA(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers,aggregators=['mean', 'min', 'max', 'std'],scalers=['identity'], dropout=0.0, act=act, norm=None, deg=deg)
         elif model_type == 'GPS':
             self.gnn = GraphGPS(in_channels=in_channels, hidden_channels=hidden_channels, num_layers=num_layers, out_channels=out_channels, heads=num_heads, dropout_rate=0.0, act=act, norm='batch', jk=None) # 'cat'
-            # self.convs = torch.nn.ModuleList()
-            # for _ in range(num_layers):
-            #     nn = torch.nn.Sequential(
-            #         torch.nn.Linear(hidden_channels, hidden_channels),
-            #         torch.nn.ReLU(),
-            #         torch.nn.Linear(hidden_channels, hidden_channels),
-            #     )
-            #     conv = GPSConv(in_channels, GINEConv(nn), heads=num_heads, dropout=0.0)
-            #     self.convs.append(conv)
 
         # Final layer
         self.attention_pool = AttentionalAggregation(gate_nn=Linear(out_channels, 1))
-        self.regressor = Linear(out_channels, out_features)
+        self.regressor = Linear(out_channels, 3)
+        self.classifier = Linear(out_channels, 2)  # Classifier layer, outputs two logits for binary classification
         self.dropout = torch.nn.Dropout(dropout_rate)
-        self.output_act_tanh = torch.nn.Tanh()
         # Initialize weights
         init_weights(self)
 
@@ -138,11 +129,6 @@ class GNN(torch.nn.Module):
         """
         x, edge_index, edge_weight = data.x, data.edge_index, data.edge_weight
 
-        # if hasattr(self, 'convs'):  # If using a sequential model like GPS
-        #     for conv in self.convs:
-        #         # Assuming the convs are homogeneous in terms of edge attr support
-        #         x = conv(x, edge_index)
-        # else:
         # Handle based on the type of GNN
         if isinstance(self.gnn, GCN):
             # GCN supports edge weights
@@ -162,7 +148,11 @@ class GNN(torch.nn.Module):
             x = self.attention_pool(x, data.batch)
 
         x = self.dropout(x)  # apply dropout last layer
-        x = self.regressor(x)
-        if params['activation']:
-            x = self.output_act_tanh(x)
-        return x
+
+        # Regression and classification outputs
+        reg_output = self.regressor(x)
+        class_output = self.classifier(x)
+
+        print()
+
+        return reg_output, class_output
