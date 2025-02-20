@@ -47,7 +47,7 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None, d
         in_channels = len(params['additional_features']) + len(
             params['required_features']) + feature_dims  # Add one (two for 3D) since position data is considered separately for each coordinate and one more for sin cos of aoa
     elif params['coords'] == 'polar':
-        in_channels = len(params['additional_features']) + len(params['required_features']) + 2  # r, sin cos theta, sin cos aoa
+        in_channels = len(params['additional_features']) + len(params['required_features']) + 4  # r, sin cos theta, sin cos aoa
     else:
         raise "Unknown coordinate system"
 
@@ -98,7 +98,7 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         # print('classification_output: ', classification_output)
         regression_loss = regression_criterion(regression_output, data.y[:, :-1])  # Assuming data.y contains the regression labels
         classification_loss = classification_criterion(classification_output, data.y[:, -1].long())  # Assuming data.y_class contains the classification labels
-        loss = regression_loss + classification_loss
+        loss = (0.7 * regression_loss) + (0.3 * classification_loss)
 
         # output = model(data)
         # loss = criterion(output, data.y)
