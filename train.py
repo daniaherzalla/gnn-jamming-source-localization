@@ -37,32 +37,19 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None, d
         criterion (torch.nn.Module): Loss criterion.
     """
     logging.info("Initializing model...")
-    if 'angle_of_arrival' in params['required_features']:
-        feature_dims = 2
-    else:
-        feature_dims = 1
-    if 'moving_avg_aoa' in params['additional_features']:
-        feature_dims = 3
-    if params['coords'] == 'cartesian':
-        in_channels = len(params['additional_features']) + len(
-            params['required_features']) + feature_dims  # Add one (two for 3D) since position data is considered separately for each coordinate and one more for sin cos of aoa
-    elif params['coords'] == 'polar':
-        in_channels = len(params['additional_features']) + len(params['required_features']) + 4  # r, sin cos theta, sin cos aoa
-    else:
-        raise "Unknown coordinate system"
+    in_channels = 18
 
     print('in_channels: ', in_channels)
     model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'],
                 out_channels=params['out_channels'], num_layers=params['num_layers'], deg=deg_histogram).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
-    # optimizer = optim.SGD(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'], momentum=0.9)
+    #optimizer = optim.SGD(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'], momentum=0.9)
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear') # 10 epochs warmup (sgd momentum 0.9) #(10/params['max_epochs'])
-    regression_criterion = torch.nn.MSELoss()
-    classification_criterion = torch.nn.CrossEntropyLoss()
-    return model, optimizer, scheduler, regression_criterion, classification_criterion
+    criterion = torch.nn.MSELoss()
+    return model, optimizer, scheduler, criterion
 
 
-def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, regression_criterion: torch.nn.Module, classification_criterion: torch.nn.Module,  device: torch.device, steps_per_epoch: int,
+def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, device: torch.device, steps_per_epoch: int,
           scheduler) -> float:
     """
     Train the model for one epoch.
@@ -78,9 +65,7 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
     Returns:
         float: Average loss for the epoch.
     """
-    total_loss = AverageMeter()
-    regression_loss_meter = AverageMeter()
-    classification_loss_meter = AverageMeter()
+    loss_meter = AverageMeter()
     model.train()
     progress_bar = tqdm(train_loader, total=steps_per_epoch, desc="Training", leave=True)
 
@@ -93,30 +78,21 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
 
         data = data.to(device)
         optimizer.zero_grad()
-        regression_output, classification_output = model(data)
-        # print('regression_output: ', regression_output)
-        # print('classification_output: ', classification_output)
-        regression_loss = regression_criterion(regression_output, data.y[:, :-1])  # Assuming data.y contains the regression labels
-        classification_loss = classification_criterion(classification_output, data.y[:, -1].long())  # Assuming data.y_class contains the classification labels
-        loss = (0.7 * regression_loss) + (0.3 * classification_loss)
-
-        # output = model(data)
-        # loss = criterion(output, data.y)
+        output = model(data)
+        loss = criterion(output, data.y)
         loss.backward()
         optimizer.step()
         scheduler.step()
 
         # Update AverageMeter with the current batch loss
-        total_loss.update(loss.item(), data.num_graphs)
-        regression_loss_meter.update(regression_loss.item(), data.num_graphs)
-        classification_loss_meter.update(classification_loss.item(), data.num_graphs)
+        loss_meter.update(loss.item(), data.num_graphs)
 
         # Get the current learning rate from the optimizer
         current_lr = optimizer.param_groups[0]['lr']
 
         # Log the average loss so far and the current learning rate in the progress bar
         progress_bar.set_postfix({
-            "Train Loss (MSE)": regression_loss_meter.avg,
+            "Train Loss (MSE)": loss_meter.avg,
             "Learning Rate": current_lr
         })
 
@@ -125,8 +101,8 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
 
         # Calculate RMSE for each graph in the batch
         for idx in range(data.num_graphs):
-            prediction = convert_output_eval(regression_output[idx], data[idx], 'prediction', device)
-            actual = convert_output_eval(data.y[idx, :-1], data[idx], 'target', device)
+            prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
+            actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
 
             mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
             rmse = math.sqrt(mse)
@@ -139,10 +115,10 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         detailed_metrics.append(graph_details)
 
     # Return the average loss tracked by AverageMeter
-    return total_loss.avg, detailed_metrics
+    return loss_meter.avg, detailed_metrics
 
 
-def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, regression_criterion: torch.nn.Module, classification_criterion: torch.nn.Module, device: torch.device, test_loader=False) -> float:
+def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoader, criterion: torch.nn.Module, device: torch.device, test_loader=False) -> float:
     """
     Validate the model on the validation dataset.
 
@@ -157,10 +133,7 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
     """
     model.eval()
     predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = [], [], [], [], [], [], []
-    class_predictions, class_actuals = [], []
-    # total_loss = AverageMeter()
-    regression_loss_meter = AverageMeter()
-    classification_loss_meter = AverageMeter()
+    loss_meter = AverageMeter()
     progress_bar = tqdm(validate_loader, desc="Validating", leave=True)
 
     # Dictionary to store the results by graph index and epoch
@@ -169,45 +142,16 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
     with torch.no_grad():
         for data in progress_bar:
             data = data.to(device)
-            # output = model(data)
-            regression_output, classification_output = model(data)
-            regression_loss = regression_criterion(regression_output, data.y[:, :-1])
-            classification_loss = classification_criterion(classification_output, data.y[:, -1].long())
-
-            # combined_loss = regression_loss + classification_loss
-            # total_loss.update(combined_loss.item(), data.num_graphs)
-            regression_loss_meter.update(regression_loss.item(), data.num_graphs)
-            classification_loss_meter.update(classification_loss.item(), data.num_graphs)
-
-            # Compute predicted class labels
-            class_pred_labels = torch.argmax(classification_output, dim=1)
-            class_true_labels = data.y[:, -1]
-
-            # Store predictions and actuals for accuracy calculation
-            # class_predictions.extend(class_pred_labels.cpu().numpy())
-            # class_actuals.extend(class_true_labels.cpu().numpy())
-
-            # Ensure class_true_labels and class_pred_labels are flat arrays
-            class_true_labels = class_true_labels.flatten().cpu().numpy()  # Flatten and convert to numpy
-            class_pred_labels = class_pred_labels.flatten().cpu().numpy()  # Flatten and convert to numpy
-
-            # Store predictions and actuals for accuracy calculation
-            class_predictions.extend(class_pred_labels)
-            class_actuals.extend(class_true_labels)
+            output = model(data)
 
             if test_loader:
-                predicted_coords = convert_output_eval(regression_output, data, 'prediction', device)
-                actual_coords = convert_output_eval(data.y[:, :-1], data, 'target', device)
+                predicted_coords = convert_output_eval(output, data, 'prediction', device)
+                actual_coords = convert_output_eval(data.y, data, 'target', device)
 
                 predictions.append(predicted_coords.cpu().numpy())
                 actuals.append(actual_coords.cpu().numpy())
 
-                # Storing detailed metrics for further analysis
-                graph_details = {
-                    'regression_loss': regression_loss.item(),
-                    'classification_loss': classification_loss.item(),
-                    # 'combined_loss': combined_loss.item()
-                }
+                loss = criterion(predicted_coords, actual_coords)
 
                 perc_completion_list.append(data.perc_completion.cpu().numpy())
                 pl_exp_list.append(data.pl_exp.cpu().numpy())
@@ -215,15 +159,15 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                 jtx_list.append(data.jtx.cpu().numpy())
                 num_samples_list.append(data.num_samples.cpu().numpy())
             else:
+                loss = criterion(output, data.y)
+
+                # Dictionary to store individual graph details
                 graph_details = {}
 
                 # Calculate RMSE for each graph in the batch
                 for idx in range(data.num_graphs):
-                    # prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
-                    # actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
-
-                    prediction = convert_output_eval(regression_output[idx], data[idx], 'prediction', device)
-                    actual = convert_output_eval(data.y[idx, :-1], data[idx], 'target', device)
+                    prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
+                    actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
 
                     mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
                     rmse = math.sqrt(mse)
@@ -239,13 +183,11 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                 # Append to the detailed metrics dict
                 detailed_metrics.append(graph_details)
 
-            # Update the progress bar with the running average RMSE
-            progress_bar.set_postfix({"Validation Loss (MSE)": regression_loss_meter.avg})
+            # Update AverageMeter with the current RMSE and number of graphs
+            loss_meter.update(loss.item(), data.num_graphs)
 
-    # Calculate classification accuracy
-    class_predictions = np.array(class_predictions)
-    class_actuals = np.array(class_actuals)
-    accuracy = np.mean(class_predictions == class_actuals) * 100  # Accuracy in percentage
+            # Update the progress bar with the running average RMSE
+            progress_bar.set_postfix({"Validation Loss (MSE)": loss_meter.avg})
 
     if test_loader:
         # Flatten predictions and actuals if they are nested lists
@@ -262,9 +204,8 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         rmse = math.sqrt(mse)
         print("MAE: ", mae)
         print("MSE: ", mse)
-        print("loss_meter.avg: ", regression_loss_meter.avg)
+        print("loss_meter.avg: ", loss_meter.avg)
         print("RMSE: ", rmse)
-        print("Classification Accuracy: ", accuracy)
 
         err_metrics = {
             'actuals': actuals,
@@ -272,12 +213,11 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
             'perc_completion': perc_completion_list,
             'mae': mae,
             'mse': mse,
-            'rmse': rmse,
-            'classification_accuracy': accuracy
+            'rmse': rmse
         }
         return predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list
 
-    return regression_loss_meter.avg, detailed_metrics
+    return loss_meter.avg, detailed_metrics
 
 
 def save_err_metrics(data, filename: str = 'results/error_metrics_converted.csv') -> None:

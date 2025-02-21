@@ -156,10 +156,11 @@ def cartesian_to_polar(coords):
     polar_coords = []
 
     if params['3d']:
+        # print('coords: ', coords)
         for x, y, z in coords:
             r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
-            phi = np.arccos(z / r) if r != 0 else 0  # Polar angle from the positive z-axis (colatitude)
-            theta = np.arctan2(y, x)  # Azimuthal angle in the xy-plane from the positive x-axis
+            phi = np.arctan2(np.sqrt(x ** 2 + y ** 2), z)  # Polar angle
+            theta = np.arctan2(y, x)  # Azimuthal angle
             polar_coords.append([r, theta, phi])
     else:
         for x, y in coords:

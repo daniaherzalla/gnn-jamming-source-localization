@@ -9,6 +9,7 @@ from data_processing import load_data, create_data_loader
 from train import initialize_model, train, validate
 from utils import set_seeds_and_reproducibility, save_epochs
 from custom_logging import setup_logging
+import numpy as np
 
 # Setup custom logging
 setup_logging()
@@ -25,10 +26,10 @@ def main():
 
     if params['train_per_class']:
         if params['dynamic']:
-            dataset_classes = ['dynamic_linear_path', 'dynamic_controlled_path']
+            dataset_classes = ['dynamic'] #['dynamic_linear_path', 'dynamic_controlled_path']
         else:
-            dataset_classes = ['circle_jammer_outside_region','triangle_jammer_outside_region', 'rectangle_jammer_outside_region',
-                               'random_jammer_outside_region', 'circle', 'triangle', 'rectangle', 'random']
+            dataset_classes = ['circle_jammer_outside', 'triangle_jammer_outside', 'rectangle_jammer_outside',
+                             'random_jammer_outside', 'circle', 'triangle', 'rectangle', 'random'] #['circle_jammer_outside',
     else:
         dataset_classes = ["combined"]
 
@@ -123,7 +124,7 @@ def main():
 
                 # Initialize model
                 steps_per_epoch = len(train_loader) # Calculate steps per epoch based on the training data loader  # steps per epoch set based on 10000 samples dataset
-                model, optimizer, scheduler, regression_criterion, classification_criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
+                model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
 
                 best_val_loss = float('inf')
 
@@ -132,8 +133,8 @@ def main():
                 train_details ={}
                 val_details ={}
                 for epoch in range(params['max_epochs']):
-                    train_loss, train_detailed_metrics = train(model, train_loader, optimizer, regression_criterion, classification_criterion, device, steps_per_epoch, scheduler)
-                    val_loss, val_detailed_metrics = validate(model, val_loader, regression_criterion, classification_criterion, device)
+                    train_loss, train_detailed_metrics = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
+                    val_loss, val_detailed_metrics = validate(model, val_loader, criterion, device)
                     train_details[epoch] = train_detailed_metrics
                     val_details[epoch] = val_detailed_metrics
                     logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
@@ -182,7 +183,7 @@ def main():
 
                 # Evaluate the model on the test set
                 model.load_state_dict(best_model_state)
-                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = validate(model, test_loader, regression_criterion, classification_criterion, device, test_loader=True)
+                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = validate(model, test_loader, criterion, device, test_loader=True)
                 trial_data = {**epoch_data, **err_metrics}
                 save_epochs(trial_data, experiment_path)
                 rmse_vals.append(err_metrics['rmse'])
@@ -211,7 +212,7 @@ def main():
 
         # MAE statistics calculation
         mean_mae = statistics.mean(mae_vals)
-        std_mae = statistics.stdev(mae_vals)
+        std_mae = np.std(mae_vals)
         print("MAE values: ", mae_vals)
         print(f"Average MAE: {round(mean_mae, 1)}\\sd{{{round(std_mae, 1)}}}")
 
@@ -226,3 +227,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
