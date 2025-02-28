@@ -29,41 +29,38 @@ setup_logging()
 
 class Instance:
     def __init__(self, row):
-        # Initialize attributes from the pandas row and convert appropriate fields to numpy arrays only if not already arrays
-        self.num_samples = row['num_samples']
-        self.node_positions = row['node_positions'] if isinstance(row['node_positions'], np.ndarray) else np.array(row['node_positions'])
-        self.node_positions_cart = row['node_positions_cart'] if isinstance(row['node_positions_cart'], np.ndarray) else np.array(row['node_positions_cart'])
-        self.node_noise = row['node_noise'] if isinstance(row['node_noise'], np.ndarray) else np.array(row['node_noise'])
-        self.pl_exp = row['pl_exp']
-        self.sigma = row['sigma']
-        self.jammer_power = row['jammer_power']
-        self.jammer_position = row['jammer_position'] if isinstance(row['jammer_position'], np.ndarray) else np.array(row['jammer_position'])
-        self.jammer_gain = row['jammer_gain']
-        self.id = row['id']
-        self.dataset = row['dataset']
-        # self.jammer_placement_bin = row['jammer_placement_bin']
-        # self.jammer_direction = row['jammer_direction']
-        if params['dynamic']:
-            self.jammed_at = row['jammed_at']
-        if 'angle_of_arrival' in params['required_features']:
-            self.angle_of_arrival = row['angle_of_arrival'] if isinstance(row['angle_of_arrival'], np.ndarray) else np.array(row['angle_of_arrival'])
+        if params['inference']:
+            # Initialize attributes from the pandas row and convert appropriate fields to numpy arrays only if not already arrays
+            self.node_positions = row['node_positions'] if isinstance(row['node_positions'], np.ndarray) else np.array(row['node_positions'])
+            self.node_positions_cart = row['node_positions_cart'] if isinstance(row['node_positions_cart'], np.ndarray) else np.array(row['node_positions_cart'])
+            self.node_noise = row['node_noise'] if isinstance(row['node_noise'], np.ndarray) else np.array(row['node_noise'])
+            if params['dynamic']:
+                self.jammed_at = row['jammed_at']
+        else:
+            # Initialize attributes from the pandas row and convert appropriate fields to numpy arrays only if not already arrays
+            self.num_samples = row['num_samples']
+            self.node_positions = row['node_positions'] if isinstance(row['node_positions'], np.ndarray) else np.array(row['node_positions'])
+            self.node_positions_cart = row['node_positions_cart'] if isinstance(row['node_positions_cart'], np.ndarray) else np.array(row['node_positions_cart'])
+            self.node_noise = row['node_noise'] if isinstance(row['node_noise'], np.ndarray) else np.array(row['node_noise'])
+            self.pl_exp = row['pl_exp']
+            self.sigma = row['sigma']
+            self.jammer_power = row['jammer_power']
+            self.jammer_position = row['jammer_position'] if isinstance(row['jammer_position'], np.ndarray) else np.array(row['jammer_position'])
+            self.jammer_gain = row['jammer_gain']
+            self.id = row['id']
+            self.dataset = row['dataset']
+            # self.jammer_placement_bin = row['jammer_placement_bin']
+            # self.jammer_direction = row['jammer_direction']
+            if params['dynamic']:
+                self.jammed_at = row['jammed_at']
 
     def get_crop(self, start, end):
         if params['dynamic']:
-            if 'angle_of_arrival' in params['required_features']:
+            if params['inference']:
                 cropped_instance = Instance({
-                    'num_samples': end - start,
                     'node_positions': self.node_positions[start:end],
                     'node_positions_cart': self.node_positions_cart[start:end],
                     'node_noise': self.node_noise[start:end],
-                    'angle_of_arrival': self.angle_of_arrival[start:end],
-                    'pl_exp': self.pl_exp,
-                    'sigma': self.sigma,
-                    'jammer_power': self.jammer_power,
-                    'jammer_position': self.jammer_position,
-                    'jammer_gain': self.jammer_gain,
-                    'id': self.id,
-                    'dataset': self.dataset,
                     'jammed_at': self.jammed_at  # Jammed index remains the same, can adjust logic if needed
                 })
             else:
@@ -138,18 +135,6 @@ class Instance:
                 new_node_positions_cart.append([new_x, new_y])
 
             self.node_positions_cart = np.array(new_node_positions_cart)
-
-        elif params['coords'] == 'cartesian':
-            # Mapping degrees to numpy rotation functions
-            if degrees == 90:
-                self.node_positions = np.dot(self.node_positions, np.array([[0, 1], [-1, 0]]))
-                self.jammer_position = np.dot(self.jammer_position, np.array([[0, 1], [-1, 0]]))
-            elif degrees == 180:
-                self.node_positions = -self.node_positions
-                self.jammer_position = -self.jammer_position
-            elif degrees == 270:
-                self.node_positions = np.dot(self.node_positions, np.array([[0, -1], [1, 0]]))
-                self.jammer_position = np.dot(self.jammer_position, np.array([[0, -1], [1, 0]]))
 
     def drop_node(self, drop_rate=0.2, min_nodes=3):
         """
@@ -232,13 +217,27 @@ class Instance:
 
     def downsample(self):
         if params['ds_method'] == 'noise':
+
+            # # Plot the original Cartesian positions
+            # cart_pos = np.array(self.node_positions_cart)
+            # plt.figure(figsize=(10, 6))
+            # plt.scatter(cart_pos[:, 0], cart_pos[:, 1], c='blue', marker='o', label='Original Positions')
+            # plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', s=1, label='Jammer Position')
+            # plt.title('Original Node Positions (Cartesian)')
+            # plt.xlabel('X Coordinate')
+            # plt.ylabel('Y Coordinate')
+            # plt.legend()
+            # plt.grid(True)
+            # plt.show()
+
+            # print("og num nodes: ", len(self.node_positions))
             # Convert positions to a DataFrame to use bin_nodes
             node_df = pd.DataFrame({
                 'r': self.node_positions[:, 0],
                 'sin_theta': self.node_positions[:, 1],
                 'cos_theta': self.node_positions[:, 2],
-                'sin_az': self.node_positions[:, 3],
-                'cos_az': self.node_positions[:, 4],
+                'sin_phi': self.node_positions[:, 3],
+                'cos_phi': self.node_positions[:, 4],
                 'x': self.node_positions_cart[:, 0],
                 'y': self.node_positions_cart[:, 1],
                 'z': self.node_positions_cart[:, 2],
@@ -246,76 +245,410 @@ class Instance:
             })
 
             binned_nodes = bin_nodes(node_df, grid_meters=params['grid_meters'])
-            self.node_positions = binned_nodes[['r', 'sin_theta', 'cos_theta', 'sin_az', 'cos_az']].to_numpy()
+            self.node_positions = binned_nodes[['r', 'sin_theta', 'cos_theta', 'sin_phi', 'cos_phi']].to_numpy()
             self.node_positions_cart = binned_nodes[['x', 'y', 'z']].to_numpy()
             self.node_noise = binned_nodes['noise_level'].to_numpy()
 
+            # if len(self.node_positions) < 3:
+            #     print('downsampling err: ', len(self.node_positions))
+            #     quit()
+
+            # Plot the original Cartesian positions
+            cart_pos = np.array(self.node_positions_cart)
+            plt.figure(figsize=(10, 6))
+            plt.scatter(cart_pos[:, 0], cart_pos[:, 1], c='blue', marker='o', label='DS Positions')
+            plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', s=1, label='Jammer Position')
+            plt.title('DS Node Positions (Cartesian)')
+            plt.xlabel('X Coordinate')
+            plt.ylabel('Y Coordinate')
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+
+        # elif params['ds_method'] == 'time_window_avg':
+        #     # # Plot the original Cartesian positions
+        #     # cart_pos = np.array(self.node_positions_cart)
+        #     # plt.figure(figsize=(10, 6))
+        #     # plt.scatter(cart_pos[:, 0], cart_pos[:, 1], c='blue', marker='o', s=0.5, label='Original Positions')
+        #     # plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', label='Jammer Position')
+        #     # plt.title('Original Node Positions (Cartesian)')
+        #     # plt.xlabel('X Coordinate')
+        #     # plt.ylabel('Y Coordinate')
+        #     # plt.legend()
+        #     # plt.grid(True)
+        #     # plt.show()
+        #
+        #     max_nodes_per_segment = params['max_nodes']
+        #     distance_threshold = 100  # meters
+        #     overlap = 50  # meters overlap between consecutive windows
+        #
+        #     # Compute cumulative distances
+        #     cumulative_distances = [0]
+        #     for i in range(1, len(self.node_positions_cart)):
+        #         distance = np.linalg.norm(self.node_positions_cart[i] - self.node_positions_cart[i - 1])
+        #         cumulative_distances.append(cumulative_distances[-1] + distance)
+        #
+        #     cumulative_distances = np.array(cumulative_distances)
+        #
+        #     # Create downsampled attributes
+        #     downsampled_positions = []
+        #     downsampled_noise_values = []
+        #     downsampled_cart_positions = []
+        #     start_idx = 0
+        #
+        #     while start_idx < len(self.node_positions_cart):
+        #
+        #         # Find the end of the current window
+        #         end_idx = np.searchsorted(cumulative_distances, cumulative_distances[start_idx] + distance_threshold, side='right')
+        #         end_idx = min(end_idx, len(self.node_positions_cart))  # Ensure it does not go out of bounds
+        #
+        #         # Segmenting the data within the current window
+        #         segment_length = end_idx - start_idx
+        #
+        #         if segment_length > 0:
+        #             sample_indices = np.arange(start_idx, end_idx, dtype=int)
+        #
+        #             # If segment exceeds max_nodes_per_segment, downsample by selecting nodes
+        #             if len(sample_indices) > max_nodes_per_segment:
+        #
+        #                 # Calculate the step size to select max_nodes_per_segment nodes
+        #                 step = len(sample_indices) // max_nodes_per_segment
+        #
+        #                 # Select nodes at regular intervals
+        #                 selected_indices = sample_indices[::step][:max_nodes_per_segment]
+        #
+        #                 # Append the selected nodes to the downsampled lists
+        #                 downsampled_positions.extend(self.node_positions[selected_indices])
+        #                 downsampled_noise_values.extend(self.node_noise[selected_indices])
+        #                 downsampled_cart_positions.extend(self.node_positions_cart[selected_indices])
+        #
+        #             else:
+        #                 # If segment does not exceed max_nodes_per_segment, include all nodes
+        #                 downsampled_positions.extend(self.node_positions[sample_indices])
+        #                 downsampled_noise_values.extend(self.node_noise[sample_indices])
+        #                 downsampled_cart_positions.extend(self.node_positions_cart[sample_indices])
+        #
+        #         # Move to the next window with overlap
+        #         start_idx = np.searchsorted(cumulative_distances, cumulative_distances[start_idx] + distance_threshold - overlap, side='right')
+        #
+        #     # Step 2: Noise Filtering
+        #     num_filtered_nodes = max(1, int(params['max_nodes'] * params['filtering_proportion']))
+        #     high_noise_indices = np.argsort(self.node_noise)[-num_filtered_nodes:]
+        #     self.node_positions = self.node_positions[high_noise_indices]
+        #     self.node_positions_cart = self.node_positions_cart[high_noise_indices]
+        #     self.node_noise = self.node_noise[high_noise_indices]
+        #
+        #     if len(downsampled_positions) >= 3:
+        #         self.node_positions = np.array(downsampled_positions)
+        #         self.node_noise = np.array(downsampled_noise_values)
+        #         self.node_positions_cart = np.array(downsampled_cart_positions)
+        #
+        #         # Plot the downsampled Cartesian positions
+        #         downsampled_cart_positions = np.array(downsampled_cart_positions)
+        #         plt.figure(figsize=(10, 6))
+        #         plt.scatter(downsampled_cart_positions[:, 0], downsampled_cart_positions[:, 1], c='blue', marker='o', s=0.5, label='Downsampled Positions')
+        #         plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', label='Jammer Position')
+        #         plt.title('Downsampled Node Positions (Cartesian)')
+        #         plt.xlabel('X Coordinate')
+        #         plt.ylabel('Y Coordinate')
+        #         plt.legend()
+        #         plt.grid(True)
+        #         plt.show()
+
+        # elif params['ds_method'] == 'time_window_avg':
+        #     max_nodes = params['max_nodes']
+        #     num_original_nodes = len(self.node_positions)
+        #
+        #     if num_original_nodes > max_nodes:
+        #         indices = np.linspace(0, num_original_nodes - 1, num=max_nodes, dtype=int)
+        #
+        #         # Directly select downsampled attributes
+        #         self.node_positions = self.node_positions[indices]
+        #         self.node_noise = self.node_noise[indices]
+        #         self.node_positions_cart = self.node_positions_cart[indices]
+        #
+        #         # # Step 2: Noise Filtering
+        #         # num_filtered_nodes = max(1, int(params['max_nodes'] * params['filtering_proportion']))
+        #         # high_noise_indices = np.argsort(self.node_noise)[-num_filtered_nodes:]
+        #         # self.node_positions = self.node_positions[high_noise_indices]
+        #         # self.node_positions_cart = self.node_positions_cart[high_noise_indices]
+        #         # self.node_noise = self.node_noise[high_noise_indices]
+
+        # elif params['ds_method'] == 'time_window_avg':
+        #     # # Plot the original Cartesian positions
+        #     # cart_pos = np.array(self.node_positions_cart)
+        #     # plt.figure(figsize=(10, 6))
+        #     # plt.scatter(cart_pos[:, 0], cart_pos[:, 1], c='blue', marker='o', label='Original Positions')
+        #     # plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', s=1, label='Jammer Position')
+        #     # plt.title('Original Node Positions (Cartesian)')
+        #     # plt.xlabel('X Coordinate')
+        #     # plt.ylabel('Y Coordinate')
+        #     # plt.legend()
+        #     # plt.grid(True)
+        #     # plt.show()
+        #
+        #     max_nodes = params['max_nodes']
+        #     num_original_nodes = len(self.node_positions)
+        #
+        #     if num_original_nodes > max_nodes:
+        #         window_size = num_original_nodes // max_nodes
+        #         num_windows = max_nodes
+        #
+        #         # Create downsampled attributes
+        #         downsampled_positions = []
+        #         downsampled_noise_values = []
+        #         downsampled_cart_positions = []
+        #         downsampled_angles = []
+        #
+        #         for i in range(num_windows):
+        #             start_idx = i * window_size
+        #             end_idx = start_idx + window_size
+        #
+        #             downsampled_positions.append(np.mean(self.node_positions[start_idx:end_idx], axis=0))
+        #             downsampled_noise_values.append(np.mean(self.node_noise[start_idx:end_idx]))
+        #             downsampled_cart_positions.append(np.mean(self.node_positions_cart[start_idx:end_idx], axis=0))
+        #
+        #             if 'angle_of_arrival' in params['required_features']:
+        #                 downsampled_angles.append(np.mean(self.angle_of_arrival[start_idx:end_idx]))
+        #
+        #         # Update self with downsampled data
+        #         self.node_positions = np.array(downsampled_positions)
+        #         self.node_noise = np.array(downsampled_noise_values)
+        #         self.node_positions_cart = np.array(downsampled_cart_positions)
+        #
+        #         # Plot the downsampled Cartesian positions
+        #         downsampled_cart_positions = np.array(downsampled_cart_positions)
+        #         plt.figure(figsize=(10, 6))
+        #         plt.scatter(downsampled_cart_positions[:, 0], downsampled_cart_positions[:, 1], c='blue', marker='o', s=0.5, label='Downsampled Positions')
+        #         plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', label='Jammer Position')
+        #         plt.title('Downsampled Node Positions (Cartesian)')
+        #         plt.xlabel('X Coordinate')
+        #         plt.ylabel('Y Coordinate')
+        #         plt.legend()
+        #         plt.grid(True)
+        #         plt.show()
+
         elif params['ds_method'] == 'time_window_avg':
+            # Plot the original Cartesian positions
+            cart_pos = np.array(self.node_positions_cart)
+            print(cart_pos)
+            plt.figure(figsize=(10, 6))
+            plt.scatter(cart_pos[:, 0], cart_pos[:, 1], c='blue', marker='o', label='Original Positions')
+            # plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', s=0.5, label='Jammer Position')
+            plt.title('Original Node Positions (Cartesian)')
+            plt.xlabel('X Coordinate')
+            plt.ylabel('Y Coordinate')
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
             max_nodes = params['max_nodes']
             num_original_nodes = len(self.node_positions)
 
+            def spherical_to_cartesian(spherical_coords):
+                radius, sin_theta, cos_theta, sin_azimuth, cos_azimuth = spherical_coords.T
+                # theta = np.arctan2(sin_theta, cos_theta)
+                # azimuth = np.arctan2(sin_azimuth, cos_azimuth)
+
+                x = radius * sin_theta * cos_azimuth
+                y = radius * sin_theta * sin_azimuth
+                z = radius * cos_theta
+                return np.stack([x, y, z], axis=1)
+
+            def cartesian_to_spherical(cartesian_coords):
+                x, y, z = cartesian_coords.T
+                radius = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+                theta = np.arctan2(np.sqrt(x ** 2 + y ** 2), z)
+                azimuth = np.arctan2(y, x)
+
+                sin_theta = np.sin(theta)
+                cos_theta = np.cos(theta)
+                sin_azimuth = np.sin(azimuth)
+                cos_azimuth = np.cos(azimuth)
+
+                return np.stack([radius, sin_theta, cos_theta, sin_azimuth, cos_azimuth], axis=1)
+
+            # Downsampling with Cartesian averaging
             if num_original_nodes > max_nodes:
                 window_size = num_original_nodes // max_nodes
                 num_windows = max_nodes
 
-                # Create downsampled attributes
-                downsampled_positions = []
-                downsampled_noise_values = []
                 downsampled_cart_positions = []
-                downsampled_angles = []
+                downsampled_noise_values = []
 
                 for i in range(num_windows):
                     start_idx = i * window_size
                     end_idx = start_idx + window_size
 
-                    downsampled_positions.append(np.mean(self.node_positions[start_idx:end_idx], axis=0))
-                    downsampled_noise_values.append(np.mean(self.node_noise[start_idx:end_idx]))
-                    downsampled_cart_positions.append(np.mean(self.node_positions_cart[start_idx:end_idx], axis=0))
-                    if 'angle_of_arrival' in params['required_features']:
-                        downsampled_angles.append(np.mean(self.angle_of_arrival[start_idx:end_idx]))
+                    # Convert spherical to Cartesian
+                    cart_coords = spherical_to_cartesian(self.node_positions[start_idx:end_idx])
 
-                # Update self with downsampled data
-                self.node_positions = np.array(downsampled_positions)
+                    # Average Cartesian coordinates
+                    avg_cart_coords = np.mean(cart_coords, axis=0)
+                    downsampled_cart_positions.append(avg_cart_coords)
+
+                    # Average other attributes (e.g., noise)
+                    downsampled_noise_values.append(np.mean(self.node_noise[start_idx:end_idx]))
+
+                # Convert averaged Cartesian coordinates back to spherical
+                self.node_positions = cartesian_to_spherical(np.array(downsampled_cart_positions))
                 self.node_noise = np.array(downsampled_noise_values)
                 self.node_positions_cart = np.array(downsampled_cart_positions)
+
+                # Plot the downsampled Cartesian positions
+                downsampled_cart_positions = np.array(downsampled_cart_positions)
+                plt.figure(figsize=(10, 6))
+                print(downsampled_cart_positions)
+                plt.scatter(downsampled_cart_positions[:, 0], downsampled_cart_positions[:, 1], c='blue', marker='o', s=0.5, label='Downsampled Positions')
+                # plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', label='Jammer Position')
+                plt.title('Downsampled Node Positions (Cartesian)')
+                plt.xlabel('X Coordinate')
+                plt.ylabel('Y Coordinate')
+                plt.legend()
+                plt.grid(True)
+                plt.show()
+
+        # elif params['ds_method'] == 'time_window_avg':
+        #     max_nodes = params['max_nodes']
+        #     num_original_nodes = len(self.node_positions)
+        #
+        #     if num_original_nodes > max_nodes:
+        #         indices = np.linspace(0, num_original_nodes - 1, num=max_nodes, dtype=int)
+        #
+        #         # Directly select downsampled attributes for positions
+        #         self.node_positions = self.node_positions[indices]
+        #         self.node_positions_cart = self.node_positions_cart[indices]
+        #
+        #         # Compute the average for node noise
+        #         bin_size = num_original_nodes // max_nodes
+        #         self.node_noise = np.array([np.mean(self.node_noise[i * bin_size:(i + 1) * bin_size]) for i in range(max_nodes)])
+
+        # elif params['ds_method'] == 'hybrid':
+        #     max_nodes = params['max_nodes']
+        #
+        #     # Step 2: Noise Filtering
+        #     num_filtered_nodes = max(1, int(max_nodes * params['filtering_proportion']))
+        #     high_noise_indices = np.argsort(self.node_noise)[-num_filtered_nodes:]
+        #     self.node_positions = self.node_positions[high_noise_indices]
+        #     self.node_positions_cart = self.node_positions_cart[high_noise_indices]
+        #     self.node_noise = self.node_noise[high_noise_indices]
+        #     if 'angle_of_arrival' in params['required_features']:
+        #         self.angle_of_arrival = self.angle_of_arrival[high_noise_indices]
+        #
+        #     # Step 1: Time Window Averaging
+        #     num_original_nodes = len(self.node_positions)
+        #
+        #     if num_original_nodes > max_nodes:
+        #         window_size = num_original_nodes // max_nodes
+        #         num_windows = max_nodes
+        #
+        #         # Create downsampled attributes
+        #         downsampled_positions = []
+        #         downsampled_noise_values = []
+        #         downsampled_cart_positions = []
+        #         downsampled_angles = []
+        #
+        #         for i in range(num_windows):
+        #             start_idx = i * window_size
+        #             end_idx = start_idx + window_size
+        #
+        #             downsampled_positions.append(np.mean(self.node_positions[start_idx:end_idx], axis=0))
+        #             downsampled_noise_values.append(np.mean(self.node_noise[start_idx:end_idx]))
+        #             downsampled_cart_positions.append(np.mean(self.node_positions_cart[start_idx:end_idx], axis=0))
+        #             if 'angle_of_arrival' in params['required_features']:
+        #                 downsampled_angles.append(np.mean(self.angle_of_arrival[start_idx:end_idx]))
+        #
+        #         # Update self with downsampled data
+        #         self.node_positions = np.array(downsampled_positions)
+        #         self.node_noise = np.array(downsampled_noise_values)
+        #         self.node_positions_cart = np.array(downsampled_cart_positions)
         elif params['ds_method'] == 'hybrid':
-            # Step 1: Time Window Averaging
+            # Plot the original Cartesian positions
+            cart_pos = np.array(self.node_positions_cart)
+            plt.figure(figsize=(10, 6))
+            plt.scatter(cart_pos[:, 0], cart_pos[:, 1], c='blue', marker='o', label='Original Positions')
+            # plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', s=0.5, label='Jammer Position')
+            plt.title('Original Node Positions (Cartesian)')
+            plt.xlabel('X Coordinate')
+            plt.ylabel('Y Coordinate')
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
             max_nodes = params['max_nodes']
             num_original_nodes = len(self.node_positions)
 
+            def spherical_to_cartesian(spherical_coords):
+                radius, sin_theta, cos_theta, sin_azimuth, cos_azimuth = spherical_coords.T
+                theta = np.arctan2(sin_theta, cos_theta)
+                azimuth = np.arctan2(sin_azimuth, cos_azimuth)
+
+                x = radius * np.sin(theta) * np.cos(azimuth)
+                y = radius * np.sin(theta) * np.sin(azimuth)
+                z = radius * np.cos(theta)
+                return np.stack([x, y, z], axis=1)
+
+            def cartesian_to_spherical(cartesian_coords):
+                x, y, z = cartesian_coords.T
+                radius = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+                theta = np.arctan2(np.sqrt(x ** 2 + y ** 2), z)
+                azimuth = np.arctan2(y, x)
+
+                sin_theta = np.sin(theta)
+                cos_theta = np.cos(theta)
+                sin_azimuth = np.sin(azimuth)
+                cos_azimuth = np.cos(azimuth)
+
+                return np.stack([radius, sin_theta, cos_theta, sin_azimuth, cos_azimuth], axis=1)
+
+            # Downsampling with Cartesian averaging
             if num_original_nodes > max_nodes:
                 window_size = num_original_nodes // max_nodes
                 num_windows = max_nodes
 
-                # Create downsampled attributes
-                downsampled_positions = []
-                downsampled_noise_values = []
                 downsampled_cart_positions = []
-                downsampled_angles = []
+                downsampled_noise_values = []
 
                 for i in range(num_windows):
                     start_idx = i * window_size
                     end_idx = start_idx + window_size
 
-                    downsampled_positions.append(np.mean(self.node_positions[start_idx:end_idx], axis=0))
-                    downsampled_noise_values.append(np.mean(self.node_noise[start_idx:end_idx]))
-                    downsampled_cart_positions.append(np.mean(self.node_positions_cart[start_idx:end_idx], axis=0))
-                    if 'angle_of_arrival' in params['required_features']:
-                        downsampled_angles.append(np.mean(self.angle_of_arrival[start_idx:end_idx]))
+                    # Convert spherical to Cartesian
+                    cart_coords = spherical_to_cartesian(self.node_positions[start_idx:end_idx])
 
-                # Update self with downsampled data
-                self.node_positions = np.array(downsampled_positions)
+                    # Average Cartesian coordinates
+                    avg_cart_coords = np.mean(cart_coords, axis=0)
+                    downsampled_cart_positions.append(avg_cart_coords)
+
+                    # Average other attributes (e.g., noise)
+                    downsampled_noise_values.append(np.mean(self.node_noise[start_idx:end_idx]))
+
+                # Convert averaged Cartesian coordinates back to spherical
+                self.node_positions = cartesian_to_spherical(np.array(downsampled_cart_positions))
                 self.node_noise = np.array(downsampled_noise_values)
                 self.node_positions_cart = np.array(downsampled_cart_positions)
 
-            # Step 2: Noise Filtering
-            num_filtered_nodes = max(1, int(max_nodes * params['filtering_proportion']))
-            high_noise_indices = np.argsort(self.node_noise)[-num_filtered_nodes:]
-            self.node_positions = self.node_positions[high_noise_indices]
-            self.node_positions_cart = self.node_positions_cart[high_noise_indices]
-            self.node_noise = self.node_noise[high_noise_indices]
-            if 'angle_of_arrival' in params['required_features']:
-                self.angle_of_arrival = self.angle_of_arrival[high_noise_indices]
+                # Step 2: Noise Filtering
+                num_filtered_nodes = max(3, int(params['max_nodes'] * params['filtering_proportion']))
+                high_noise_indices = np.argsort(downsampled_noise_values)[-num_filtered_nodes:]
+                print(high_noise_indices)
+                self.node_positions = self.node_positions[high_noise_indices]
+                self.node_positions_cart = self.node_positions_cart[high_noise_indices]
+                self.node_noise = self.node_noise[high_noise_indices]
+
+                # Plot the downsampled Cartesian positions
+                downsampled_cart_positions = np.array(self.node_positions_cart)
+                plt.figure(figsize=(10, 6))
+                plt.scatter(downsampled_cart_positions[:, 0], downsampled_cart_positions[:, 1], c='blue', marker='o', s=0.5, label='Downsampled Positions')
+                # plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', label='Jammer Position')
+                plt.title('Downsampled Node Positions (Cartesian)')
+                plt.xlabel('X Coordinate')
+                plt.ylabel('Y Coordinate')
+                plt.legend()
+                plt.grid(True)
+                plt.show()
+
         else:
             raise ValueError("Undefined downsampling method")
 
@@ -337,9 +670,14 @@ class TemporalGraphDataset(Dataset):
     def expand_samples(self):
         expanded_samples = []
         for _, row in self.data.iterrows():
+            if params['inference']:
+                instance = Instance(row)
+                instance.perc_completion = 1
+                expanded_samples.append(instance)
+                return expanded_samples
             if params['dynamic']:
-                lb_end = max(int(row['jammed_at']), min(params['max_nodes'], len(row['node_positions'])))
                 # lb_end = max(int(row['jammed_at']), min(10, len(row['node_positions'])))
+                lb_end = max(int(row['jammed_at']), min(params['max_nodes'], len(row['node_positions'])))
                 ub_end = len(row['node_positions'])
                 # lb_end = int((ub_end - lb_end) / 2)
 
@@ -499,6 +837,7 @@ def angle_to_cyclical(positions):
             sin_theta = np.sin(theta)  # Sine of the azimuthal angle
             cos_theta = np.cos(theta)  # Cosine of the azimuthal angle
             transformed_positions.append([r, sin_theta, cos_theta])
+
     return transformed_positions
 
 
@@ -689,14 +1028,17 @@ def apply_unit_sphere_normalization(instance):
     # print(normalized_positions)
     normalized_positions[:, 0] /= max_radius  # Normalize only the radius component
 
-    # Assuming jammer_position is a single array [radius, sin, cos]
-    normalized_jammer_position = instance.jammer_position.copy()
-    # print(normalized_jammer_position)
-    normalized_jammer_position[0][0] /= max_radius  # Normalize only the radius component of the jammer position
+    if not params['inference']:
+        # Assuming jammer_position is a single array [radius, sin, cos]
+        normalized_jammer_position = instance.jammer_position.copy()
+        # print(normalized_jammer_position)
+        normalized_jammer_position[0][0] /= max_radius  # Normalize only the radius component of the jammer position
+
+        # Update the instance variables
+        instance.jammer_position = normalized_jammer_position
 
     # Update the instance variables
     instance.node_positions = normalized_positions
-    instance.jammer_position = normalized_jammer_position
     instance.max_radius = max_radius
 
 
@@ -847,6 +1189,19 @@ def calculate_noise_statistics(subgraphs, noise_stats_to_compute):
         y = r * sin_theta * cos_az
         z = r * sin_az
         node_positions_cart = torch.stack((x, y, z), dim=1)  # 3D Cartesian coordinates
+
+        path_distance = torch.cumsum(torch.norm(torch.diff(node_positions_cart, dim=0, prepend=torch.zeros(1, 3)), dim=1), dim=0)
+        vector_from_previous_position = torch.diff(node_positions_cart, dim=0, prepend=torch.zeros(1, node_positions_cart.size(1)))
+        vector_x = vector_from_previous_position[:, 0]
+        vector_y = vector_from_previous_position[:, 1]
+        vector_z = vector_from_previous_position[:, 2]
+        moving_avg_noise = torch.conv1d(node_noises.view(1, 1, -1), weight=torch.ones(1, 1, 5) / 5, padding=2).view(-1)
+
+        # Calculate rate of change of signal strength (first derivative)
+        rate_of_change_signal_strength = torch.diff(node_noises, prepend=torch.tensor([node_noises[0]]))
+
+        # Calculate Distance-Weighted Signal Strength
+        distance_weighted_signal_strength = node_noises / (path_distance + 1)  # +1 to avoid division by zero
     else:
         # Compute x, y in Cartesian coordinates for 2D
         x = r * cos_theta
@@ -919,7 +1274,14 @@ def calculate_noise_statistics(subgraphs, noise_stats_to_compute):
     if params['3d']:
         noise_stats.update({
             'weighted_centroid_sin_az': weighted_centroid_sin_az,
-            'weighted_centroid_cos_az': weighted_centroid_cos_az
+            'weighted_centroid_cos_az': weighted_centroid_cos_az,
+            'path_distance': path_distance,
+            'vector_x': vector_x,
+            'vector_y': vector_y,
+            'vector_z': vector_z,
+            'moving_avg_noise': moving_avg_noise,
+            'rate_of_change_signal_strength': rate_of_change_signal_strength,
+            'distance_weighted_signal_strength': distance_weighted_signal_strength
         })
 
     return noise_stats
@@ -928,6 +1290,7 @@ def engineer_node_features(subgraph):
     if subgraph.x.size(0) == 0:
         raise ValueError("Empty subgraph encountered")
 
+    # print("ENGINEERING NODE FEATS")
     new_features = []
 
     # Extract components
@@ -967,8 +1330,11 @@ def engineer_node_features(subgraph):
         'weighted_centroid_sin_theta', 'weighted_centroid_cos_theta',
         'noise_differential','dist_to_wcl', 'sin_azimuth_to_wcl',
         'cos_azimuth_to_wcl', 'azimuth_to_wcl', 'random_feature',
-        'weighted_centroid_sin_az', 'weighted_centroid_cos_az'
+        'weighted_centroid_sin_az', 'weighted_centroid_cos_az',
+        'path_distance', 'vector_x', 'vector_y', 'vector_z', 'moving_avg_noise',
+        'distance_weighted_signal_strength', 'rate_of_change_signal_strength'
     ]
+
     noise_stats_to_compute = [stat for stat in graph_stats if stat in params['additional_features']]
     if noise_stats_to_compute:
         noise_stats = calculate_noise_statistics([subgraph], noise_stats_to_compute)
@@ -977,23 +1343,6 @@ def engineer_node_features(subgraph):
         for stat in noise_stats_to_compute:
             if stat in noise_stats:
                 new_features.append(noise_stats[stat].unsqueeze(1))
-
-    # Moving Average for node noise with adjusted padding
-    if 'moving_avg_noise' in params['additional_features']:
-        node_noise = subgraph.x[:, 2]  # noise is at position 2
-        moving_avg_noise = dynamic_moving_average(node_noise)
-        new_features.append(moving_avg_noise.unsqueeze(1))
-
-    # Example of using dynamic moving average for AoA
-    if 'moving_avg_aoa' in params['additional_features']:
-        sin_aoa = subgraph.x[:, 3]  # sin(AoA) is at position 3
-        cos_aoa = subgraph.x[:, 4]  # cos(AoA) is at position 4
-
-        smoothed_sin = dynamic_moving_average(sin_aoa)
-        smoothed_cos = dynamic_moving_average(cos_aoa)
-
-        new_features.append(smoothed_sin.unsqueeze(1))
-        new_features.append(smoothed_cos.unsqueeze(1))
 
     if new_features:
         try:
@@ -1013,12 +1362,13 @@ def convert_to_polar(data):
     #print(data['jammer_position'])
     data['node_positions_cart'] = data['node_positions'].copy()
     data['node_positions'] = data['node_positions'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
-    print(data['node_positions'])
-    if params['dynamic']:
-       data['jammer_position'] = data['jammer_position'].apply(lambda x: [x])
-       data['jammer_position'] = data['jammer_position'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
-    else:
-       data['jammer_position'] = data['jammer_position'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
+    # print(data['node_positions'])
+    if not params['inference']:
+        if params['dynamic']:
+           data['jammer_position'] = data['jammer_position'].apply(lambda x: [x])
+           data['jammer_position'] = data['jammer_position'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
+        else:
+           data['jammer_position'] = data['jammer_position'].apply(lambda x: angle_to_cyclical(cartesian_to_polar(x)))
     #data['jammer_position'] = data['jammer_position'].apply(cartesian_to_polar)
     #print(data['node_positions'])
     #print(data['jammer_position'])
@@ -1163,13 +1513,25 @@ def convert_output_eval(output, data_batch, data_type, device):
     cos_theta = output[:, 2]
 
     if params['3d']:
-        # Assume additional columns for 3D coordinates: sin_azimuth and cos_azimuth
+        # # Assume additional columns for 3D coordinates: sin_azimuth and cos_azimuth
         sin_phi = output[:, 3]
         cos_phi = output[:, 4]
 
-        x = radius * sin_phi * cos_theta
-        y = radius * sin_phi * sin_theta
-        z = radius * cos_phi
+        # Calculate theta from sin_theta and cos_theta for clarity in following the formulas
+        # theta = torch.atan2(sin_theta, cos_theta)
+
+        # # Correct conversion for 3D
+        # x = radius * cos_theta * cos_phi  # Note the correction in angle usage
+        # y = radius * sin_theta * cos_phi
+        # z = radius * sin_phi  # cos(theta) is directly used
+
+        # Correct conversion for 3D
+        x = radius * sin_theta * cos_phi  # Note the correction in angle usage
+        y = radius * sin_theta * sin_phi
+        z = radius * cos_theta  # cos(theta) is directly used
+
+
+        # Stack x, y, and z coordinates horizontally to form the Cartesian coordinate triplets
         cartesian_coords = torch.stack((x, y, z), dim=1)
     else:
         # Calculate 2D Cartesian coordinates
@@ -1777,9 +2139,9 @@ def bin_nodes(node_df, grid_meters):
     binned_cartesian.drop(columns=['x_bin', 'y_bin', 'z_bin'], inplace=True)
 
     # Handle Polar coordinates by converting to Cartesian first
-    node_df['x_polar'] = node_df['r'] * node_df['cos_theta'] * node_df['cos_az']
-    node_df['y_polar'] = node_df['r'] * node_df['sin_theta'] * node_df['cos_az']
-    node_df['z_polar'] = node_df['r'] * node_df['sin_az']
+    node_df['x_polar'] = node_df['r'] * node_df['sin_theta'] * node_df['cos_phi']
+    node_df['y_polar'] = node_df['r'] * node_df['sin_theta'] * node_df['sin_phi']
+    node_df['z_polar'] = node_df['r'] * node_df['cos_theta']
 
     node_df['x_polar_bin'] = (node_df['x_polar'] // grid_meters).astype(int)
     node_df['y_polar_bin'] = (node_df['y_polar'] // grid_meters).astype(int)
@@ -1792,11 +2154,23 @@ def bin_nodes(node_df, grid_meters):
     }).reset_index()
 
     # Convert averaged Cartesian coordinates back to polar
+    # Correct calculation of r, theta, and phi
     binned_polar['r'] = np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2 + binned_polar['z_polar'] ** 2)
-    binned_polar['sin_theta'] = binned_polar['y_polar'] / np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2)
-    binned_polar['cos_theta'] = binned_polar['x_polar'] / np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2)
-    binned_polar['sin_az'] = binned_polar['z_polar'] / binned_polar['r']
-    binned_polar['cos_az'] = np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2) / binned_polar['r']
+    # binned_polar['theta'] = np.arccos(binned_polar['z_polar'] / binned_polar['r'])
+    binned_polar['theta'] = np.arctan2(np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2), binned_polar['z_polar'])
+    binned_polar['phi'] = np.arctan2(binned_polar['y_polar'], binned_polar['x_polar'])
+
+    # calculate sin and cos of theta and phi if needed for further processing
+    binned_polar['sin_theta'] = np.sin(binned_polar['theta'])
+    binned_polar['cos_theta'] = np.cos(binned_polar['theta'])
+    binned_polar['sin_phi'] = np.sin(binned_polar['phi'])
+    binned_polar['cos_phi'] = np.cos(binned_polar['phi'])
+
+    # binned_polar['r'] = np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2 + binned_polar['z_polar'] ** 2)
+    # binned_polar['sin_theta'] = binned_polar['y_polar'] / np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2)
+    # binned_polar['cos_theta'] = binned_polar['x_polar'] / np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2)
+    # binned_polar['sin_az'] = binned_polar['z_polar'] / binned_polar['r']
+    # binned_polar['cos_az'] = np.sqrt(binned_polar['x_polar'] ** 2 + binned_polar['y_polar'] ** 2) / binned_polar['r']
 
     # Drop unnecessary columns
     binned_polar.drop(columns=['x_polar_bin', 'y_polar_bin', 'z_polar_bin', 'x_polar', 'y_polar', 'z_polar'], inplace=True)
@@ -1804,10 +2178,20 @@ def bin_nodes(node_df, grid_meters):
     # Merge the two DataFrames
     binned = pd.concat([binned_cartesian, binned_polar], axis=1)
 
+    # Drop rows with NaN values
+    binned = binned.dropna()
+
     # Sort by noise_level and keep the top max_nodes
     binned = binned.sort_values(by='noise_level', ascending=False).head(params['max_nodes'])
 
-    return binned
+    # Ensure at least 3 nodes are returned
+    if len(binned) < 3:
+        # print(node_df)
+        # print("Warning: Binning resulted in fewer than 3 nodes. Returning original dataset.")
+        return node_df  # Fall back to the original dataset
+    else:
+        return binned
+
 
 def hybrid_downsampling_pipeline(instance):
     """
@@ -1877,13 +2261,14 @@ def add_jammed_column(data, threshold=-55):
                 count += 1
                 # Save the index of the third noise sample that exceeds the threshold
                 if count == 3:
-                    jammed_index = idx
+                    jammed_index = idx + 1
                     break
 
         # Save the index of the third "jammed" sample or handle no jamming detected
         if jammed_index is not None:
             data.at[i, 'jammed_at'] = jammed_index
         else:
+            # print(data['node_noise'][710])
             raise ValueError(f"No sufficient jammed noise samples found for row {i}")
 
     return data
@@ -1912,28 +2297,6 @@ def load_data(params, data_class, experiments_path=None):
             print(test_df.columns)
             return None, None, test_df
     else:
-        if params['train_per_class']:
-            train_file = os.path.join(experiments_path, f'{data_class}_train_dataset.pkl')
-            val_file = os.path.join(experiments_path, f'{data_class}_val_dataset.pkl')
-            test_file = os.path.join(experiments_path, f'{data_class}_test_dataset.pkl')
-
-        else:
-            # Define file paths for train, validation, and test datasets
-            train_file = os.path.join(experiments_path, 'train_dataset.pkl')
-            val_file = os.path.join(experiments_path, 'val_dataset.pkl')
-            test_file = os.path.join(experiments_path, 'test_dataset.pkl')
-
-        # if all(os.path.exists(f) for f in [train_file, val_file, test_file]):
-        #     # Load existing datasets if they already exist
-        #     logging.info("Loading train test data...")
-        #
-        #     with open(train_file, 'rb') as f:
-        #         train_df = pickle.load(f)
-        #     with open(val_file, 'rb') as f:
-        #         val_df = pickle.load(f)
-        #     with open(test_file, 'rb') as f:
-        #         test_df = pickle.load(f)
-        # else:
         datasets = [params['dataset_path']]
         for dataset in datasets:
             print(f"dataset: {dataset}")
@@ -1948,11 +2311,6 @@ def load_data(params, data_class, experiments_path=None):
                 except EOFError:
                     pass  # End of file reached
 
-            # # Load the entire list from the pickle file in one go
-            # data_list = []
-            # with open(dataset, 'rb') as f:
-            #     data_list = pickle.load(f)
-
             # Convert the list of dictionaries to a DataFrame
             if isinstance(data_list[0], pd.DataFrame):
                 data = data_list[0]
@@ -1964,7 +2322,6 @@ def load_data(params, data_class, experiments_path=None):
 
             # Add additional columns required for processing
             data['id'] = range(1, len(data) + 1)
-            # data['dataset'] = 'linear_data'
 
             if not params['dynamic']:
                 convert_data_type(data, load_saved_data=False)
@@ -2008,7 +2365,6 @@ def load_data(params, data_class, experiments_path=None):
                 print("Duplicated rows in val_df from test_df:")
                 print(val_df[duplicates_in_val_from_test])
 
-            # train_df, val_df, test_df = split_datasets(data)
             convert_to_polar(train_df)
             convert_to_polar(val_df)
             convert_to_polar(test_df)
@@ -2181,57 +2537,8 @@ def plot_graph_temporal(subgraph):
     plt.axis('off')
     plt.show()
 
-# Plot without edges and annotations
-# def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_positions=None, show_weights=False, perc_completion=None, id=None, jammer_power=None):
-#     G = nx.Graph()
-#
-#     # Ensure positions and features are numpy arrays for easier handling
-#     positions = np.array(positions)
-#     node_features = np.array(node_features)
-#     if jammer_positions is not None:
-#         jammer_positions = np.array(jammer_positions)
-#
-#     # Add nodes with features and positions
-#     for i, pos in enumerate(positions):
-#         # assuming RSSI is the last feature in node_features array
-#         if params['dynamic']:
-#             G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2],
-#                        timestamp=node_features[i][-1], sin_aoa=node_features[i][-3], cos_aoa=node_features[i][-2])
-#         else:
-#             G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2])
-#
-#     # Position for drawing
-#     pos = {i: (p[0], p[1]) for i, p in enumerate(positions)}
-#
-#     # Distinguish nodes based on noise value > -55
-#     noise_values = np.array([G.nodes[i]['noise'] for i in G.nodes()])
-#     node_colors = ['red' if noise > -55 else 'blue' for noise in noise_values]
-#
-#     # Draw the graph nodes without edges and annotations
-#     nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1)
-#
-#     # Optionally draw jammer position without annotations
-#     # Optionally draw jammer position without annotations
-#     if jammer_positions is not None:
-#         for i, jammer_pos in enumerate(jammer_positions):
-#             plt.scatter(*jammer_pos, color='red', s=100, marker='x', label='Jammer')  # Add jammer to the plot as a cross
-#
-#             # Assuming jammer_power is available in an array, where each entry corresponds to a jammer
-#             # Add annotation for jammer_power
-#             plt.annotate(f'Power: {jammer_power:.1f} dB',
-#                          xy=jammer_pos,
-#                          xytext=(5, 5),
-#                          textcoords='offset points',
-#                          fontsize=10, color='black')
-#
-#     perc_completion_title = "Graph " + str(id) + " " + str(round(perc_completion, 2)) + "% trajectory since start"
-#     plt.title(perc_completion_title, fontsize=15)
-#     plt.axis('off')  # Turn off the axis
-#     plt.show()
-
-def plot_graph(positions, node_features, edge_weights=None, jammer_positions=None, show_weights=False, perc_completion=None, id=None, jammer_power=None):
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
+def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_positions=None, show_weights=False, perc_completion=None, id=None, jammer_power=None):
+    G = nx.Graph()
 
     # Ensure positions and features are numpy arrays for easier handling
     positions = np.array(positions)
@@ -2239,32 +2546,80 @@ def plot_graph(positions, node_features, edge_weights=None, jammer_positions=Non
     if jammer_positions is not None:
         jammer_positions = np.array(jammer_positions)
 
-    # Extract positions for x, y, z
-    x, y, z = positions[:, 0], positions[:, 1], positions[:, 2]
+    # Add nodes with features and positions
+    for i, pos in enumerate(positions):
+        # assuming RSSI is the last feature in node_features array
+        if params['dynamic']:
+            G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2],
+                       timestamp=node_features[i][-1], sin_aoa=node_features[i][-3], cos_aoa=node_features[i][-2])
+        else:
+            G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2])
 
-    # Node color based on noise value, assuming RSSI is at index 2
-    noise_values = node_features[:, 2]
+    # Position for drawing
+    pos = {i: (p[0], p[1]) for i, p in enumerate(positions)}
+
+    # Distinguish nodes based on noise value > -55
+    noise_values = np.array([G.nodes[i]['noise'] for i in G.nodes()])
     node_colors = ['red' if noise > -55 else 'blue' for noise in noise_values]
 
     # Draw the graph nodes without edges and annotations
-    sc = ax.scatter(x, y, z, c=node_colors, depthshade=True)
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1)
 
-    # Optionally draw jammer positions
+    # Optionally draw jammer position without annotations
+    # Optionally draw jammer position without annotations
     if jammer_positions is not None:
-        ax.scatter(jammer_positions[0][0], jammer_positions[0][1], jammer_positions[0][2], color='red', marker='x', label='Jammer')
+        for i, jammer_pos in enumerate(jammer_positions):
+            plt.scatter(*jammer_pos, color='red', s=100, marker='x', label='Jammer')  # Add jammer to the plot as a cross
 
-        # Assuming jammer_power is available in an array, where each entry corresponds to a jammer
-        if jammer_power is not None:
-            ax.text(jammer_positions[0][0], jammer_positions[0][1], jammer_positions[0][2], f'Power: {jammer_power:.1f} dB', color='black')
+            # Assuming jammer_power is available in an array, where each entry corresponds to a jammer
+            # Add annotation for jammer_power
+            plt.annotate(f'Power: {jammer_power:.1f} dB',
+                         xy=jammer_pos,
+                         xytext=(5, 5),
+                         textcoords='offset points',
+                         fontsize=10, color='black')
 
-    # Title setup with optional percentage completion
-    if perc_completion is not None and id is not None:
-        perc_completion_title = f"Graph {id} {perc_completion:.2f}% trajectory since start"
-        plt.title(perc_completion_title)
-
+    perc_completion_title = "Graph " + str(id) + " " + str(round(perc_completion, 2)) + "% trajectory since start"
+    plt.title(perc_completion_title, fontsize=15)
     plt.axis('off')  # Turn off the axis
-    ax.legend()
     plt.show()
+
+# def plot_graph(positions, node_features, edge_weights=None, jammer_positions=None, show_weights=False, perc_completion=None, id=None, jammer_power=None):
+#     fig = plt.figure()
+#     ax = fig.add_subplot(111, projection='3d')
+#
+#     # Ensure positions and features are numpy arrays for easier handling
+#     positions = np.array(positions)
+#     node_features = np.array(node_features)
+#     if jammer_positions is not None:
+#         jammer_positions = np.array(jammer_positions)
+#
+#     # Extract positions for x, y, z
+#     x, y, z = positions[:, 0], positions[:, 1], positions[:, 2]
+#
+#     # Node color based on noise value, assuming RSSI is at index 2
+#     noise_values = node_features[:, 2]
+#     node_colors = ['red' if noise > -55 else 'blue' for noise in noise_values]
+#
+#     # Draw the graph nodes without edges and annotations
+#     sc = ax.scatter(x, y, z, c=node_colors, depthshade=True)
+#
+#     # Optionally draw jammer positions
+#     if jammer_positions is not None:
+#         ax.scatter(jammer_positions[0][0], jammer_positions[0][1], jammer_positions[0][2], color='red', marker='x', label='Jammer')
+#
+#         # Assuming jammer_power is available in an array, where each entry corresponds to a jammer
+#         if jammer_power is not None:
+#             ax.text(jammer_positions[0][0], jammer_positions[0][1], jammer_positions[0][2], f'Power: {jammer_power:.1f} dB', color='black')
+#
+#     # Title setup with optional percentage completion
+#     if perc_completion is not None and id is not None:
+#         perc_completion_title = f"Graph {id} {perc_completion:.2f}% trajectory since start"
+#         plt.title(perc_completion_title)
+#
+#     plt.axis('off')  # Turn off the axis
+#     ax.legend()
+#     plt.show()
 
 
 # ORIGINAL
@@ -2474,6 +2829,10 @@ def create_torch_geo_data(instance: Instance) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
+    if len(instance.node_positions) < 3:
+        print(instance.node_positions_cart)
+        print('ERROR')
+        quit()
     # Preprocess instance data
     if params['norm'] == 'minmax':
         apply_min_max_normalization_instance(instance)
@@ -2631,9 +2990,11 @@ def create_torch_geo_data(instance: Instance) -> Data:
     # Create the Data object
     # data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y_tensor)
 
-
-    jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])  # Assuming this reshaping is valid based on your data structure
-    y = torch.tensor(jammer_positions, dtype=torch.float)
+    if not params['inference']:
+        jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])  # Assuming this reshaping is valid based on your data structure
+        y = torch.tensor(jammer_positions, dtype=torch.float)
+    else:
+        y = None
 
     # Plot
     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
@@ -2651,11 +3012,12 @@ def create_torch_geo_data(instance: Instance) -> Data:
         data.max_radius = torch.tensor(instance.max_radius, dtype=torch.float)
 
     # Store the perc_completion as part of the Data object
-    data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
-    data.pl_exp = torch.tensor(instance.pl_exp, dtype=torch.float)
-    data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
-    data.jtx = torch.tensor(instance.jammer_power, dtype=torch.float)
-    data.num_samples = torch.tensor(instance.num_samples, dtype=torch.float)
+    if not params['inference']:
+        data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
+        data.pl_exp = torch.tensor(instance.pl_exp, dtype=torch.float)
+        data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
+        data.jtx = torch.tensor(instance.jammer_power, dtype=torch.float)
+        data.num_samples = torch.tensor(instance.num_samples, dtype=torch.float)
 
     # Apply pos encoding transform
     if params['model'] == 'GPS':

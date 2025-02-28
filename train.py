@@ -37,7 +37,7 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None, d
         criterion (torch.nn.Module): Loss criterion.
     """
     logging.info("Initializing model...")
-    in_channels = 18
+    in_channels = 23
 
     print('in_channels: ', in_channels)
     model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'],
@@ -146,18 +146,19 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
 
             if test_loader:
                 predicted_coords = convert_output_eval(output, data, 'prediction', device)
-                actual_coords = convert_output_eval(data.y, data, 'target', device)
-
                 predictions.append(predicted_coords.cpu().numpy())
-                actuals.append(actual_coords.cpu().numpy())
 
-                loss = criterion(predicted_coords, actual_coords)
+                if not params['inference']:
+                    actual_coords = convert_output_eval(data.y, data, 'target', device)
+                    actuals.append(actual_coords.cpu().numpy())
 
-                perc_completion_list.append(data.perc_completion.cpu().numpy())
-                pl_exp_list.append(data.pl_exp.cpu().numpy())
-                sigma_list.append(data.sigma.cpu().numpy())
-                jtx_list.append(data.jtx.cpu().numpy())
-                num_samples_list.append(data.num_samples.cpu().numpy())
+                    loss = criterion(predicted_coords, actual_coords)
+
+                    perc_completion_list.append(data.perc_completion.cpu().numpy())
+                    pl_exp_list.append(data.pl_exp.cpu().numpy())
+                    sigma_list.append(data.sigma.cpu().numpy())
+                    jtx_list.append(data.jtx.cpu().numpy())
+                    num_samples_list.append(data.num_samples.cpu().numpy())
             else:
                 loss = criterion(output, data.y)
 
@@ -183,39 +184,43 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                 # Append to the detailed metrics dict
                 detailed_metrics.append(graph_details)
 
-            # Update AverageMeter with the current RMSE and number of graphs
-            loss_meter.update(loss.item(), data.num_graphs)
+            if not params['inference']:
+                # Update AverageMeter with the current RMSE and number of graphs
+                loss_meter.update(loss.item(), data.num_graphs)
 
-            # Update the progress bar with the running average RMSE
-            progress_bar.set_postfix({"Validation Loss (MSE)": loss_meter.avg})
+                # Update the progress bar with the running average RMSE
+                progress_bar.set_postfix({"Validation Loss (MSE)": loss_meter.avg})
 
     if test_loader:
-        # Flatten predictions and actuals if they are nested lists
-        predictions = np.concatenate(predictions)
-        actuals = np.concatenate(actuals)
-        perc_completion_list = np.concatenate(perc_completion_list)
-        pl_exp_list = np.concatenate(pl_exp_list)
-        sigma_list = np.concatenate(sigma_list)
-        jtx_list = np.concatenate(jtx_list)
-        num_samples_list = np.concatenate(num_samples_list)
+        if params['inference']:
+            return predictions
+        else:
+            # Flatten predictions and actuals if they are nested lists
+            predictions = np.concatenate(predictions)
+            actuals = np.concatenate(actuals)
+            perc_completion_list = np.concatenate(perc_completion_list)
+            pl_exp_list = np.concatenate(pl_exp_list)
+            sigma_list = np.concatenate(sigma_list)
+            jtx_list = np.concatenate(jtx_list)
+            num_samples_list = np.concatenate(num_samples_list)
 
-        mae = mean_absolute_error(actuals, predictions)
-        mse = mean_squared_error(actuals, predictions)
-        rmse = math.sqrt(mse)
-        print("MAE: ", mae)
-        print("MSE: ", mse)
-        print("loss_meter.avg: ", loss_meter.avg)
-        print("RMSE: ", rmse)
+            mae = mean_absolute_error(actuals, predictions)
+            mse = mean_squared_error(actuals, predictions)
+            rmse = math.sqrt(mse)
+            print("MAE: ", mae)
+            print("MSE: ", mse)
+            print("loss_meter.avg: ", loss_meter.avg)
+            print("RMSE: ", rmse)
 
-        err_metrics = {
-            'actuals': actuals,
-            'predictions': predictions,
-            'perc_completion': perc_completion_list,
-            'mae': mae,
-            'mse': mse,
-            'rmse': rmse
-        }
-        return predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list
+            err_metrics = {
+                'actuals': actuals,
+                'predictions': predictions,
+                'perc_completion': perc_completion_list,
+                'mae': mae,
+                'mse': mse,
+                'rmse': rmse
+            }
+            return predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list
 
     return loss_meter.avg, detailed_metrics
 

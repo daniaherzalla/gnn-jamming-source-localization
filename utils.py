@@ -152,21 +152,36 @@ def convert_to_serializable(val):
 
 
 # Function to convert Cartesian to polar coordinates
+# def cartesian_to_polar(coords):
+#     polar_coords = []
+#     if params['3d']:
+#         for x, y, z in coords:
+#             r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+#             phi = np.arctan2(np.sqrt(x ** 2 + y ** 2), z)  # Polar angle
+#             theta = np.arctan2(y, x)  # Azimuthal angle
+#             polar_coords.append([r, theta, phi])
+#     else:
+#         for x, y in coords:
+#             r = np.sqrt(x ** 2 + y ** 2)
+#             theta = np.arctan2(y, x)  # Azimuthal angle
+#             polar_coords.append([r, theta])
+#     return polar_coords
+
 def cartesian_to_polar(coords):
     polar_coords = []
-
     if params['3d']:
-        # print('coords: ', coords)
         for x, y, z in coords:
-            r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
-            phi = np.arctan2(np.sqrt(x ** 2 + y ** 2), z)  # Polar angle
-            theta = np.arctan2(y, x)  # Azimuthal angle
+            r = np.sqrt(x**2 + y**2 + z**2)
+            theta = np.arctan2(np.sqrt(x**2 + y**2), z)  # Now this is theta (inclination)
+            phi = np.arctan2(y, x)  # This is phi (azimuthal)
             polar_coords.append([r, theta, phi])
     else:
         for x, y in coords:
-            r = np.sqrt(x ** 2 + y ** 2)  # Radius
-            theta = np.arctan2(y, x)  # Angle from the positive x-axis
+            r = np.sqrt(x**2 + y**2)
+            theta = np.arctan2(y, x)  # Azimuthal angle in 2D
             polar_coords.append([r, theta])
+    return polar_coords
+
 
     # # Convert to numpy array for easier manipulation
     # polar_coords = np.array(polar_coords)
@@ -183,4 +198,4 @@ def cartesian_to_polar(coords):
     #
     # quit()
 
-    return polar_coords
+    # return polar_coords

@@ -22,7 +22,7 @@ def main():
     """
     Main function to run the training and evaluation.
     """
-    seeds = [1, 2, 3]
+    seeds = [1]
 
     if params['train_per_class']:
         if params['dynamic']:
