@@ -4,7 +4,7 @@ from torch_geometric.nn import MLP, GCN, GraphSAGE, GIN, GAT, PNA, AttentionalAg
 from torch_geometric.nn import GPSConv, GINEConv
 
 from torch.nn import Linear, ReLU, Sequential
-from torch_geometric.nn import GINConv, GCNConv, GatedGraphConv, ResGatedGraphConv
+from torch_geometric.nn import GINConv, GCNConv, GatedGraphConv, ResGatedGraphConv, PNAConv
 from torch.nn import Linear, ModuleList, Dropout, Sequential
 from torch_geometric.nn import GPSConv, global_mean_pool
 from torch_geometric.nn.norm import BatchNorm
@@ -23,7 +23,7 @@ class GatedGCN(torch.nn.Module):
 
 
 class GraphGPS(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, num_layers, out_channels, heads, dropout_rate, act='relu', jk='lstm'):
+    def __init__(self, in_channels, hidden_channels, num_layers, out_channels, heads, dropout_rate, act='relu', jk='max', deg=None):
         super(GraphGPS, self).__init__()
         self.convs = ModuleList()
         self.heads = heads
@@ -41,7 +41,7 @@ class GraphGPS(torch.nn.Module):
                 torch.nn.ReLU(),
                 Linear(hidden_channels, hidden_channels),
             )
-            conv = GPSConv(hidden_channels, ResGatedGraphConv(hidden_channels, hidden_channels), heads=heads, dropout=0.0, attn_type='performer')
+            conv = GPSConv(hidden_channels, ResGatedGraphConv(hidden_channels, hidden_channels, deg=deg), heads=heads, dropout=0.0, attn_type='performer')
             self.convs.append(conv)
             self.norms.append(BatchNorm(hidden_channels))  # Adjust for multi-head attention
 
@@ -106,13 +106,13 @@ class GNN(torch.nn.Module):
         elif model_type in 'GatedGCN':
             self.gnn = GatedGCN(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers, dropout=0.0, act=act, norm=norm) # check attn type from paper
         elif model_type == 'PNA':
-            self.gnn = PNA(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers,aggregators=['mean', 'min', 'max', 'std'],scalers=['identity'], dropout=0.0, act=act, norm=None, deg=deg, jk='max')
+            self.gnn = PNA(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=out_channels, num_layers=num_layers,aggregators=['mean', 'max', 'std'],scalers=['identity'], dropout=0.0, act=act, norm=None, deg=deg, jk='max')
         elif model_type == 'GPS':
-            self.gnn = GraphGPS(in_channels=in_channels, hidden_channels=hidden_channels, num_layers=num_layers, out_channels=out_channels, heads=num_heads, dropout_rate=0.0, act=act, jk=None) # 'cat'
+            self.gnn = GraphGPS(in_channels=in_channels, hidden_channels=hidden_channels, num_layers=num_layers, out_channels=out_channels, heads=num_heads, dropout_rate=0.0, act=act, jk=None, deg=deg) # 'cat'
 
         # Final layer
         self.attention_pool = AttentionalAggregation(gate_nn=Linear(out_channels, 1))
-        self.regressor = Linear(out_channels, 5)
+        self.regressor = Linear(out_channels, params['out_features'])
         # self.classifier = Linear(out_channels, 2)  # Classifier layer, outputs two logits for binary classification
         self.classifier = Linear(out_channels, 8)  # Classification head for jammer direction (8 cardinal directions)
         self.dropout = torch.nn.Dropout(dropout_rate)
@@ -135,6 +135,8 @@ class GNN(torch.nn.Module):
         if isinstance(self.gnn, GCN):
             # GCN supports edge weights
             x = self.gnn(x, edge_index, edge_weight=edge_weight)
+        elif isinstance(self.gnn, GAT):
+            x = self.gnn(x, edge_index, edge_attr=edge_weight)
         else:
             # Fallback for other types if no specific handling is needed
             x = self.gnn(x, edge_index)
