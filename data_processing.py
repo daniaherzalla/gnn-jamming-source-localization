@@ -253,17 +253,17 @@ class Instance:
             #     print('downsampling err: ', len(self.node_positions))
             #     quit()
 
-            # Plot the original Cartesian positions
-            cart_pos = np.array(self.node_positions_cart)
-            plt.figure(figsize=(10, 6))
-            plt.scatter(cart_pos[:, 0], cart_pos[:, 1], c='blue', marker='o', label='DS Positions')
-            plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', s=1, label='Jammer Position')
-            plt.title('DS Node Positions (Cartesian)')
-            plt.xlabel('X Coordinate')
-            plt.ylabel('Y Coordinate')
-            plt.legend()
-            plt.grid(True)
-            plt.show()
+            # # Plot the original Cartesian positions
+            # cart_pos = np.array(self.node_positions_cart)
+            # plt.figure(figsize=(10, 6))
+            # plt.scatter(cart_pos[:, 0], cart_pos[:, 1], c='blue', marker='o', label='DS Positions')
+            # plt.scatter(self.jammer_position[0][0], self.jammer_position[0][1], c='red', marker='x', s=1, label='Jammer Position')
+            # plt.title('DS Node Positions (Cartesian)')
+            # plt.xlabel('X Coordinate')
+            # plt.ylabel('Y Coordinate')
+            # plt.legend()
+            # plt.grid(True)
+            # plt.show()
 
 
         # elif params['ds_method'] == 'time_window_avg':
@@ -908,8 +908,8 @@ def apply_min_max_normalization_instance_noise(instance):
 
     # Normalize Noise values to range [0, 1]
     instance.node_noise_original = instance.node_noise.copy()
-    min_noise = np.min(instance.node_noise)
-    max_noise = np.max(instance.node_noise)
+    min_noise = 0 #np.min(instance.node_noise)
+    max_noise = 80 #np.max(instance.node_noise)
     range_noise = max_noise - min_noise if max_noise != min_noise else 1
     normalized_noise = (instance.node_noise - min_noise) / range_noise
     instance.node_noise = normalized_noise
@@ -2334,6 +2334,15 @@ def load_data(params, data_class, experiments_path=None):
             # data = add_jammer_direction(data)
             data.reset_index(inplace=True)
             print(data.index.is_unique)
+
+            # # Add average of node_positions and node_noise to each row
+            # data['node_positions'] = data['node_positions'].apply(
+            #     lambda positions: positions + [np.mean(positions, axis=0).tolist()]
+            # )
+            # data['node_noise'] = data['node_noise'].apply(
+            #     lambda noise: noise + [np.mean(noise)]
+            # )
+
             split_datasets_dict = process_data(data, experiments_path)
 
             # Access the train, validation, and test DataFrame for a specific data class
@@ -2537,52 +2546,76 @@ def plot_graph_temporal(subgraph):
     plt.axis('off')
     plt.show()
 
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+
 def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_positions=None, show_weights=False, perc_completion=None, id=None, jammer_power=None):
     G = nx.Graph()
 
-    # Ensure positions and features are numpy arrays for easier handling
-    positions = np.array(positions)
-    node_features = np.array(node_features)
-    if jammer_positions is not None:
-        jammer_positions = np.array(jammer_positions)
+    # Check if positions are tensors and convert them
+    if isinstance(positions, torch.Tensor):
+        positions = positions.numpy()
+    elif isinstance(positions, list) and isinstance(positions[0], torch.Tensor):
+        positions = [pos.numpy() for pos in positions]
+
+    # Ensure node_features is a numpy array for easier handling
+    if isinstance(node_features, torch.Tensor):
+        node_features = node_features.numpy()
 
     # Add nodes with features and positions
     for i, pos in enumerate(positions):
-        # assuming RSSI is the last feature in node_features array
-        if params['dynamic']:
-            G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2],
-                       timestamp=node_features[i][-1], sin_aoa=node_features[i][-3], cos_aoa=node_features[i][-2])
-        else:
-            G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2])
+        # Assuming RSSI is the last feature in node_features array
+        G.add_node(i, pos=(pos[0], pos[1]), noise=node_features[i][2])
 
-    # Position for drawing
+    # Convert edge_index to numpy array if it's a tensor
+    if isinstance(edge_index, torch.Tensor):
+        edge_index = edge_index.numpy()
+    edge_index = edge_index.T  # Ensure edge_index is transposed if necessary
+
+    # Position for drawing, ensuring positions are tuples
     pos = {i: (p[0], p[1]) for i, p in enumerate(positions)}
 
-    # Distinguish nodes based on noise value > -55
-    noise_values = np.array([G.nodes[i]['noise'] for i in G.nodes()])
-    node_colors = ['red' if noise > -55 else 'blue' for noise in noise_values]
+    # Add edges to the graph
+    if edge_weights is not None:
+        edge_weights = edge_weights.numpy() if isinstance(edge_weights, torch.Tensor) else edge_weights
+        for idx, (start, end) in enumerate(edge_index):
+            G.add_edge(start, end, weight=edge_weights[idx])
+    else:
+        for start, end in edge_index:
+            G.add_edge(start, end)
 
-    # Draw the graph nodes without edges and annotations
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1)
+    # Draw the graph nodes
+    nx.draw_networkx_nodes(G, pos, node_color='blue', node_size=20)  # Use a default color
 
-    # Optionally draw jammer position without annotations
-    # Optionally draw jammer position without annotations
+    # Draw the last index node with a different color (e.g., red)
+    last_node_index = len(positions) - 1  # Assuming last index is what you're referring to
+    nx.draw_networkx_nodes(G, pos, nodelist=[last_node_index], node_color='red', node_size=60)
+
+    # Draw the edges
+    if show_weights and edge_weights is not None:
+        weights = np.array([G[u][v]['weight'] for u, v in G.edges()])
+        weights = 10 * (weights - weights.min()) / (weights.max() - weights.min() + 1e-6)  # Normalize and scale
+        nx.draw_networkx_edges(G, pos, width=0.5)
+    else:
+        nx.draw_networkx_edges(G, pos)
+
+    # Optionally draw jammer positions
     if jammer_positions is not None:
-        for i, jammer_pos in enumerate(jammer_positions):
-            plt.scatter(*jammer_pos, color='red', s=100, marker='x', label='Jammer')  # Add jammer to the plot as a cross
+        if isinstance(jammer_positions, torch.Tensor):
+            jammer_positions = jammer_positions.numpy()
+        for jp in jammer_positions:
+            plt.scatter(jp[0], jp[1], color='red', s=50, marker='x', label='Jammer')
 
-            # Assuming jammer_power is available in an array, where each entry corresponds to a jammer
-            # Add annotation for jammer_power
-            plt.annotate(f'Power: {jammer_power:.1f} dB',
-                         xy=jammer_pos,
-                         xytext=(5, 5),
-                         textcoords='offset points',
-                         fontsize=10, color='black')
+    # Additional plot settings
+    if perc_completion is not None:
+        plt.title(f"Graph {id} - {perc_completion:.2f}% trajectory since start", fontsize=15)
+    else:
+        plt.title(f"Graph {id}", fontsize=15)
 
-    perc_completion_title = "Graph " + str(id) + " " + str(round(perc_completion, 2)) + "% trajectory since start"
-    plt.title(perc_completion_title, fontsize=15)
-    plt.axis('off')  # Turn off the axis
+    plt.axis('off')
     plt.show()
+
 
 # def plot_graph(positions, node_features, edge_weights=None, jammer_positions=None, show_weights=False, perc_completion=None, id=None, jammer_power=None):
 #     fig = plt.figure()
@@ -2819,6 +2852,231 @@ def plot_graph(positions, edge_index, node_features, edge_weights=None, jammer_p
 #     return data
 
 
+# def create_torch_geo_data(instance: Instance) -> Data:
+#     """
+#     Create a PyTorch Geometric Data object from a row of the dataset.
+#
+#     Args:
+#         row (pd.Series): A row of the dataset containing drone positions, states, RSSI values, and other features.
+#
+#     Returns:
+#         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
+#     """
+#     if len(instance.node_positions) < 3:
+#         print(instance.node_positions_cart)
+#         print('ERROR')
+#         quit()
+#     # Preprocess instance data
+#     if params['norm'] == 'minmax':
+#         apply_min_max_normalization_instance(instance)
+#     elif params['norm'] == 'unit_sphere':
+#         apply_min_max_normalization_instance_noise(instance)
+#         apply_unit_sphere_normalization(instance)
+#
+#     if 'angle_of_arrival' in params['required_features']:
+#         # Convert AoA from degrees to radians
+#         aoa_radians = np.radians(instance.angle_of_arrival)
+#
+#         # Create node features without adding an extra list around the numpy array
+#         node_features = np.concatenate([
+#             instance.node_positions,
+#             instance.node_noise[:, None],  # Ensure node_noise is reshaped to (n, 1)
+#             np.sin(aoa_radians[:, None]),
+#             np.cos(aoa_radians[:, None])
+#         ], axis=1)
+#     else:
+#         node_features = np.concatenate([
+#             instance.node_positions,
+#             instance.node_noise[:, None],
+#             instance.node_positions_cart
+#         ], axis=1)
+#
+#
+#     # Convert to 2D tensor
+#     node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
+#
+#     # Preparing edges and weights
+#     if params['aug'] == 'drop_edge':
+#         # Preparing edges and weights
+#         positions = instance.node_positions_cart
+#         if params['num_neighbors'] == 'fc':
+#             num_neighbors = 10000000
+#         else:
+#             num_neighbors = params['num_neighbors']
+#         if params['edges'] == 'knn':
+#             num_samples = positions.shape[0]
+#             k = min(num_neighbors, num_samples - 1)  # num of neighbors, ensuring k < num_samples
+#             nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
+#             distances, indices = nbrs.kneighbors(positions)
+#             edge_index, edge_weight = [], []
+#
+#             # Define the scaling parameter alpha for the Gaussian decay function
+#             alpha = 1.0  # Adjust this based on your experimentation to find the best fit
+#
+#             for i in range(indices.shape[0]):
+#                 for j in range(1, indices.shape[1]):  # Skip the first index as it's the node itself
+#                     edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
+#                     # Apply Gaussian decay to the distance
+#                     gaussian_weight = np.exp(-alpha * distances[i, j])
+#                     edge_weight.extend([gaussian_weight, gaussian_weight])
+#
+#         else:
+#             raise ValueError("Unsupported edge specification")
+#
+#         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+#         edge_weight = torch.tensor(edge_weight, dtype=torch.float)
+#
+#         # Apply DropEdge
+#         drop_edge_rate = 0.8
+#         if drop_edge_rate > 0:
+#             num_edges = edge_index.size(1)
+#             num_edges_to_drop = int(drop_edge_rate * num_edges)
+#
+#             # Randomly select edges to drop
+#             edges_to_drop = torch.randperm(num_edges)[:num_edges_to_drop]
+#             mask = torch.ones(num_edges, dtype=torch.bool)
+#             mask[edges_to_drop] = False
+#
+#             # Apply mask to edge_index and edge_weight
+#             edge_index = edge_index[:, mask]
+#             edge_weight = edge_weight[mask]
+#
+#         # Add self-loops for renormalization
+#         num_nodes = positions.shape[0]
+#         self_loop_indices = torch.stack([torch.arange(num_nodes), torch.arange(num_nodes)], dim=0)
+#         self_loop_weights = torch.ones(num_nodes, dtype=torch.float)  # Weight of 1 for self-loops
+#
+#         # Combine original edges with self-loops
+#         edge_index = torch.cat([edge_index, self_loop_indices], dim=1)
+#         edge_weight = torch.cat([edge_weight, self_loop_weights])
+#
+#         # Apply renormalization trick
+#         row, col = edge_index
+#         deg = torch.zeros(num_nodes, dtype=torch.float)
+#         deg = deg.scatter_add(0, row, edge_weight)  # Compute degree for each node
+#         deg_inv_sqrt = deg.pow(-0.5)
+#         deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0  # Handle isolated nodes (degree 0)
+#         norm = deg_inv_sqrt[row] * edge_weight * deg_inv_sqrt[col]  # Normalize edge weights
+#
+#         # Update edge weights with normalized values
+#         edge_weight = norm
+#     else:
+#         positions = instance.node_positions_cart
+#         if params['num_neighbors'] == 'fc':
+#             num_neighbors = positions.shape[0] - 1
+#         else:
+#             num_neighbors = params['num_neighbors']
+#         if params['edges'] == 'knn':
+#             num_samples = positions.shape[0]
+#             num_edges = params['num_neighbors']  # Expected that this is set outside this function, e.g., params['num_edges'] = 3
+#
+#             # Initialize NearestNeighbors with more neighbors than needed to calculate full connections later
+#             nbrs = NearestNeighbors(n_neighbors=num_edges + 1, algorithm='auto').fit(positions)
+#             distances, indices = nbrs.kneighbors(positions)
+#
+#             edge_index, edge_weight = [], []
+#             alpha = 1.0  # Gaussian decay parameter
+#
+#             # Add edges based on KNN for all nodes except the last
+#             for i in range(num_samples - 1):  # Exclude the last node in this loop
+#                 for j in range(1, num_edges + 1):  # Skip the first index (self-loop), limit to num_edges
+#                     gaussian_weight = np.exp(-alpha * distances[i, j])
+#                     edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
+#                     edge_weight.extend([gaussian_weight, gaussian_weight])
+#
+#             # Handling the last node separately
+#             last_node_index = num_samples - 1
+#             # Add an edge between the last node and every other node
+#             for i in range(num_samples):
+#                 if i != last_node_index:
+#                     distance = np.linalg.norm(positions[last_node_index] - positions[i])  # Calculate the Euclidean distance
+#                     gaussian_weight = np.exp(-alpha * distance)
+#                     edge_index.extend([[last_node_index, i], [i, last_node_index]])
+#                     edge_weight.extend([gaussian_weight, gaussian_weight])
+#
+#             # Add self-loops for all nodes
+#             for i in range(num_samples):
+#                 edge_index.append([i, i])
+#                 edge_weight.append(1.0)  # Uniform weight for self-loops
+#
+#         else:
+#             raise ValueError("Unsupported edge specification")
+#
+#         # Convert edge_index and edge_weight to tensors
+#         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+#         edge_weight = torch.tensor(edge_weight, dtype=torch.float)
+#
+#     # # Assuming instance.jammer_position is a list or array that can be reshaped
+#     # jammer_positions = np.array(instance.jammer_position).reshape(-1, 3)
+#     #
+#     # # Convert jammer_positions to a tensor
+#     # y = torch.tensor(jammer_positions, dtype=torch.float)
+#
+#     # Prepare target variables
+#     # jammer_positions = np.array(instance.jammer_position).reshape(-1, 2)
+#     # print('jammer_positions: ', jammer_positions)
+#     # y = torch.tensor(jammer_positions, dtype=torch.float)
+#
+#     # Assume instance.jammer_placement_bin is accessible
+#     # Assuming `instance.jammer_placement_bin` is a scalar representing class index
+#     # jammer_placement_bin = torch.tensor([instance.jammer_placement_bin], dtype=torch.long)
+#     # print('jammer_placement_bin: ', jammer_placement_bin)
+#
+#     # Assuming instance.jammer_placement_bin is already an array with the same length as jammer_positions
+#     # jammer_dir = torch.tensor(instance.jammer_direction_labels, dtype=torch.long)
+#
+#     # Ensure jammer_placement_bin is a 2D tensor with the second dimension being 1 to match y for concatenation
+#     # jammer_direction_tensor = jammer_dir.view(-1, 1)
+#
+#     # Concatenate position and placement classification into a single tensor
+#     # y_tensor = torch.cat([y, jammer_direction_tensor], dim=1)
+#
+#     # Create the Data object
+#     # data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y_tensor)
+#
+#     if not params['inference']:
+#         jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])  # Assuming this reshaping is valid based on your data structure
+#         y = torch.tensor(jammer_positions, dtype=torch.float)
+#     else:
+#         y = None
+#
+#     # Plot
+#     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
+#     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
+#
+#     # Create the Data object
+#     data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y)
+#
+#     # Convert geometric information to tensors
+#     # data.id = instance.id
+#     if params['norm'] == 'minmax':
+#         data.min_coords = torch.tensor(instance.min_coords, dtype=torch.float)
+#         data.max_coords = torch.tensor(instance.max_coords, dtype=torch.float)
+#     elif params['norm'] == 'unit_sphere':
+#         data.max_radius = torch.tensor(instance.max_radius, dtype=torch.float)
+#
+#     # Store the perc_completion as part of the Data object
+#     if not params['inference']:
+#         data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
+#         data.pl_exp = torch.tensor(instance.pl_exp, dtype=torch.float)
+#         data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
+#         data.jtx = torch.tensor(instance.jammer_power, dtype=torch.float)
+#         data.num_samples = torch.tensor(instance.num_samples, dtype=torch.float)
+#
+#     # Apply pos encoding transform
+#     if params['model'] == 'GPS':
+#         transform = AddRandomWalkPE(walk_length=20, attr_name='pe')
+#         data = transform(data)
+#
+#     return data
+
+
+def weighted_centroid_localization(drones_pos, drones_noise):
+    weights = np.array([10 ** (noise / 10) for noise in drones_noise])
+    weighted_sum = np.dot(weights, drones_pos) / np.sum(weights)
+    return weighted_sum.tolist()
+
+
 def create_torch_geo_data(instance: Instance) -> Data:
     """
     Create a PyTorch Geometric Data object from a row of the dataset.
@@ -2829,16 +3087,38 @@ def create_torch_geo_data(instance: Instance) -> Data:
     Returns:
         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
     """
-    if len(instance.node_positions) < 3:
-        print(instance.node_positions_cart)
-        print('ERROR')
-        quit()
+    # Calculate Weighted Centroid Localization
+    centroid_cartesian = weighted_centroid_localization(instance.node_positions_cart, instance.node_noise)
+    # print(f"Calculated WCL Centroid in Cartesian Coordinates: {centroid_cartesian}")
+
+    # Wrap the centroid in a list to match the expected input format for cartesian_to_polar
+    centroid_polar = cartesian_to_polar([centroid_cartesian])
+
+    # Convert the polar coordinates to cyclical coordinates
+    centroid_spherical = angle_to_cyclical(centroid_polar)
+
+    # print(f"Calculated WCL Centroid in Spherical Coordinates: {centroid_spherical}")
+
+    # Append centroid to node positions
+    instance.node_positions_cart = np.vstack([instance.node_positions_cart, centroid_cartesian])
+    instance.node_positions = np.vstack([instance.node_positions, centroid_spherical])
+
+    weighted_noise = weighted_centroid_localization(instance.node_noise, instance.node_noise)
+    instance.node_noise = np.append(instance.node_noise, weighted_noise)  # Append high noise value for the centroid node
+
     # Preprocess instance data
     if params['norm'] == 'minmax':
         apply_min_max_normalization_instance(instance)
     elif params['norm'] == 'unit_sphere':
         apply_min_max_normalization_instance_noise(instance)
         apply_unit_sphere_normalization(instance)
+
+    print(instance.node_positions[-1])
+    quit()
+    #
+    #
+    # weighted_noise = weighted_centroid_localization(instance.node_noise, instance.node_noise)
+    # instance.node_noise = np.append(instance.node_noise, 100000)  # Append high noise value for the centroid node
 
     if 'angle_of_arrival' in params['required_features']:
         # Convert AoA from degrees to radians
@@ -2930,30 +3210,41 @@ def create_torch_geo_data(instance: Instance) -> Data:
     else:
         positions = instance.node_positions_cart
         if params['num_neighbors'] == 'fc':
-            num_neighbors = 10000000
+            num_neighbors = positions.shape[0] - 1
         else:
             num_neighbors = params['num_neighbors']
         if params['edges'] == 'knn':
             num_samples = positions.shape[0]
-            k = min(num_neighbors, num_samples - 1)  # num of neighbors, ensuring k < num_samples
-            nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
+            num_edges = params['num_neighbors']  # Expected that this is set outside this function, e.g., params['num_edges'] = 3
+
+            # Initialize NearestNeighbors with more neighbors than needed to calculate full connections later
+            nbrs = NearestNeighbors(n_neighbors=num_edges + 1, algorithm='auto').fit(positions)
             distances, indices = nbrs.kneighbors(positions)
+
             edge_index, edge_weight = [], []
+            alpha = 1.0  # Gaussian decay parameter
 
-            # Define the scaling parameter alpha for the Gaussian decay function
-            alpha = 1.0
-
-            # Add self-loops
-            for i in range(indices.shape[0]):
-                edge_index.extend([[i, i]])
-                edge_weight.extend([1.0])  # Self-loops can have a weight of 1
-
-                for j in range(1, indices.shape[1]):
-                    edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
-
-                    # Apply Gaussian decay to the distance
+            # Add edges based on KNN for all nodes except the last
+            for i in range(num_samples - 1):  # Exclude the last node in this loop
+                for j in range(1, num_edges + 1):  # Skip the first index (self-loop), limit to num_edges
                     gaussian_weight = np.exp(-alpha * distances[i, j])
+                    edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
                     edge_weight.extend([gaussian_weight, gaussian_weight])
+
+            # Handling the last node separately
+            last_node_index = num_samples - 1
+            # Add an edge between the last node and every other node
+            for i in range(num_samples):
+                if i != last_node_index:
+                    distance = np.linalg.norm(positions[last_node_index] - positions[i])  # Calculate the Euclidean distance
+                    gaussian_weight = np.exp(-alpha * distance)
+                    edge_index.extend([[last_node_index, i], [i, last_node_index]])
+                    edge_weight.extend([gaussian_weight, gaussian_weight])
+
+            # Add self-loops for all nodes
+            for i in range(num_samples):
+                edge_index.append([i, i])
+                edge_weight.append(1.0)  # Uniform weight for self-loops
 
         else:
             raise ValueError("Unsupported edge specification")
@@ -2974,7 +3265,7 @@ def create_torch_geo_data(instance: Instance) -> Data:
     # y = torch.tensor(jammer_positions, dtype=torch.float)
 
     # Assume instance.jammer_placement_bin is accessible
-    # Assuming `instance.jammer_placement_bin` is a scalar representing class index
+    # Assuming instance.jammer_placement_bin is a scalar representing class index
     # jammer_placement_bin = torch.tensor([instance.jammer_placement_bin], dtype=torch.long)
     # print('jammer_placement_bin: ', jammer_placement_bin)
 
@@ -2998,10 +3289,10 @@ def create_torch_geo_data(instance: Instance) -> Data:
 
     # Plot
     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
-    # plot_graph(positions=positions, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
+    # plot_graph(positions=instance.node_positions, node_features=node_features_tensor,  edge_index=edge_index, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
 
     # Create the Data object
-    data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y)
+    data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y, wcl_pred=instance.node_positions[-1])
 
     # Convert geometric information to tensors
     # data.id = instance.id
@@ -3025,3 +3316,211 @@ def create_torch_geo_data(instance: Instance) -> Data:
         data = transform(data)
 
     return data
+
+
+# def create_torch_geo_data(instance: Instance) -> Data:
+#     """
+#     Create a PyTorch Geometric Data object from a row of the dataset.
+#
+#     Args:
+#         row (pd.Series): A row of the dataset containing drone positions, states, RSSI values, and other features.
+#
+#     Returns:
+#         Data: A PyTorch Geometric Data object containing node features, edge indices, edge weights, and target variables.
+#     """
+#     if len(instance.node_positions) < 3:
+#         print(instance.node_positions_cart)
+#         print('ERROR')
+#         quit()
+#     # Preprocess instance data
+#     if params['norm'] == 'minmax':
+#         apply_min_max_normalization_instance(instance)
+#     elif params['norm'] == 'unit_sphere':
+#         apply_min_max_normalization_instance_noise(instance)
+#         apply_unit_sphere_normalization(instance)
+#
+#     if 'angle_of_arrival' in params['required_features']:
+#         # Convert AoA from degrees to radians
+#         aoa_radians = np.radians(instance.angle_of_arrival)
+#
+#         # Create node features without adding an extra list around the numpy array
+#         node_features = np.concatenate([
+#             instance.node_positions,
+#             instance.node_noise[:, None],  # Ensure node_noise is reshaped to (n, 1)
+#             np.sin(aoa_radians[:, None]),
+#             np.cos(aoa_radians[:, None])
+#         ], axis=1)
+#     else:
+#         node_features = np.concatenate([
+#             instance.node_positions,
+#             instance.node_noise[:, None],
+#             instance.node_positions_cart
+#         ], axis=1)
+#
+#
+#     # Convert to 2D tensor
+#     node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
+#
+#     # Preparing edges and weights
+#     if params['aug'] == 'drop_edge':
+#         # Preparing edges and weights
+#         positions = instance.node_positions_cart
+#         if params['num_neighbors'] == 'fc':
+#             num_neighbors = 10000000
+#         else:
+#             num_neighbors = params['num_neighbors']
+#         if params['edges'] == 'knn':
+#             num_samples = positions.shape[0]
+#             k = min(num_neighbors, num_samples - 1)  # num of neighbors, ensuring k < num_samples
+#             nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
+#             distances, indices = nbrs.kneighbors(positions)
+#             edge_index, edge_weight = [], []
+#
+#             # Define the scaling parameter alpha for the Gaussian decay function
+#             alpha = 1.0  # Adjust this based on your experimentation to find the best fit
+#
+#             for i in range(indices.shape[0]):
+#                 for j in range(1, indices.shape[1]):  # Skip the first index as it's the node itself
+#                     edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
+#                     # Apply Gaussian decay to the distance
+#                     gaussian_weight = np.exp(-alpha * distances[i, j])
+#                     edge_weight.extend([gaussian_weight, gaussian_weight])
+#
+#         else:
+#             raise ValueError("Unsupported edge specification")
+#
+#         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+#         edge_weight = torch.tensor(edge_weight, dtype=torch.float)
+#
+#         # Apply DropEdge
+#         drop_edge_rate = 0.8
+#         if drop_edge_rate > 0:
+#             num_edges = edge_index.size(1)
+#             num_edges_to_drop = int(drop_edge_rate * num_edges)
+#
+#             # Randomly select edges to drop
+#             edges_to_drop = torch.randperm(num_edges)[:num_edges_to_drop]
+#             mask = torch.ones(num_edges, dtype=torch.bool)
+#             mask[edges_to_drop] = False
+#
+#             # Apply mask to edge_index and edge_weight
+#             edge_index = edge_index[:, mask]
+#             edge_weight = edge_weight[mask]
+#
+#         # Add self-loops for renormalization
+#         num_nodes = positions.shape[0]
+#         self_loop_indices = torch.stack([torch.arange(num_nodes), torch.arange(num_nodes)], dim=0)
+#         self_loop_weights = torch.ones(num_nodes, dtype=torch.float)  # Weight of 1 for self-loops
+#
+#         # Combine original edges with self-loops
+#         edge_index = torch.cat([edge_index, self_loop_indices], dim=1)
+#         edge_weight = torch.cat([edge_weight, self_loop_weights])
+#
+#         # Apply renormalization trick
+#         row, col = edge_index
+#         deg = torch.zeros(num_nodes, dtype=torch.float)
+#         deg = deg.scatter_add(0, row, edge_weight)  # Compute degree for each node
+#         deg_inv_sqrt = deg.pow(-0.5)
+#         deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0  # Handle isolated nodes (degree 0)
+#         norm = deg_inv_sqrt[row] * edge_weight * deg_inv_sqrt[col]  # Normalize edge weights
+#
+#         # Update edge weights with normalized values
+#         edge_weight = norm
+#     else:
+#         positions = instance.node_positions_cart
+#         if params['num_neighbors'] == 'fc':
+#             num_neighbors = 10000000
+#         else:
+#             num_neighbors = params['num_neighbors']
+#         if params['edges'] == 'knn':
+#             num_samples = positions.shape[0]
+#             k = min(num_neighbors, num_samples - 1)  # num of neighbors, ensuring k < num_samples
+#             nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(positions)
+#             distances, indices = nbrs.kneighbors(positions)
+#             edge_index, edge_weight = [], []
+#
+#             # Define the scaling parameter alpha for the Gaussian decay function
+#             alpha = 1.0
+#
+#             # Add self-loops
+#             for i in range(indices.shape[0]):
+#                 edge_index.extend([[i, i]])
+#                 edge_weight.extend([1.0])  # Self-loops can have a weight of 1
+#
+#                 for j in range(1, indices.shape[1]):
+#                     edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
+#
+#                     # Apply Gaussian decay to the distance
+#                     gaussian_weight = np.exp(-alpha * distances[i, j])
+#                     edge_weight.extend([gaussian_weight, gaussian_weight])
+#
+#         else:
+#             raise ValueError("Unsupported edge specification")
+#
+#         # Convert edge_index and edge_weight to tensors
+#         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+#         edge_weight = torch.tensor(edge_weight, dtype=torch.float)
+#
+#     # # Assuming instance.jammer_position is a list or array that can be reshaped
+#     # jammer_positions = np.array(instance.jammer_position).reshape(-1, 3)
+#     #
+#     # # Convert jammer_positions to a tensor
+#     # y = torch.tensor(jammer_positions, dtype=torch.float)
+#
+#     # Prepare target variables
+#     # jammer_positions = np.array(instance.jammer_position).reshape(-1, 2)
+#     # print('jammer_positions: ', jammer_positions)
+#     # y = torch.tensor(jammer_positions, dtype=torch.float)
+#
+#     # Assume instance.jammer_placement_bin is accessible
+#     # Assuming instance.jammer_placement_bin is a scalar representing class index
+#     # jammer_placement_bin = torch.tensor([instance.jammer_placement_bin], dtype=torch.long)
+#     # print('jammer_placement_bin: ', jammer_placement_bin)
+#
+#     # Assuming instance.jammer_placement_bin is already an array with the same length as jammer_positions
+#     # jammer_dir = torch.tensor(instance.jammer_direction_labels, dtype=torch.long)
+#
+#     # Ensure jammer_placement_bin is a 2D tensor with the second dimension being 1 to match y for concatenation
+#     # jammer_direction_tensor = jammer_dir.view(-1, 1)
+#
+#     # Concatenate position and placement classification into a single tensor
+#     # y_tensor = torch.cat([y, jammer_direction_tensor], dim=1)
+#
+#     # Create the Data object
+#     # data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y_tensor)
+#
+#     if not params['inference']:
+#         jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])  # Assuming this reshaping is valid based on your data structure
+#         y = torch.tensor(jammer_positions, dtype=torch.float)
+#     else:
+#         y = None
+#
+#     # Plot
+#     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
+#     # plot_graph(positions=positions, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
+#
+#     # Create the Data object
+#     data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y)
+#
+#     # Convert geometric information to tensors
+#     # data.id = instance.id
+#     if params['norm'] == 'minmax':
+#         data.min_coords = torch.tensor(instance.min_coords, dtype=torch.float)
+#         data.max_coords = torch.tensor(instance.max_coords, dtype=torch.float)
+#     elif params['norm'] == 'unit_sphere':
+#         data.max_radius = torch.tensor(instance.max_radius, dtype=torch.float)
+#
+#     # Store the perc_completion as part of the Data object
+#     if not params['inference']:
+#         data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
+#         data.pl_exp = torch.tensor(instance.pl_exp, dtype=torch.float)
+#         data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
+#         data.jtx = torch.tensor(instance.jammer_power, dtype=torch.float)
+#         data.num_samples = torch.tensor(instance.num_samples, dtype=torch.float)
+#
+#     # Apply pos encoding transform
+#     if params['model'] == 'GPS':
+#         transform = AddRandomWalkPE(walk_length=20, attr_name='pe')
+#         data = transform(data)
+#
+#     return data
