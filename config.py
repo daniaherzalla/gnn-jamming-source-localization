@@ -14,12 +14,12 @@ params = {
     '3d': True,
     'coords': 'polar',  # opts: 'polar', 'cartesian'
     'required_features': ['node_positions', 'node_noise'],  # node_positions, polar_coordinates, node_noise, node_rssi
-    'additional_features': ['weighted_centroid_radius','weighted_centroid_sin_theta', 'weighted_centroid_cos_theta', 'weighted_centroid_sin_az', 'weighted_centroid_cos_az', 'dist_to_wcl', 'median_noise', 'max_noise', 'noise_differential', 'moving_avg_noise', 'path_distance', 'vector_x', 'vector_y', 'vector_z'],
+    'additional_features': ['weighted_centroid_radius','weighted_centroid_sin_theta', 'weighted_centroid_cos_theta', 'weighted_centroid_sin_az', 'weighted_centroid_cos_az', 'dist_to_wcl', 'median_noise', 'max_noise', 'noise_differential', 'vector_x', 'vector_y', 'vector_z', 'rate_of_change_signal_strength'], #'distance_weighted_signal_strength'],
     'num_neighbors': 3,
     'edges': 'knn',  # opts: 'knn', 'proximity'
     'norm': 'unit_sphere',  # opts: 'minmax', 'unit_sphere'
     'activation': False,
-    'max_nodes': 800,
+    'max_nodes': 1000,
     'filtering_proportion': 0.1,
     'grid_meters': 1,
     'ds_method': 'noise', # time_window_avg, noise
@@ -34,11 +34,14 @@ params = {
     'reproduce': True,
     'plot_network': False,
     'study': 'dataset',  # dataset, coord_system, feat_engineering, knn_edges, downsampling
-    'val_discrite_coeff': 0.25,
+    'val_discrite_coeff': 0.1, # for testing set to 0.4
     'test_discrite_coeff': 0.1,  # disable discritization -> step_size = 1
     'num_workers': 16,
     'pooling': 'max',
-    'aug': ['drop_node']
+    'aug': ['drop_node'],
+    'sn_noise': 'weighted', # "weighted" "max_data"
+    'sn_edges': 'directed', # "undirected" "directed"
+    'pool_weight_rep': "gr_sn" # "fgr_fgr" "gr_gr" "gr_sn"
 }
 
 # 'static/newr/pna/min/'

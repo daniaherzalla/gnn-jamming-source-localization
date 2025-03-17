@@ -22,7 +22,7 @@ def main():
     """
     Main function to run the training and evaluation.
     """
-    seeds = [1]
+    seeds = [1,2,3]
 
     if params['train_per_class']:
         if params['dynamic']:
@@ -86,34 +86,34 @@ def main():
 
             # Inference
             if params['inference']:
-                for test_set_name in params['test_sets']:
-                    print(test_set_name)
-                    train_dataset, val_dataset, test_dataset = load_data(params, test_set_name, experiment_path)
-                    _, _, test_loader, deg_histogram = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
-                    steps_per_epoch = len(test_loader)  # Calculate steps per epoch based on the training data loader
-                    model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
+                # for test_set_name in params['test_sets']:
+                #     print(test_set_name)
+                train_dataset, val_dataset, test_dataset = load_data(params, data_class, experiment_path)
+                _, _, test_loader, deg_histogram = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
+                model, optimizer, scheduler, criterion = initialize_model(device, params, len(test_loader), deg_histogram)
 
-                    # Load trained model
-                    model.load_state_dict(torch.load(model_path))
-                    # Predict jammer position
-                    predictions, actuals, err_metrics, perc_completion_list = validate(model, test_loader, criterion, device, test_loader=True)
+                # Load trained model
+                model.load_state_dict(torch.load(model_path))
+                # Predict jammer position
+                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list, gnn_only_predictions = validate(model, test_loader, criterion, device, test_loader=True)
 
-                    # Save predictions, actuals, and perc_completion to a CSV file
-                    max_nodes = params['max_nodes']
-                    file = f'{experiment_path}/predictions_{max_nodes}_{test_set_name}_{model_name}'
+                # Save predictions, actuals, and perc_completion to a CSV file
+                max_nodes = params['max_nodes']
+                ds_method = params['ds_method']
+                file = f'{experiment_path}/predictions_{max_nodes}_{ds_method}_{model_name}_{data_class}_inference.csv'
 
-                    # Check if the file exists
-                    file_exists = os.path.isfile(file)
-                    with open(file, 'a', newline='') as f:
-                        writer = csv.writer(f)
+                # Check if the file exists
+                file_exists = os.path.isfile(file)
+                with open(file, 'a', newline='') as f:
+                    writer = csv.writer(f)
 
-                        # If the file doesn't exist, write the header
-                        if not file_exists:
-                            writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion'])
+                    # If the file doesn't exist, write the header
+                    if not file_exists:
+                        writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion', 'PL', 'Sigma', 'JTx', 'Number Samples', 'Weight', 'GNN Only Prediction'])
 
-                        # Write the prediction, actual, and percentage completion data
-                        for pred, act, perc in zip(predictions, actuals, perc_completion_list):
-                            writer.writerow([seed, pred, act, perc])
+                    # Write the prediction, actual, and percentage completion data
+                    for pred, act, perc, plexp, sigma, jtx, numsamples, weight, gnn_predictions in zip(predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list, gnn_only_predictions):
+                        writer.writerow([seed, pred, act, perc, plexp, sigma, jtx, numsamples, weight, gnn_predictions])
             else:
                 # Load the datasets
                 train_dataset, val_dataset, test_dataset = load_data(params, data_class, experiment_path)
@@ -183,7 +183,7 @@ def main():
 
                 # Evaluate the model on the test set
                 model.load_state_dict(best_model_state)
-                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = validate(model, test_loader, criterion, device, test_loader=True)
+                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list, gnn_only_predictions = validate(model, test_loader, criterion, device, test_loader=True)
                 trial_data = {**epoch_data, **err_metrics}
                 save_epochs(trial_data, experiment_path)
                 rmse_vals.append(err_metrics['rmse'])
@@ -199,11 +199,12 @@ def main():
 
                     # If the file doesn't exist, write the header
                     if not file_exists:
-                        writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion', 'PL', 'Sigma', 'JTx', 'Number Samples'])
+                        writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion', 'PL', 'Sigma', 'JTx', 'Number Samples', 'Weight', 'GNN Only Prediction'])
 
                     # Write the prediction, actual, and percentage completion data
-                    for pred, act, perc, plexp, sigma, jtx, numsamples in zip(predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list):
-                        writer.writerow([seed, pred, act, perc, plexp, sigma, jtx, numsamples])
+                    for pred, act, perc, plexp, sigma, jtx, numsamples, weight, gnn_predictions in zip(predictions, actuals, perc_completion_list, pl_exp_list, sigma_list,
+                                                                                                       jtx_list, num_samples_list, weight_list, gnn_only_predictions):
+                        writer.writerow([seed, pred, act, perc, plexp, sigma, jtx, numsamples, weight, gnn_predictions])
 
         mean_rmse = statistics.mean(rmse_vals)
         std_rmse = statistics.stdev(rmse_vals)

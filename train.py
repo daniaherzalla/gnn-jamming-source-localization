@@ -37,13 +37,14 @@ def initialize_model(device: torch.device, params: dict, steps_per_epoch=None, d
         criterion (torch.nn.Module): Loss criterion.
     """
     logging.info("Initializing model...")
-    in_channels = 23
+    in_channels = 22
 
     print('in_channels: ', in_channels)
     model = GNN(in_channels=in_channels, dropout_rate=params['dropout_rate'], num_heads=params['num_heads'], model_type=params['model'], hidden_channels=params['hidden_channels'],
                 out_channels=params['out_channels'], num_layers=params['num_layers'], deg=deg_histogram).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
     #optimizer = optim.SGD(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'], momentum=0.9)
+    print("steps_per_epoch: ", steps_per_epoch)
     scheduler = OneCycleLR(optimizer, max_lr=params['learning_rate'], epochs=params['max_epochs'], steps_per_epoch=steps_per_epoch, pct_start=0.2, anneal_strategy='linear') # 10 epochs warmup (sgd momentum 0.9) #(10/params['max_epochs'])
     criterion = torch.nn.MSELoss()
     return model, optimizer, scheduler, criterion
@@ -78,8 +79,27 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
 
         data = data.to(device)
         optimizer.zero_grad()
-        output = model(data)
-        loss = criterion(output, data.y)
+        # output = model(data)
+        # loss = criterion(output, data.y)
+
+        # Forward pass
+        gnn_prediction, final_prediction, weight = model(data)
+
+        # Compute loss for each output
+        loss_gnn = criterion(gnn_prediction, data.y)
+        loss_final = criterion(final_prediction, data.y)
+
+        # Combine losses
+        # loss = (loss_gnn + loss_final) / 2
+
+        # Regularization term
+        lambda_reg = 1e-5
+        regularization = lambda_reg * torch.sum((1 - weight) ** 2)
+
+        # Combine losses with regularization included in the average
+        loss = ((loss_gnn + loss_final) / 2) + regularization
+
+        # Backward pass and optimization
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -99,17 +119,17 @@ def train(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, opt
         # Dictionary to store individual graph details
         graph_details = {}
 
-        # Calculate RMSE for each graph in the batch
-        for idx in range(data.num_graphs):
-            prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
-            actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
-
-            mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
-            rmse = math.sqrt(mse)
-            perc_completion = data.perc_completion[idx].item()
-
-            # Storing the metrics in the dictionary with graph id as key
-            graph_details[idx] = {'rmse': rmse, 'perc_completion': perc_completion}
+        # # Calculate RMSE for each graph in the batch
+        # for idx in range(data.num_graphs):
+        #     prediction = convert_output_eval(output[idx], data[idx], 'prediction', device)
+        #     actual = convert_output_eval(data.y[idx], data[idx], 'target', device)
+        #
+        #     mse = mean_squared_error(actual.cpu().numpy(), prediction.cpu().numpy())
+        #     rmse = math.sqrt(mse)
+        #     perc_completion = data.perc_completion[idx].item()
+        #
+        #     # Storing the metrics in the dictionary with graph id as key
+        #     graph_details[idx] = {'rmse': rmse, 'perc_completion': perc_completion}
 
         # Append to the detailed metrics dict
         detailed_metrics.append(graph_details)
@@ -132,7 +152,8 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
         float: Average validation loss.
     """
     model.eval()
-    predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list = [], [], [], [], [], [], []
+    predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list = [], [], [], [], [], [], [], []
+    gnn_only_predictions = []
     loss_meter = AverageMeter()
     progress_bar = tqdm(validate_loader, desc="Validating", leave=True)
 
@@ -142,23 +163,30 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
     with torch.no_grad():
         for data in progress_bar:
             data = data.to(device)
-            output = model(data)
+            # output = model(data)
+
+            # Forward pass: Only use final_prediction (output) for validation
+            gnn_pred, output, weight = model(data)
 
             if test_loader:
                 predicted_coords = convert_output_eval(output, data, 'prediction', device)
                 predictions.append(predicted_coords.cpu().numpy())
 
-                if not params['inference']:
-                    actual_coords = convert_output_eval(data.y, data, 'target', device)
-                    actuals.append(actual_coords.cpu().numpy())
+                gnn_only_predicted_coords = convert_output_eval(gnn_pred, data, 'prediction', device)
+                gnn_only_predictions.append(gnn_only_predicted_coords.cpu().numpy())
 
-                    loss = criterion(predicted_coords, actual_coords)
+                # if not params['inference']:
+                actual_coords = convert_output_eval(data.y, data, 'target', device)
+                actuals.append(actual_coords.cpu().numpy())
 
-                    perc_completion_list.append(data.perc_completion.cpu().numpy())
-                    pl_exp_list.append(data.pl_exp.cpu().numpy())
-                    sigma_list.append(data.sigma.cpu().numpy())
-                    jtx_list.append(data.jtx.cpu().numpy())
-                    num_samples_list.append(data.num_samples.cpu().numpy())
+                loss = criterion(predicted_coords, actual_coords)
+
+                perc_completion_list.append(data.perc_completion.cpu().numpy())
+                pl_exp_list.append(data.pl_exp.cpu().numpy())
+                sigma_list.append(data.sigma.cpu().numpy())
+                jtx_list.append(data.jtx.cpu().numpy())
+                num_samples_list.append(data.num_samples.cpu().numpy())
+                weight_list.append(weight.cpu().numpy())
             else:
                 loss = criterion(output, data.y)
 
@@ -192,35 +220,45 @@ def validate(model: torch.nn.Module, validate_loader: torch.utils.data.DataLoade
                 progress_bar.set_postfix({"Validation Loss (MSE)": loss_meter.avg})
 
     if test_loader:
-        if params['inference']:
-            return predictions
-        else:
-            # Flatten predictions and actuals if they are nested lists
-            predictions = np.concatenate(predictions)
-            actuals = np.concatenate(actuals)
-            perc_completion_list = np.concatenate(perc_completion_list)
-            pl_exp_list = np.concatenate(pl_exp_list)
-            sigma_list = np.concatenate(sigma_list)
-            jtx_list = np.concatenate(jtx_list)
-            num_samples_list = np.concatenate(num_samples_list)
+        # if params['inference']:
+        #     print("validate func predictions: ", predictions)
+        #     # predictions, actuals, err_metrics, perc_completion_list
+        #
+        #     predictions = np.concatenate(predictions)
+        #     actuals = np.concatenate(actuals)
+        #     perc_completion_list = np.concatenate(perc_completion_list)
+        #
+        #     return predictions, actuals, None, perc_completion_list
+        # else:
+        # Flatten predictions and actuals if they are nested lists
+        gnn_only_predictions = np.concatenate(gnn_only_predictions)
 
-            mae = mean_absolute_error(actuals, predictions)
-            mse = mean_squared_error(actuals, predictions)
-            rmse = math.sqrt(mse)
-            print("MAE: ", mae)
-            print("MSE: ", mse)
-            print("loss_meter.avg: ", loss_meter.avg)
-            print("RMSE: ", rmse)
+        predictions = np.concatenate(predictions)
+        actuals = np.concatenate(actuals)
+        perc_completion_list = np.concatenate(perc_completion_list)
+        pl_exp_list = np.concatenate(pl_exp_list)
+        sigma_list = np.concatenate(sigma_list)
+        jtx_list = np.concatenate(jtx_list)
+        num_samples_list = np.concatenate(num_samples_list)
+        weight_list = np.concatenate(weight_list)
 
-            err_metrics = {
-                'actuals': actuals,
-                'predictions': predictions,
-                'perc_completion': perc_completion_list,
-                'mae': mae,
-                'mse': mse,
-                'rmse': rmse
-            }
-            return predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list
+        mae = mean_absolute_error(actuals, predictions)
+        mse = mean_squared_error(actuals, predictions)
+        rmse = math.sqrt(mse)
+        print("MAE: ", mae)
+        print("MSE: ", mse)
+        print("loss_meter.avg: ", loss_meter.avg)
+        print("RMSE: ", rmse)
+
+        err_metrics = {
+            'actuals': actuals,
+            'predictions': predictions,
+            'perc_completion': perc_completion_list,
+            'mae': mae,
+            'mse': mse,
+            'rmse': rmse
+        }
+        return predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list, gnn_only_predictions
 
     return loss_meter.avg, detailed_metrics
 

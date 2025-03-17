@@ -670,11 +670,11 @@ class TemporalGraphDataset(Dataset):
     def expand_samples(self):
         expanded_samples = []
         for _, row in self.data.iterrows():
-            if params['inference']:
-                instance = Instance(row)
-                instance.perc_completion = 1
-                expanded_samples.append(instance)
-                return expanded_samples
+            # if params['inference']:
+            #     instance = Instance(row)
+            #     instance.perc_completion = 1
+            #     expanded_samples.append(instance)
+            #     return expanded_samples
             if params['dynamic']:
                 # lb_end = max(int(row['jammed_at']), min(10, len(row['node_positions'])))
                 lb_end = max(int(row['jammed_at']), min(params['max_nodes'], len(row['node_positions'])))
@@ -694,6 +694,7 @@ class TemporalGraphDataset(Dataset):
                     instance = Instance(row).get_crop(0, i)
                     instance.perc_completion = i/ub_end
                     expanded_samples.append(instance)
+                    print("expanded_samples: ", expanded_samples)
             else:
                 instance = Instance(row)
                 instance.perc_completion = 1
@@ -1287,6 +1288,7 @@ def calculate_noise_statistics(subgraphs, noise_stats_to_compute):
     return noise_stats
 
 def engineer_node_features(subgraph):
+    print("ENGINEERING NODE FEATS")
     if subgraph.x.size(0) == 0:
         raise ValueError("Empty subgraph encountered")
 
@@ -1501,6 +1503,7 @@ def convert_output_eval(output, data_batch, data_type, device):
     # Step 1: Reverse unit sphere normalization
     if params['norm'] == 'unit_sphere':
         max_radius = data_batch['max_radius'].to(device)
+        print("max_radius: ", max_radius)
         if max_radius.ndim == 0:
             max_radius = max_radius.unsqueeze(0)  # Ensure max_radius is at least 1D for broadcasting
 
@@ -1518,21 +1521,17 @@ def convert_output_eval(output, data_batch, data_type, device):
         cos_phi = output[:, 4]
 
         # Calculate theta from sin_theta and cos_theta for clarity in following the formulas
-        # theta = torch.atan2(sin_theta, cos_theta)
-
-        # # Correct conversion for 3D
-        # x = radius * cos_theta * cos_phi  # Note the correction in angle usage
-        # y = radius * sin_theta * cos_phi
-        # z = radius * sin_phi  # cos(theta) is directly used
+        theta = torch.atan2(sin_theta, cos_theta)
 
         # Correct conversion for 3D
-        x = radius * sin_theta * cos_phi  # Note the correction in angle usage
-        y = radius * sin_theta * sin_phi
+        x = radius * torch.sin(theta) * cos_phi  # Note the correction in angle usage
+        y = radius * torch.sin(theta) * sin_phi
         z = radius * cos_theta  # cos(theta) is directly used
-
 
         # Stack x, y, and z coordinates horizontally to form the Cartesian coordinate triplets
         cartesian_coords = torch.stack((x, y, z), dim=1)
+        print("converted cartesian_coords: ", cartesian_coords)
+
     else:
         # Calculate 2D Cartesian coordinates
         x = radius * cos_theta
@@ -2286,16 +2285,17 @@ def load_data(params, data_class, experiments_path=None):
         The train, validation, and test datasets.
     """
     if params['inference']:
-        # Load the test data only for inference mode
-        test_set_name = [data_class]
-        for test_data in test_set_name:
-            print(f"dataset: {test_data}")
-            file_path = os.path.join(experiments_path, f'{test_data}.pkl')
-            with open(file_path, 'rb') as f:
-                test_df = pickle.load(f)
+        # Load preprocessed datasets for inference
+        train_df = pd.read_pickle(os.path.join(experiments_path, f"{data_class}_train_dataset.pkl"))
+        val_df = pd.read_pickle(os.path.join(experiments_path, f"{data_class}_val_dataset.pkl"))
+        test_df = pd.read_pickle(os.path.join(experiments_path, f"{data_class}_test_dataset.pkl"))
 
-            print(test_df.columns)
-            return None, None, test_df
+        # Convert to polar coordinates if necessary
+        convert_to_polar(train_df)
+        convert_to_polar(val_df)
+        convert_to_polar(test_df)
+
+        return train_df, val_df, test_df
     else:
         datasets = [params['dataset_path']]
         for dataset in datasets:
@@ -2349,6 +2349,15 @@ def load_data(params, data_class, experiments_path=None):
             train_df = split_datasets_dict[data_class]['train']
             val_df = split_datasets_dict[data_class]['validation']
             test_df = split_datasets_dict[data_class]['test']
+
+            # Combine the training and validation datasets
+            combined_df = pd.concat([train_df, val_df])
+
+            # Flatten the list of lists and find the maximum noise value
+            global global_max_noise_value
+            global_max_noise_value = combined_df['node_noise'].explode().max()
+            print("Max noise value observed in train and validation datasets:", global_max_noise_value)
+            # quit()
 
             # Process and save the combined data
             save_datasets(train_df, val_df, test_df, experiments_path, data_class)
@@ -2420,37 +2429,33 @@ def create_data_loader(params, train_data, val_data, test_data, experiment_path)
     """
     deg_histogram = None
 
-    if params['inference']:
-        logging.info('Computing testing data')
-        test_dataset = TemporalGraphDataset(test_data, test=True, discretization_coeff=params['test_discrite_coeff'])
-        test_loader = DataLoader(test_dataset, batch_size=params['test_batch_size'], shuffle=False, drop_last=False, num_workers=0)
+    # Generate a unique identifier for the current params
+    params_hash = get_params_hash(params)
+    cache_path = os.path.join(experiment_path, f"data_loader_{params_hash}.pkl")
+    os.makedirs(experiment_path, exist_ok=True)
 
-        return None, None, test_loader
+    if os.path.exists(cache_path):
+        # Load cached data loaders
+        with open(cache_path, 'rb') as f:
+            train_loader, val_loader, test_loader = pickle.load(f)
+        logging.info("Loaded cached data loaders")
     else:
-        # # Generate a unique identifier for the current params
-        # params_hash = get_params_hash(params)
-        # cache_path = os.path.join(experiment_path, f"data_loader_{params_hash}.pkl")
-        # os.makedirs(experiment_path, exist_ok=True)
-        #
-        # if os.path.exists(cache_path):
-        #     # Load cached data loaders
-        #     with open(cache_path, 'rb') as f:
-        #         train_loader, val_loader, test_loader = pickle.load(f)
-        #     logging.info("Loaded cached data loaders")
-        # else:
         # Create data loaders and save them if cache doesn't exist
         logging.info("Creating data loaders")
         train_loader, val_loader, test_loader = generate_data_loaders(params, train_data, val_data, test_data)
 
-            # # Save data loaders to cache
-            # with open(cache_path, 'wb') as f:
-            #     pickle.dump((train_loader, val_loader, test_loader), f)
-            # logging.info("Saved data loaders")
+        # Save data loaders to cache
+        with open(cache_path, 'wb') as f:
+            pickle.dump((train_loader, val_loader, test_loader), f)
+        logging.info("Saved data loaders")
 
-        if params['model'] == 'PNA':
-            deg_histogram = compute_degree_histogram(train_loader)
+    if params['model'] == 'PNA':
+        deg_histogram = compute_degree_histogram(train_loader)
 
-        return train_loader, val_loader, test_loader, deg_histogram
+    if params['inference']:
+        return None, None, test_loader, None
+
+    return train_loader, val_loader, test_loader, deg_histogram
 
 
 def generate_data_loaders(params, train_data, val_data, test_data):
@@ -3103,8 +3108,26 @@ def create_torch_geo_data(instance: Instance) -> Data:
     instance.node_positions_cart = np.vstack([instance.node_positions_cart, centroid_cartesian])
     instance.node_positions = np.vstack([instance.node_positions, centroid_spherical])
 
-    weighted_noise = weighted_centroid_localization(instance.node_noise, instance.node_noise)
-    instance.node_noise = np.append(instance.node_noise, weighted_noise)  # Append high noise value for the centroid node
+    # Set noise for WCL node
+    if params['sn_noise'] == "weighted":
+        print("weighted")
+        weighted_noise = weighted_centroid_localization(instance.node_noise, instance.node_noise)
+        instance.node_noise = np.append(instance.node_noise, weighted_noise)  # Append high noise value for the centroid node
+
+    elif params['sn_noise'] == "max_data":
+        print("max_data")
+        global global_max_noise_value
+
+        # Check if the current instance's maximum noise is greater than the global maximum
+        current_instance_max = instance.node_noise.max()  # Get max noise of the current instance
+        if current_instance_max > global_max_noise_value:
+            print("INSTANCE NOISE GREATER THAN GLOBAL MAX: ", current_instance_max)
+            global_max_noise_value = current_instance_max  # Update the global max noise value
+
+        # Append the global max noise value to the instance's noise array
+        instance.node_noise = np.append(instance.node_noise, global_max_noise_value)
+    else:
+        raise ValueError
 
     # Preprocess instance data
     if params['norm'] == 'minmax':
@@ -3113,8 +3136,6 @@ def create_torch_geo_data(instance: Instance) -> Data:
         apply_min_max_normalization_instance_noise(instance)
         apply_unit_sphere_normalization(instance)
 
-    print(instance.node_positions[-1])
-    quit()
     #
     #
     # weighted_noise = weighted_centroid_localization(instance.node_noise, instance.node_noise)
@@ -3231,15 +3252,40 @@ def create_torch_geo_data(instance: Instance) -> Data:
                     edge_index.extend([[i, indices[i, j]], [indices[i, j], i]])
                     edge_weight.extend([gaussian_weight, gaussian_weight])
 
-            # Handling the last node separately
-            last_node_index = num_samples - 1
-            # Add an edge between the last node and every other node
-            for i in range(num_samples):
-                if i != last_node_index:
-                    distance = np.linalg.norm(positions[last_node_index] - positions[i])  # Calculate the Euclidean distance
-                    gaussian_weight = np.exp(-alpha * distance)
-                    edge_index.extend([[last_node_index, i], [i, last_node_index]])
-                    edge_weight.extend([gaussian_weight, gaussian_weight])
+            # Handling the last node separately (undirected)
+            if params['sn_edges'] == "undirected":
+                print("undirected")
+                last_node_index = num_samples - 1
+                # Add an edge between the last node and every other node
+                for i in range(num_samples):
+                    if i != last_node_index:
+                        distance = np.linalg.norm(positions[last_node_index] - positions[i])  # Calculate the Euclidean distance
+                        gaussian_weight = np.exp(-alpha * distance)
+                        edge_index.extend([[last_node_index, i], [i, last_node_index]])
+                        edge_weight.extend([gaussian_weight, gaussian_weight])
+
+            # Handling the last node separately (directed TOWARDS last node)
+            elif params['sn_edges'] == "directed":
+                print("directed")
+                last_node_index = num_samples - 1
+                # Add an edge from every other node to the last node
+                for i in range(num_samples):
+                    if i != last_node_index:
+                        distance = np.linalg.norm(positions[last_node_index] - positions[i])  # Calculate the Euclidean distance
+                        # gaussian_weight = np.exp(-alpha * distance)
+                        gaussian_weight = (np.exp(-distance) * (np.e - np.exp(distance))) / (np.e - 1)
+                        edge_index.append([i, last_node_index])
+                        edge_weight.append(gaussian_weight)
+
+            # # Handling the last node separately (directed AWAY FROM last node)
+            # last_node_index = num_samples - 1
+            # # Add an edge from the last node to every other node
+            # for i in range(num_samples):
+            #     if i != last_node_index:
+            #         distance = np.linalg.norm(positions[i] - positions[last_node_index])  # Calculate the Euclidean distance
+            #         gaussian_weight = np.exp(-alpha * distance)
+            #         edge_index.append([last_node_index, i])
+            #         edge_weight.append(gaussian_weight)
 
             # Add self-loops for all nodes
             for i in range(num_samples):
@@ -3253,46 +3299,22 @@ def create_torch_geo_data(instance: Instance) -> Data:
         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
         edge_weight = torch.tensor(edge_weight, dtype=torch.float)
 
-    # # Assuming instance.jammer_position is a list or array that can be reshaped
-    # jammer_positions = np.array(instance.jammer_position).reshape(-1, 3)
-    #
-    # # Convert jammer_positions to a tensor
-    # y = torch.tensor(jammer_positions, dtype=torch.float)
-
-    # Prepare target variables
-    # jammer_positions = np.array(instance.jammer_position).reshape(-1, 2)
-    # print('jammer_positions: ', jammer_positions)
-    # y = torch.tensor(jammer_positions, dtype=torch.float)
-
-    # Assume instance.jammer_placement_bin is accessible
-    # Assuming instance.jammer_placement_bin is a scalar representing class index
-    # jammer_placement_bin = torch.tensor([instance.jammer_placement_bin], dtype=torch.long)
-    # print('jammer_placement_bin: ', jammer_placement_bin)
-
-    # Assuming instance.jammer_placement_bin is already an array with the same length as jammer_positions
-    # jammer_dir = torch.tensor(instance.jammer_direction_labels, dtype=torch.long)
-
-    # Ensure jammer_placement_bin is a 2D tensor with the second dimension being 1 to match y for concatenation
-    # jammer_direction_tensor = jammer_dir.view(-1, 1)
-
-    # Concatenate position and placement classification into a single tensor
-    # y_tensor = torch.cat([y, jammer_direction_tensor], dim=1)
-
-    # Create the Data object
-    # data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y_tensor)
-
-    if not params['inference']:
-        jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])  # Assuming this reshaping is valid based on your data structure
-        y = torch.tensor(jammer_positions, dtype=torch.float)
-    else:
-        y = None
+    # if not params['inference']:
+    jammer_positions = np.array(instance.jammer_position).reshape(-1, params['out_features'])  # Assuming this reshaping is valid based on your data structure
+    y = torch.tensor(jammer_positions, dtype=torch.float)
+    # else:
+    #     y = None
 
     # Plot
     # plot_graph(positions=positions, edge_index=edge_index, node_features=node_features_tensor, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
     # plot_graph(positions=instance.node_positions, node_features=node_features_tensor,  edge_index=edge_index, edge_weights=edge_weight, jammer_positions=jammer_positions, show_weights=True, perc_completion=instance.perc_completion, id=instance.id, jammer_power=instance.jammer_power)
+    # plot_graph(positions=instance.node_positions, node_features=node_features_tensor,  edge_index=edge_index, edge_weights=edge_weight, show_weights=True, perc_completion=instance.perc_completion)
 
     # Create the Data object
-    data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y, wcl_pred=instance.node_positions[-1])
+    # Convert WCL centroid prediction to tensor with appropriate shape
+    wcl_pred_tensor = torch.tensor(instance.node_positions[-1], dtype=torch.float32).unsqueeze(0)
+
+    data = Data(x=node_features_tensor, edge_index=edge_index, edge_weight=edge_weight, y=y, wcl_pred=wcl_pred_tensor)
 
     # Convert geometric information to tensors
     # data.id = instance.id
@@ -3303,12 +3325,12 @@ def create_torch_geo_data(instance: Instance) -> Data:
         data.max_radius = torch.tensor(instance.max_radius, dtype=torch.float)
 
     # Store the perc_completion as part of the Data object
-    if not params['inference']:
-        data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
-        data.pl_exp = torch.tensor(instance.pl_exp, dtype=torch.float)
-        data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
-        data.jtx = torch.tensor(instance.jammer_power, dtype=torch.float)
-        data.num_samples = torch.tensor(instance.num_samples, dtype=torch.float)
+    # if not params['inference']:
+    data.perc_completion = torch.tensor(instance.perc_completion, dtype=torch.float)
+    data.pl_exp = torch.tensor(instance.pl_exp, dtype=torch.float)
+    data.sigma = torch.tensor(instance.sigma, dtype=torch.float)
+    data.jtx = torch.tensor(instance.jammer_power, dtype=torch.float)
+    data.num_samples = torch.tensor(instance.num_samples, dtype=torch.float)
 
     # Apply pos encoding transform
     if params['model'] == 'GPS':
