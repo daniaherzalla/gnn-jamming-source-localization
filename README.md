@@ -15,16 +15,16 @@ The graph representation is extended by introducing a supernode that encodes a s
 ## Confidence-Guided Adaptive Position Estimation
 
 The final jammer position is estimated as a weighted combination of the GNN-based prediction and a domain-informed Weighted Centroid Localization (WCL) prior. This adaptive mechanism ensures robustness across varying sampling densities and spatial distributions. 
-The confidence weights $ \alpha $ are computed as:
+The confidence weights $\alpha$ are computed as:
 
 $$
-\alpha = \sigma(W_\alpha h_{\text{super}} + b_\alpha),
+\alpha = \sigma(W_\alpha h_{\text{super}} + b_\alpha)
 $$
 
 where $ \alpha \in \mathbb{R}^5 $ is a five-dimensional confidence vector. The final predicted jammer position is:
 
 $$
-\hat{x}_{\text{final}} = \alpha \odot \hat{x}_{\text{GNN}} + (1 - \alpha) \odot \hat{x}_{\text{WCL}},
+\hat{x}_{\text{final}} = \alpha \odot \hat{x}_{\text{GNN}} + (1 - \alpha) \odot \hat{x}_{\text{WCL}}
 $$
 
 
@@ -33,22 +33,22 @@ $$
 The training process minimizes a joint loss function that balances the GNN-based estimate and the WCL prior. The adaptive estimation loss is defined as:
 
 $$
-\mathcal{L}_{\text{Adapt}} = \frac{1}{|B|} \sum_{m \in B} \left\| \hat{x}^{(m)}_j - \left( \alpha^{(m)} \odot \hat{x}^{(m)}_{\text{GNN}} + (1 - \alpha^{(m)}) \odot \hat{x}^{(m)}_{\text{WCL}} \right) \right\|^2.
+\mathcal{L}_{\text{Adapt}} = \frac{1}{|B|} \sum_{m \in B} \left\| \hat{x}^{(m)}_j - \left( \alpha^{(m)} \odot \hat{x}^{(m)}_{\text{GNN}} + (1 - \alpha^{(m)}) \odot \hat{x}^{(m)}_{\text{WCL}} \right) \right\|^2
 $$
 
 where $ \hat{x}^{(m)}_j $ is the ground truth jammer position. To ensure the GNN independently learns to predict the jammer's position, an additional loss term is introduced:
 
 $$
-\mathcal{L}_{\text{GNN}} = \frac{1}{|B|} \sum_{m \in B} \left\| \hat{x}^{(m)}_j - \hat{x}^{(m)}_{\text{GNN}} \right\|^2.
+\mathcal{L}_{\text{GNN}} = \frac{1}{|B|} \sum_{m \in B} \left\| \hat{x}^{(m)}_j - \hat{x}^{(m)}_{\text{GNN}} \right\|^2
 $$
 
 The joint loss function is:
 
 $$
-\mathcal{L}_{\text{CAGE}} = \frac{1}{2} (\mathcal{L}_{\text{GNN}} + \mathcal{L}_{\text{Adapt}}) + \lambda \sum_{m \in B} (1 - \alpha^{(m)})^2,
+\mathcal{L}_{\text{CAGE}} = \frac{1}{2} (\mathcal{L}_{\text{GNN}} + \mathcal{L}_{\text{Adapt}}) + \lambda \sum_{m \in B} (1 - \alpha^{(m)})^2
 $$
 
-where $ \lambda $ is a hyperparameter controlling the penalty for over-reliance on the WCL prior.
+where $\lambda$ is a hyperparameter controlling the penalty for over-reliance on the WCL prior.
 
 
 ## Project Structure
