@@ -1,15 +1,12 @@
-import csv
-import os
 import pickle
 import torch
-import statistics
 import logging
-from config import params
+import argparse
+from global_config import global_config
 from data_processing import load_data, create_data_loader
 from train import initialize_model, train, validate
-from utils import set_seeds_and_reproducibility, save_epochs
+from utils import set_seeds_and_reproducibility, save_rmse_mae_stats, save_model_predictions
 from custom_logging import setup_logging
-import numpy as np
 
 # Setup custom logging
 setup_logging()
@@ -17,141 +14,153 @@ setup_logging()
 # Clear CUDA memory cache
 torch.cuda.empty_cache()
 
+def parse_args():
+    """
+    Parses command-line arguments related to the configuration of the model, data preprocessing,
+    and experiment settings using argparse.
+
+    Returns:
+        argparse.Namespace: An object containing attributes for each command line argument collected.
+        This object allows easy access to the configuration parameters throughout the code.
+    """
+    parser = argparse.ArgumentParser(description="Training and evaluation.")
+
+    # Model parameters
+    parser.add_argument('--model', type=str, default='GAT', help='Model type')
+    parser.add_argument('--learning_rate', type=float, default=0.0006703373871168542, help='Learning rate')
+    parser.add_argument('--weight_decay', type=float, default=0.00001, help='Weight decay')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
+    parser.add_argument('--test_batch_size', type=int, default=8, help='Test batch size')
+    parser.add_argument('--dropout_rate', type=float, default=0.0, help='Dropout rate')
+    parser.add_argument('--num_heads', type=int, default=4, help='Number of attention heads')
+    parser.add_argument('--num_layers', type=int, default=8, help='Number of layers')
+    parser.add_argument('--hidden_channels', type=int, default=128, help='Hidden channels')
+    parser.add_argument('--out_channels', type=int, default=128, help='Output channels')
+    parser.add_argument('--in_channels', type=int, default=22, help='Input channels')
+    parser.add_argument('--out_features', type=int, default=5, help='Output features')
+    parser.add_argument('--num_epochs', type=int, default=300, help='Number of epochs')
+
+    # Data Preprocessing
+    parser.add_argument('--three_dim', type=bool, default=True, help='3D data flag')
+    parser.add_argument('--required_features', nargs='+', default=['node_positions', 'node_noise'], help='Required features')
+    parser.add_argument('--additional_features', nargs='+', default=['weighted_centroid_radius', 'weighted_centroid_sin_theta', 'weighted_centroid_cos_theta', 'weighted_centroid_sin_az', 'weighted_centroid_cos_az', 'dist_to_wcl', 'median_noise', 'max_noise', 'noise_differential', 'vector_x', 'vector_y', 'vector_z', 'rate_of_change_signal_strength'], help='Engineered node features')
+    parser.add_argument('--num_neighbors', type=int, default=3, help='Number of graph KNN')
+    parser.add_argument('--downsample', type=bool, default=True, help='Downsample flag')
+    parser.add_argument('--max_nodes', type=int, default=1000, help='Maximum number of nodes to downsample to.')
+    parser.add_argument('--val_discrite_coeff', type=float, default=0.1, help='Validation discretization coefficient')
+    parser.add_argument('--test_discrite_coeff', type=float, default=0.1, help='Test discretization coefficient')
+    parser.add_argument('--aug', nargs='+', default=['drop_node'], help='Graph data augmentation methods')
+
+    # Experiments
+    parser.add_argument('--experiments_folder', type=str, default='experiments/', help='Experiments folder')
+    parser.add_argument('--dataset_path', type=str, default='data/dynamic_data.pkl', help='Dataset path')
+    parser.add_argument('--dynamic', type=bool, default=True, help='Dynamic flag')
+    parser.add_argument('--inference', type=bool, default=False, help='Inference flag')
+    parser.add_argument('--reproduce', type=bool, default=True, help='Reproduce flag')
+    parser.add_argument('--plot_network', type=bool, default=False, help='Plot network flag')
+    parser.add_argument('--num_workers', type=int, default=16, help='Number of workers')
+
+    return parser.parse_args()
+
 
 def main():
     """
-    Main function to run the training and evaluation.
-    """
-    seeds = [1,2,3]
+    Executes the training, evaluation, and inference pipeline for the GNN model.
 
-    if params['train_per_class']:
-        if params['dynamic']:
-            dataset_classes = ['dynamic'] #['dynamic_linear_path', 'dynamic_controlled_path']
-        else:
-            dataset_classes = ['circle_jammer_outside', 'triangle_jammer_outside', 'rectangle_jammer_outside',
-                             'random_jammer_outside', 'circle', 'triangle', 'rectangle', 'random'] #['circle_jammer_outside',
+    This function orchestrates the process based on the configuration settings defined in `global_config.args`.
+    It supports both dynamic and static data class scenarios.
+
+    Workflow:
+    - Sets seeds for reproducibility.
+    - Loads or initializes datasets and corresponding DataLoader objects.
+    - Initializes model.
+    - Executes training and validation cycles, saving the best model based on validation loss.
+    - In inference mode, loads a trained model and performs evaluations directly.
+    - Aggregates and logs RMSE and MAE statistics for model performance analysis.
+    """
+    seeds = [1]
+
+    args = parse_args()
+
+    # Set the parsed arguments to the global configuration
+    global_config.args = args
+
+    if global_config.args.dynamic:
+        dataset_classes = ['dynamic']
     else:
-        dataset_classes = ["combined"]
+        dataset_classes = ['circle', 'triangle', 'rectangle', 'random',
+                           'circle_jammer_outside', 'triangle_jammer_outside',
+                           'rectangle_jammer_outside', 'random_jammer_outside']
 
     for data_class in dataset_classes:
         rmse_vals = []
         mae_vals = []
 
-        if params['train_per_class']:
-            train_set_name = data_class + "_train_dataset.pkl"
-            val_set_name = data_class + "_val_dataset.pkl"
-            test_set_name = data_class + "_test_dataset.pkl"
-        else:
-            train_set_name = "train_dataset.pkl"
-            val_set_name = "val_dataset.pkl"
-            test_set_name = "test_dataset.pkl"
-
-        print("train_set_name: ", train_set_name)
-        print("val_set_name: ", val_set_name)
-        print("test_set_name: ", test_set_name)
-
-        print("max_nodes: ", params['max_nodes'])
-        print("ds_method: ", params['ds_method'])
-
+        logging.info("Executing GNN jamming source localization script")
         for trial_num, seed in enumerate(seeds):
-            print("\nseed: ", seed)
+            # Set seed for data saving
             set_seeds_and_reproducibility(100)
-
-            # Experiment params
-            combination = params['coords'] + '_' + params['edges'] + str(params['num_neighbors']) + '_' + params['norm'] + '_' + str(params['max_nodes']) + params['ds_method']
-
-            if params['study'] == 'coord_system':
-                experiment_path = 'experiments_datasets/cartesian_vs_polar/' + params['experiments_folder']
-            elif params['study'] == 'knn_edges':
-                experiment_path = 'experiments_datasets/knn_edges/' + params['experiments_folder']
-            elif params['study'] == 'feat_engineering':
-                experiment_path = 'experiments_datasets/engineered_feats/' + params['experiments_folder']
-            elif params['study'] == 'dataset':
-                experiment_path = 'experiments_datasets/datasets/' + params['experiments_folder']
-            elif params['study'] == 'downsampling':
-                experiment_path = 'experiments_datasets/downsampling/' + params['experiments_folder']
-            elif params['study'] == 'pooling':
-                experiment_path = 'experiments_datasets/pooling/' + params['experiments_folder']
-            else:
-                raise "Unknown study type"
-
-            # Set path to save or load model
-            model_path = f"{experiment_path}trained_model_seed{seed}_{params['model']}_{combination}_{data_class}.pth"
 
             # Set device
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            print("device: ", device)
+            logging.debug("Device: ", device)
 
-            model_name = params['model']
+            # Set path to save or load model
+            model_path = f"{global_config.args.experiments_folder}trained_model_seed{seed}_{global_config.args.model}_{data_class}.pth"
 
             # Inference
-            if params['inference']:
-                # for test_set_name in params['test_sets']:
-                #     print(test_set_name)
-                train_dataset, val_dataset, test_dataset = load_data(params, data_class, experiment_path)
-                _, _, test_loader, deg_histogram = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
-                model, optimizer, scheduler, criterion = initialize_model(device, params, len(test_loader), deg_histogram)
+            if global_config.args.inference:
+                model_path = 'experiments/trained_model_seed1_CAGE_polar_knn3_unit_sphere_1000noise_dynamic.pth'
+                train_dataset, val_dataset, test_dataset = load_data(data_class, global_config.args.experiments_folder)
+                _, _, test_loader, deg_histogram = create_data_loader(train_dataset, val_dataset, test_dataset, global_config.args.experiments_folder)
+                model, optimizer, scheduler, criterion = initialize_model(device, len(test_loader), deg_histogram)
 
                 # Load trained model
                 model.load_state_dict(torch.load(model_path))
+
                 # Predict jammer position
-                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list, gnn_only_predictions = validate(model, test_loader, criterion, device, test_loader=True)
+                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list = validate(model, test_loader, criterion, device, test_loader=True)
+                rmse_vals.append(err_metrics['rmse'])
+                mae_vals.append(err_metrics['mae'])  # MAE from err_metrics
+                logging.info(f"Seed {seed}, MAE: {err_metrics['mae']}, RMSE: {err_metrics['rmse']}")
 
-                # Save predictions, actuals, and perc_completion to a CSV file
-                max_nodes = params['max_nodes']
-                ds_method = params['ds_method']
-                file = f'{experiment_path}/predictions_{max_nodes}_{ds_method}_{model_name}_{data_class}_inference.csv'
+                # Save model predictions
+                save_model_predictions(seed, data_class, predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list)
 
-                # Check if the file exists
-                file_exists = os.path.isfile(file)
-                with open(file, 'a', newline='') as f:
-                    writer = csv.writer(f)
-
-                    # If the file doesn't exist, write the header
-                    if not file_exists:
-                        writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion', 'PL', 'Sigma', 'JTx', 'Number Samples', 'Weight', 'GNN Only Prediction'])
-
-                    # Write the prediction, actual, and percentage completion data
-                    for pred, act, perc, plexp, sigma, jtx, numsamples, weight, gnn_predictions in zip(predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list, gnn_only_predictions):
-                        writer.writerow([seed, pred, act, perc, plexp, sigma, jtx, numsamples, weight, gnn_predictions])
+                return predictions
             else:
                 # Load the datasets
-                train_dataset, val_dataset, test_dataset = load_data(params, data_class, experiment_path)
+                train_dataset, val_dataset, test_dataset = load_data(data_class, global_config.args.experiments_folder)
                 set_seeds_and_reproducibility(seed)
 
                 # Create data loaders
-                train_loader, val_loader, test_loader, deg_histogram = create_data_loader(params, train_dataset, val_dataset, test_dataset, experiment_path)
+                train_loader, val_loader, test_loader, deg_histogram = create_data_loader(train_dataset, val_dataset, test_dataset, global_config.args.experiments_folder)
 
                 # Initialize model
-                steps_per_epoch = len(train_loader) # Calculate steps per epoch based on the training data loader  # steps per epoch set based on 10000 samples dataset
-                model, optimizer, scheduler, criterion = initialize_model(device, params, steps_per_epoch, deg_histogram)
+                model, optimizer, scheduler, criterion = initialize_model(device, len(train_loader), deg_histogram)
 
-                best_val_loss = float('inf')
-
+                # Training
                 logging.info("Training and validation loop")
-                epoch_info = []
                 train_details ={}
                 val_details ={}
-                for epoch in range(params['max_epochs']):
-                    train_loss, train_detailed_metrics = train(model, train_loader, optimizer, criterion, device, steps_per_epoch, scheduler)
+                best_val_loss = float('inf')
+                for epoch in range(global_config.args.num_epochs):
+                    train_loss, train_detailed_metrics = train(model, train_loader, optimizer, criterion, device, len(train_loader), scheduler)
                     val_loss, val_detailed_metrics = validate(model, val_loader, criterion, device)
                     train_details[epoch] = train_detailed_metrics
                     val_details[epoch] = val_detailed_metrics
                     logging.info(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
-                    epoch_info.append(f'Epoch: {epoch}, Train Loss: {train_loss:.15f}, Val Loss: {val_loss:.15f}')
 
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         best_model_state = model.state_dict()
 
-                # Save the trained model
+                # Save trained model
                 torch.save(best_model_state, model_path)
 
-                # Save the graph epoch results to a pickle file
-                max_nodes = params['max_nodes']
-                ds_method = params['ds_method']
-                validation_details_path = experiment_path + f'validation_details_{max_nodes}_{ds_method}_seed{seed}.pkl' #_seed{seed}
-                train_details_path = experiment_path + f'train_details_{max_nodes}_{ds_method}_seed{seed}.pkl' #_seed{seed}
+                # Save the train and validation epoch results
+                validation_details_path = global_config.args.experiments_folder + f'validation_details_{global_config.args.model}_{data_class}_seed{seed}.pkl'
+                train_details_path = global_config.args.experiments_folder + f'train_details_{global_config.args.model}_{data_class}_seed{seed}.pkl'
 
                 with open(validation_details_path, 'wb') as f:
                     pickle.dump(val_details, f)
@@ -159,72 +168,18 @@ def main():
                 with open(train_details_path, 'wb') as f:
                     pickle.dump(train_details, f)
 
-                # Save training conf details
-                epoch_data = {
-                    'trial': 'seed_' + str(seed),
-                    'model': params['model'],
-                    'combination': combination,
-                    'learning_rate': params['learning_rate'],
-                    'weight_decay': params['weight_decay'],
-                    'batch_size': params['batch_size'],
-                    'dropout_rate': params['dropout_rate'],
-                    'num_heads': params['num_heads'],
-                    'num_layers': params['num_layers'],
-                    'hidden_channels': params['hidden_channels'],
-                    'out_channels': params['out_channels'],
-                    'train_set': train_set_name,
-                    'test_set': test_set_name,
-                    'required_feats': params['required_features'],
-                    'additional_feats': params['additional_features'],
-                    'max_nodes': params['max_nodes'],
-                    'ds_method': params['ds_method'],
-                    'epochs': epoch_info
-                }
-
                 # Evaluate the model on the test set
                 model.load_state_dict(best_model_state)
-                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list, gnn_only_predictions = validate(model, test_loader, criterion, device, test_loader=True)
-                trial_data = {**epoch_data, **err_metrics}
-                save_epochs(trial_data, experiment_path)
+                predictions, actuals, err_metrics, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list = validate(model, test_loader, criterion, device, test_loader=True)
                 rmse_vals.append(err_metrics['rmse'])
-                mae_vals.append(err_metrics['mae'])  # Collect MAE from err_metrics
+                mae_vals.append(err_metrics['mae'])  # MAE from err_metrics
+                logging.info(f"Seed {seed}, MAE: {err_metrics['mae']}, RMSE: {err_metrics['rmse']}")
 
-                # Save predictions, actuals, and perc_completion to a CSV file
-                file = f'{experiment_path}/predictions_{max_nodes}_{ds_method}_{model_name}_{data_class}.csv'
+                # Save model predictions
+                save_model_predictions(seed, data_class, predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list)
 
-                # Check if the file exists
-                file_exists = os.path.isfile(file)
-                with open(file, 'a', newline='') as f:
-                    writer = csv.writer(f)
-
-                    # If the file doesn't exist, write the header
-                    if not file_exists:
-                        writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion', 'PL', 'Sigma', 'JTx', 'Number Samples', 'Weight', 'GNN Only Prediction'])
-
-                    # Write the prediction, actual, and percentage completion data
-                    for pred, act, perc, plexp, sigma, jtx, numsamples, weight, gnn_predictions in zip(predictions, actuals, perc_completion_list, pl_exp_list, sigma_list,
-                                                                                                       jtx_list, num_samples_list, weight_list, gnn_only_predictions):
-                        writer.writerow([seed, pred, act, perc, plexp, sigma, jtx, numsamples, weight, gnn_predictions])
-
-        mean_rmse = statistics.mean(rmse_vals)
-        std_rmse = statistics.stdev(rmse_vals)
-        print("rmse_vals: ", rmse_vals)
-        print(f"Average RMSE: {round(mean_rmse, 1)}\\sd{{{round(std_rmse, 1)}}}\n")
-
-        # MAE statistics calculation
-        mean_mae = statistics.mean(mae_vals)
-        std_mae = np.std(mae_vals)
-        print("MAE values: ", mae_vals)
-        print(f"Average MAE: {round(mean_mae, 1)}\\sd{{{round(std_mae, 1)}}}")
-
-        # Saving RMSE and MAE statistics
-        csv_file_path = experiment_path + 'metrics_statistics.csv'
-        with open(csv_file_path, mode='a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([params['model'], data_class, f"{round(mean_rmse, 1)}\\sd{{{round(std_rmse, 1)}}}", f"{round(mean_mae, 1)}\\sd{{{round(std_mae, 1)}}}"])
-
-        print(f"Saved RMSE and MAE statistics to {csv_file_path}")
-
+        # Save RMSE and MAE results over trials
+        save_rmse_mae_stats(rmse_vals, mae_vals, data_class)
 
 if __name__ == "__main__":
     main()

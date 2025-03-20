@@ -1,17 +1,26 @@
 import csv
-import json
 import os
-import pickle
 import random
-from typing import Dict
 import numpy as np
+import statistics
 import torch
+import logging
+from global_config import global_config
+from custom_logging import setup_logging
 
-from config import params
-
+# Setup custom logging
+setup_logging()
 
 class AverageMeter:
+    """
+    Class to track average over stream of values for MSE loss during training and testing.
 
+    Attributes:
+        val (float): The latest value added to the meter.
+        avg (float): The current average of all added values.
+        sum (float): The sum of all added values.
+        count (int): The number of entries that have been added.
+    """
     def __init__(self):
         self.val, self.avg, self.sum, self.count = None, None, None, None
         self.reset()
@@ -29,91 +38,78 @@ class AverageMeter:
         self.avg = self.sum / self.count
 
 
-def save_metrics_and_params(metrics: Dict[str, float], param_dict: Dict[str, float], filename: str = 'results/model_metrics_and_params_converted.csv') -> None:
+def save_model_predictions(seed, data_class, predictions, actuals, perc_completion_list, pl_exp_list, sigma_list, jtx_list, num_samples_list, weight_list):
     """
-    Save metrics and parameters to a JSON file.
+    Appends model predictions and associated metadata to a CSV file.
 
     Args:
-        metrics (Dict[str, float]): Dictionary of metrics.
-        param_dict (Dict[str, float]): Dictionary of parameters.
-        filename (str): Filename for the JSON file. Default is 'model_metrics_and_params.json'.
+        seed (int): Random seed used to ensure reproducibility.
+        data_class (str): The class of data used.
+        predictions (list): List of predicted values from the model.
+        actuals (list): List of actual values.
+        perc_completion_list (list): List of percentages indicating the completion of trajectory.
+        pl_exp_list (list): List of path loss exponent values associated with predictions.
+        sigma_list (list): List of sigma values indicating noise level variations.
+        jtx_list (list): List of jammer transmit power values.
+        num_samples_list (list): List of the number of samples considered in each prediction instance.
+        weight_list (list): List of weight values affecting the prediction or evaluation.
+
     """
-    # Remove certain keys from params
-    [param_dict.pop(key, None) for key in ['dataset_path', 'train_path', 'val_path', 'test_path']]
+    # Save predictions, actuals, and perc_completion to a CSV file
+    if global_config.args.inference:
+        file = f'{global_config.args.experiments_folder}predictions_{global_config.args.model}_{data_class}_inference.csv'
+    else:
+        file = f'{global_config.args.experiments_folder}predictions_{global_config.args.model}_{data_class}.csv'
 
-    # Create a dictionary to store both metrics and param_dict
-    result = {**metrics, **param_dict}
-
-    file_exists = os.path.isfile(filename)
-
-    # Open the CSV file in append mode
-    with open(filename, 'a', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=result.keys())
-
-        # Write the header only if the file didn't exist before
-        if not file_exists:
-            writer.writeheader()
-
-        # Write the data
-        writer.writerow(result)
-
-
-# def save_epochs(epoch_data, folder_path) -> None:
-#     filename = "epoch_metrics.csv"
-#     file = folder_path + filename
-#     file_exists = os.path.isfile(file)
-#
-#     # Open the CSV file in append mode
-#     with open(file, 'a', newline='') as csvfile:
-#         writer = csv.DictWriter(csvfile, fieldnames=epoch_data.keys())
-#
-#         # Write the header only if the file didn't exist before
-#         if not file_exists:
-#             writer.writeheader()
-#
-#         # Write the data
-#         writer.writerow(epoch_data)
-
-def save_epochs(epoch_data, folder_path) -> None:
-    filename = "epoch_metrics.csv"
-    file = os.path.join(folder_path, filename)
+    # Check if the file exists
     file_exists = os.path.isfile(file)
+    with open(file, 'a', newline='') as f:
+        writer = csv.writer(f)
 
-    # Ensure all lists in epoch_data are converted to a JSON string
-    for key, value in epoch_data.items():
-        if isinstance(value, list):
-            epoch_data[key] = json.dumps(value)
-
-    # Open the CSV file in append mode
-    with open(file, 'a', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=epoch_data.keys())
-
-        # Write the header only if the file didn't exist before
+        # If the file doesn't exist, write the header
         if not file_exists:
-            writer.writeheader()
+            writer.writerow(['Seed', 'Prediction', 'Actual', 'Percentage Completion', 'PL', 'Sigma', 'JTx', 'Number Samples', 'Weight'])
 
-        # Write the data
-        writer.writerow(epoch_data)
+        # Write the prediction, actual, and percentage completion data
+        for pred, act, perc, plexp, sigma, jtx, numsamples, weight in zip(predictions, actuals, perc_completion_list, pl_exp_list, sigma_list,
+                                                                          jtx_list, num_samples_list, weight_list):
+            writer.writerow([seed, pred, act, perc, plexp, sigma, jtx, numsamples, weight])
+
+    logging.info(f"Saved seed {seed} test set predictions to {file}")
 
 
-def save_study_data(trial_data, file) -> None:
-    file_exists = os.path.isfile(file)
+def save_rmse_mae_stats(rmse_vals, mae_vals, data_class):
+    """
+    Saves Root Mean Squared Error (RMSE) and Mean Absolute Error (MAE) statistics to CSV.
 
-    # Serialize any lists in the trial_data to JSON strings
-    for key, value in trial_data.items():
-        if isinstance(value, list):  # Check if the value is a list
-            trial_data[key] = json.dumps(value)  # Convert list to JSON string
+    Args:
+        rmse_vals (list[float]): List of RMSE values from model evaluations.
+        mae_vals (list[float]): List of MAE values from model evaluations.
+        data_class (str): Category of the data used, influences the row description in the CSV.
 
-    # Open the CSV file in append mode
-    with open(file, 'a', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=trial_data.keys())
+    """
+    if len(rmse_vals) > 1:
+        mean_rmse = statistics.mean(rmse_vals)
+        std_rmse = statistics.stdev(rmse_vals)
+        mean_mae = statistics.mean(mae_vals)
+        std_mae = np.std(mae_vals)
+    else:
+        mean_rmse = statistics.mean(rmse_vals) if rmse_vals else float('nan')
+        std_rmse = float('nan')
+        mean_mae = statistics.mean(mae_vals) if mae_vals else float('nan')
+        std_mae = float('nan')
 
-        # Write the header only if the file didn't exist before
+    # Saving RMSE and MAE statistics
+    csv_file_path = global_config.args.experiments_folder + 'metrics_statistics.csv'
+    file_exists = os.path.exists(csv_file_path)
+
+    with open(csv_file_path, mode='a', newline='') as file:
+        writer = csv.writer(file)
         if not file_exists:
-            writer.writeheader()
+            writer.writerow(['Model', 'Data Class', 'RMSE', 'MAE'])  # Adding column headers
+        writer.writerow([global_config.args.model, data_class, f"{mean_rmse}±{std_rmse}", f"{mean_mae}±{std_mae}"])
 
-        # Write the data
-        writer.writerow(trial_data)
+    logging.info(f"Saved RMSE and MAE metrics to {csv_file_path}")
 
 
 def set_seeds_and_reproducibility(seed_value):
@@ -124,9 +120,8 @@ def set_seeds_and_reproducibility(seed_value):
     reproducible (bool): Whether to configure the environment for reproducibility.
     seed_value (int): The base seed value to use for RNGs.
     """
-    if params['reproduce']:
+    if global_config.args.reproduce:
         # Set seeds with different offsets to avoid correlations
-        print("Set seeds for reproducibility")
         random.seed(seed_value)
         np.random.seed(seed_value + 1)
         torch.manual_seed(seed_value + 2)
@@ -140,6 +135,17 @@ def set_seeds_and_reproducibility(seed_value):
 
 
 def convert_to_serializable(val):
+    """
+    Converts non-serializable objects NumPy data types into serializable native Python types.
+
+    Args:
+        val (any): The value to be converted, which can be of any type including
+                   NumPy types, lists, or dictionaries.
+
+    Returns:
+        any: The converted value in native Python types, maintaining the structure of lists
+             and dictionaries.
+    """
     if isinstance(val, (np.int64, np.int32)):
         return int(val)
     elif isinstance(val, (np.float64, np.float32)):
@@ -151,51 +157,43 @@ def convert_to_serializable(val):
     return val
 
 
-# Function to convert Cartesian to polar coordinates
-# def cartesian_to_polar(coords):
-#     polar_coords = []
-#     if params['3d']:
-#         for x, y, z in coords:
-#             r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
-#             phi = np.arctan2(np.sqrt(x ** 2 + y ** 2), z)  # Polar angle
-#             theta = np.arctan2(y, x)  # Azimuthal angle
-#             polar_coords.append([r, theta, phi])
-#     else:
-#         for x, y in coords:
-#             r = np.sqrt(x ** 2 + y ** 2)
-#             theta = np.arctan2(y, x)  # Azimuthal angle
-#             polar_coords.append([r, theta])
-#     return polar_coords
-
 def cartesian_to_polar(coords):
+    """
+    Converts Cartesian coordinates to polar (2D) or spherical (3D) coordinates based on configuration settings.
+
+    Args:
+        coords (list of tuples): A list of tuples representing Cartesian coordinates. Tuples can be either
+                                 two-dimensional (x, y) or three-dimensional (x, y, z) based on configuration.
+
+    Returns:
+        list of lists: A list containing converted coordinates as [r, theta] or [r, theta, phi] based on dimensionality.
+    """
+    # Check if the input is a batch of coordinate sets (list of list of lists)
+    if all(isinstance(sublist, list) and all(isinstance(item, list) for item in sublist) for sublist in coords):
+        # Flatten the batch if it's a list of list of lists
+        coords = [item for sublist in coords for item in sublist]
+
     polar_coords = []
-    if params['3d']:
+    # print("coords: ", coords)
+    # quit()
+    if global_config.args.three_dim:
+        # if global_config.args.inference:
+        #     # print("coords[0][0]: ", coords[0])
+        #     for x, y, z in coords[0]:
+        #         r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+        #         theta = np.arctan2(np.sqrt(x ** 2 + y ** 2), z)
+        #         phi = np.arctan2(y, x)
+        #         polar_coords.append([r, theta, phi])
+        # else:
         for x, y, z in coords:
             r = np.sqrt(x**2 + y**2 + z**2)
-            theta = np.arctan2(np.sqrt(x**2 + y**2), z)  # Now this is theta (inclination)
-            phi = np.arctan2(y, x)  # This is phi (azimuthal)
+            theta = np.arctan2(np.sqrt(x**2 + y**2), z)
+            phi = np.arctan2(y, x)
             polar_coords.append([r, theta, phi])
     else:
         for x, y in coords:
             r = np.sqrt(x**2 + y**2)
-            theta = np.arctan2(y, x)  # Azimuthal angle in 2D
+            theta = np.arctan2(y, x)
             polar_coords.append([r, theta])
     return polar_coords
 
-
-    # # Convert to numpy array for easier manipulation
-    # polar_coords = np.array(polar_coords)
-    #
-    # # Check range of theta
-    # min_theta = np.min(polar_coords[:, 1])
-    # max_theta = np.max(polar_coords[:, 1])
-    # print(f"Range of theta: [{min_theta}, {max_theta}]")
-    #
-    # # Check range of radius r
-    # min_r = np.min(polar_coords[:, 0])
-    # max_r = np.max(polar_coords[:, 0])
-    # print(f"Range of radius r: [{min_r}, {max_r}]")
-    #
-    # quit()
-
-    # return polar_coords

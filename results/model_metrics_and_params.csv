@@ -1,7 +1,0 @@
-best_val_loss,epochs_trained, description, learning_rate,weight_decay,batch_size,dropout_rate,num_heads,patience,max_epochs
-0.018615549115176818,249,global pooling and dropout in-between layers,0.001,0.05,200,0.6,4,20,250
-0.020831961620283956,249,global pooling and dropout last layer,0.001,0.05,200,0.6,4,20,250
-0.0006507652063404595,125,attention pooling and dropout last layer,0.001,0.05,200,0.6,4,20,250
-0.0009450079607939468,165,attention pooling and and dropout in-between layers,0.001,0.05,200,0.6,4,20,250
-0.0002946208498906344,121,attention pooling and dropout last layer,0.000913,0.03718,64,0.13518,8,20,200
-0.00022808838344644754,177,attention pooling and dropout last layer,0.003441521378421694,0.006732012443425214,32,0.11085002613666868,2,30,200

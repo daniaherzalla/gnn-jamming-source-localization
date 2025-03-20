@@ -1,74 +1,81 @@
-# Graph Attention Network for Jammer Localization in Drone Swarms
+# Graph Neural Networks for Jamming Source Localization
 
-## Overview
-This project utilizes a Graph Attention Network (GAT) to localize jammers in a simulated drone swarm environment. The GAT model processes spatial coordinates, RSSI values, and other features to predict the jammer's position within the swarm. 
+This project addresses the challenge of jamming source localization in wireless networks by leveraging graph-based learning. Traditional geometric optimization techniques struggle under environmental uncertainties and dense interference. Our approach integrates structured node representations and an attention-based GNN to ensure spatial coherence and adaptive signal fusion. The framework is evaluated under complex RF environments, demonstrating superior performance compared to established baselines.
 
-## Model Architecture
+### Key Features
 
-The model is structured around a Graph Attention Network (GAT). This architecture is particularly effective for understanding complex spatial relationships and interaction patterns in scenarios where the data inherently forms a graph, such as in drone swarms under jamming attacks. The architecture is detailed as follows:
+- **Graph-Based Learning**: Reformulates jamming source localization as an inductive graph regression task.
+- **Attention-Based GNN**: Utilizes an attention mechanism to refine neighborhood influence and improve robustness.
+- **Confidence-Guided Estimation**: Dynamically balances GNN predictions with domain-informed priors for adaptive localization.
 
-- **Input Layer**: Each node in the graph represents a data sample from a drone, characterized by features such as spatial coordinates, RSSI values, jamming status, and distance from center of the swarm. These features are first processed through a linear transformation.
 
-- **Graph Attention Layers**: The core of the model consists of multiple GAT layers. Each layer includes:
-  - **Attention Mechanisms**: Attention coefficients are calculated using a shared attention mechanism that considers pairs of nodes. This mechanism allows the model to focus on more informative parts of the graph dynamically.
-  - **Feature Aggregation**: Node features are updated by aggregating neighbor features weighted by the learned attention coefficients. This aggregation is performed independently for each attention head.
-  - **Multi-Head Attention**: The model employs several parallel attention mechanisms (heads) to enhance the stability and capacity of the learning process. The outputs of these heads are concatenated and can be passed through further GAT layers or directed towards the output.
+## Global Context Encoding
+The graph representation is extended by introducing a supernode that encodes a structured global prior based on noise floor levels. This supernode acts as a global aggregator, influencing the computation of confidence weights while remaining decoupled from the GNN regression process.
 
-- **Output Layer**: The final set of features, after passing through multiple attention layers, is processed to predict the jammer's coordinates. This output can be customized to also include predictions for the jammer's type and transmit power in future iterations of the project.
+## Confidence-Guided Adaptive Position Estimation
 
-- **Regularization and Non-linearities**: LeakyReLU is applied between layers and dropout is applied at the last layer to prevent overfitting and introduce non-linearity.
+The final jammer position is estimated as a weighted combination of the GNN-based prediction and a domain-informed Weighted Centroid Localization (WCL) prior. This adaptive mechanism ensures robustness across varying sampling densities and spatial distributions. 
+The confidence weights $ \alpha $ are computed as:
 
-## Repository Structure
+$$
+\alpha = \sigma(W_\alpha h_{\text{super}} + b_\alpha),
+$$
 
-```
-gnn-jamming-source-localization/
-│
-├── data/                       # Folder containing preprocessed data splits for reproducibility
-│   ├── static_swarm_3d.csv     # Static swarm dataset used for model training (1000 scenarios)
-│   ├── train.gzip              # Training dataset (compressed pickle file)
-│   ├── test.gzip               # Test dataset (compressed pickle file)
-│   ├── validation.gzip         # Validation dataset (compressed pickle file)
-│   ├── scaler.pkl              # Scaler object used for normalizing/denormalizing data
-├── results/                    # Folder for storing results and metrics
-│   ├── hyperparam_tuning_results.json  # Results of hyperparameter tuning
-│   ├── model_metrics_and_params.csv    # Metrics and parameters from various model runs
-│   ├── predictions.csv                 # Predicted vs actual jammer positions from test data
-├── main.py                     # Orchestrates the training and evaluation processes, including data loading and model initialization
-├── train.py                    # Contains the training and validation loops, and functions for model evaluation
-├── data_processing.py          # Handles data loading, preprocessing, and transformation into formats suitable for PyTorch Geometric
-├── model.py                    # Defines the Graph Attention Network and other neural network architectures used in the project
-├── hyperparam_tuning.py        # Manages hyperparameter optimization using Hyperopt.
-├── utils.py                    # Provides utility functions 
-├── custom_logging.py           # Configures custom logging formats, enhancing output readability during execution
-└── config.py                   # Stores configuration parameters that dictate the model's runtime behavior
-```
+where $ \alpha \in \mathbb{R}^5 $ is a five-dimensional confidence vector. The final predicted jammer position is:
 
-## Installation
+$$
+\hat{x}_{\text{final}} = \alpha \odot \hat{x}_{\text{GNN}} + (1 - \alpha) \odot \hat{x}_{\text{WCL}},
+$$
 
-To set up this project, you need to install the required Python libraries. Run the following command to install all dependencies:
 
+## Training Strategy
+
+The training process minimizes a joint loss function that balances the GNN-based estimate and the WCL prior. The adaptive estimation loss is defined as:
+
+$$
+\mathcal{L}_{\text{Adapt}} = \frac{1}{|B|} \sum_{m \in B} \left\| \hat{x}^{(m)}_j - \left( \alpha^{(m)} \odot \hat{x}^{(m)}_{\text{GNN}} + (1 - \alpha^{(m)}) \odot \hat{x}^{(m)}_{\text{WCL}} \right) \right\|^2.
+$$
+
+where $ \hat{x}^{(m)}_j $ is the ground truth jammer position. To ensure the GNN independently learns to predict the jammer's position, an additional loss term is introduced:
+
+$$
+\mathcal{L}_{\text{GNN}} = \frac{1}{|B|} \sum_{m \in B} \left\| \hat{x}^{(m)}_j - \hat{x}^{(m)}_{\text{GNN}} \right\|^2.
+$$
+
+The joint loss function is:
+
+$$
+\mathcal{L}_{\text{CAGE}} = \frac{1}{2} (\mathcal{L}_{\text{GNN}} + \mathcal{L}_{\text{Adapt}}) + \lambda \sum_{m \in B} (1 - \alpha^{(m)})^2,
+$$
+
+where $ \lambda $ is a hyperparameter controlling the penalty for over-reliance on the WCL prior.
+
+
+## Project Structure
+
+The project is organized as follows:
+
+- **`custom_logging.py`**: Custom logging setup for tracking and debugging.
+- **`global_config.py`**: Global configuration and argument parsing for the project.
+- **`main.py`**: Entry point for running the project. Supports training, validation, and inference.
+- **`data_processing.py`**: Handles data loading, preprocessing, and DataLoader creation.
+- **`model.py`**: Defines the GNN architecture and related components.
+- **`train.py`**: Implements the training and validation loops.
+- **`utils.py`**: Utility functions for reproducibility, saving results, and other helper tasks.
+- **`data/dynamic_data.pkl`**: Dynamic jammed network containing raw position and noise floor data.
+- **`experiments/`**: Directory to store experiment results, trained models, and logs.
+
+## Running the Project
+
+The project supports various command-line arguments for configuring model training, data preprocessing, and experiments. To view all available options, run:
 ```bash
-pip install -r requirements.txt
+python main.py --help
 ```
 
-Note: Ensure you have Python 3.8 or above installed on your system.
-
-## Usage
-
-For hyperparameter tuning:
-
-```bash
-python hyperparam_tuning.py
-```
-
-To initiate the data processing, model training, and final evaluations, run:
+To run the project with default CAGE parameters, run:
 
 ```bash
 python main.py
 ```
 
-## Configurations
-
-Adjust the `config.py` file to set various parameters such as the number of epochs, batch size, learning rate, and other model-specific settings. 
-The current values are set based on the best hyperparameter results logged in `data/hyperparam_tuning_results.json`.
 
