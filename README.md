@@ -27,17 +27,17 @@ A supernode aggregates global information derived from noise floor levels, provi
 
 Localization combines predictions from the GNN and Weighted Centroid Localization (WCL) based on dynamically computed confidence weights:
 
-$$
+```math
 \hat{x}_{\text{final}} = \alpha \odot \hat{x}_{\text{GNN}} + (1 - \alpha) \odot \hat{x}_{\text{WCL}}
-$$
+```
 
 ### Training Strategy
 
 Training minimizes a combined loss balancing independent GNN predictions and adaptive confidence weighting to ensure generalization and robustness:
 
-$$
+```math
 \mathcal{L}_{\text{CAGE}} = \frac{1}{2} (\mathcal{L}_{\text{GNN}} + \mathcal{L}_{\text{Adapt}}) + \lambda \sum_{m \in B} (1 - \alpha^{(m)})^2
-$$
+```
 
 
 ## Data Availability
