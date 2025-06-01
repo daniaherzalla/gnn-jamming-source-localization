@@ -1,81 +1,85 @@
 # Graph Neural Networks for Jamming Source Localization
 
-This project addresses the challenge of jamming source localization in wireless networks by leveraging graph-based learning. Traditional geometric optimization techniques struggle under environmental uncertainties and dense interference. Our approach integrates structured node representations and an attention-based GNN to ensure spatial coherence and adaptive signal fusion. The framework is evaluated under complex RF environments, demonstrating superior performance compared to established baselines.
+This repository accompanies our paper:
 
-### Key Features
+> **Graph Neural Networks for Jamming Source Localization**
+> Dania Herzalla, Willian T Lunardi, Martin Andreoni
+> *ECML PKDD 2025 - Applied Data Science Track*
+> [Link to the paper (DOI)](doi.here)
 
-- **Graph-Based Learning**: Reformulates jamming source localization as an inductive graph regression task.
-- **Attention-Based GNN**: Utilizes an attention mechanism to refine neighborhood influence and improve robustness.
-- **Confidence-Guided Estimation**: Dynamically balances GNN predictions with domain-informed priors for adaptive localization.
+## Overview
 
+This project provides an implementation of our method for localizing jamming sources in wireless networks using graph neural networks (GNNs). Traditional geometric methods face limitations due to environmental uncertainties and dense interference scenarios. Our proposed framework leverages structured node representations and an attention-based GNN for robust and accurate localization under complex RF environments.
 
-## Global Context Encoding
-The graph representation is extended by introducing a supernode that encodes a structured global prior based on noise floor levels. This supernode acts as a global aggregator, influencing the computation of confidence weights while remaining decoupled from the GNN regression process.
+## Highlights
 
-## Confidence-Guided Adaptive Position Estimation
+* **Graph-Based Learning:** Localization formulated as an inductive graph regression task.
+* **Attention Mechanism:** Enhances neighborhood representation and robustness.
+* **Confidence-Guided Estimation:** Combines GNN predictions with domain-informed priors dynamically.
 
-The final jammer position is estimated as a weighted combination of the GNN-based prediction and a domain-informed Weighted Centroid Localization (WCL) prior. This adaptive mechanism ensures robustness across varying sampling densities and spatial distributions. 
-The confidence weights $\alpha$ are computed as:
+## Methodology
 
-$$
-\alpha = \sigma(W_\alpha h_{\text{super}} + b_\alpha)
-$$
+### Global Context Encoding
 
-where $ \alpha \in \mathbb{R}^5 $ is a five-dimensional confidence vector. The final predicted jammer position is:
+A supernode aggregates global information derived from noise floor levels, providing structured global context to inform confidence-weighted localization decisions.
+
+### Confidence-Guided Adaptive Position Estimation (CAGE)
+
+Localization combines predictions from the GNN and Weighted Centroid Localization (WCL) based on dynamically computed confidence weights:
 
 $$
 \hat{x}_{\text{final}} = \alpha \odot \hat{x}_{\text{GNN}} + (1 - \alpha) \odot \hat{x}_{\text{WCL}}
 $$
 
+### Training Strategy
 
-## Training Strategy
-
-The training process minimizes a joint loss function that balances the GNN-based estimate and the WCL prior. The adaptive estimation loss is defined as:
-
-$$
-\mathcal{L}_{\text{Adapt}} = \frac{1}{|B|} \sum_{m \in B} \left\| \hat{x}^{(m)}_j - \left( \alpha^{(m)} \odot \hat{x}^{(m)}_{\text{GNN}} + (1 - \alpha^{(m)}) \odot \hat{x}^{(m)}_{\text{WCL}} \right) \right\|^2
-$$
-
-where $ \hat{x}^{(m)}_j $ is the ground truth jammer position. To ensure the GNN independently learns to predict the jammer's position, an additional loss term is introduced:
-
-$$
-\mathcal{L}_{\text{GNN}} = \frac{1}{|B|} \sum_{m \in B} \left\| \hat{x}^{(m)}_j - \hat{x}^{(m)}_{\text{GNN}} \right\|^2
-$$
-
-The joint loss function is:
+Training minimizes a combined loss balancing independent GNN predictions and adaptive confidence weighting to ensure generalization and robustness:
 
 $$
 \mathcal{L}_{\text{CAGE}} = \frac{1}{2} (\mathcal{L}_{\text{GNN}} + \mathcal{L}_{\text{Adapt}}) + \lambda \sum_{m \in B} (1 - \alpha^{(m)})^2
 $$
 
-where $\lambda$ is a hyperparameter controlling the penalty for over-reliance on the WCL prior.
 
+## Data Availability
 
-## Project Structure
+The dataset used in this project is publicly available at [Kaggle: Network Jamming Simulation Dataset](https://www.kaggle.com/datasets/daniaherzalla/network-jamming-dataset).
 
-The project is organized as follows:
+## Repository Structure
 
-- **`custom_logging.py`**: Custom logging setup for tracking and debugging.
-- **`global_config.py`**: Global configuration and argument parsing for the project.
-- **`main.py`**: Entry point for running the project. Supports training, validation, and inference.
-- **`data_processing.py`**: Handles data loading, preprocessing, and DataLoader creation.
-- **`model.py`**: Defines the GNN architecture and related components.
-- **`train.py`**: Implements the training and validation loops.
-- **`utils.py`**: Utility functions for reproducibility, saving results, and other helper tasks.
-- **`data/dynamic_data.pkl`**: Dynamic jammed network containing raw position and noise floor data.
-- **`experiments/`**: Directory to store experiment results, trained models, and logs.
+* **`main.py`**: Main entry point for training, validation, and inference.
+* **`model.py`**: Defines the GNN architecture and attention mechanism.
+* **`train.py`**: Training and evaluation logic.
+* **`data_processing.py`**: Data loading and preprocessing utilities.
+* **`utils.py`**: Helper functions for reproducibility and result handling.
+* **`custom_logging.py`**: Logging utilities for debugging.
+* **`data/`**: Directory containing datasets (`dynamic_data.pkl`).
+* **`experiments/`**: Stores experimental logs, checkpoints, and results.
 
-## Running the Project
+## Running the Code
 
-The project supports various command-line arguments for configuring model training, data preprocessing, and experiments. To view all available options, run:
+To see available command-line options for preprocessing and model training:
+
 ```bash
 python main.py --help
 ```
 
-To run the project with default CAGE parameters, run:
+To train the model with default parameters:
 
 ```bash
 python main.py
 ```
 
+## Citation
 
+If you find this project useful, please cite our paper:
+
+```bibtex
+@inproceedings{herzalla2025graph,
+  title={Graph Neural Networks for Jamming Source Localization},
+  author={Herzalla, Dania and Lunardi, Willian T and Andreoni, Martin},
+  booktitle={ECML PKDD 2025 - Applied Data Science Track},
+  year={2025},
+  publisher={},
+  doi={doi.here}
+}
+```
