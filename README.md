@@ -5,7 +5,7 @@ This repository accompanies our paper:
 > **Graph Neural Networks for Jamming Source Localization**
 > Dania Herzalla, Willian T Lunardi, Martin Andreoni
 > *ECML PKDD 2025 - Applied Data Science Track*
-> [Link to the paper (DOI)](doi.here)
+> [Link to the paper (DOI)](https://arxiv.org/abs/2506.03196)
 
 ## Overview
 
@@ -42,7 +42,7 @@ Training minimizes a combined loss balancing independent GNN predictions and ada
 
 ## Data Availability
 
-The dataset used in this project is publicly available at [Kaggle: Network Jamming Simulation Dataset](https://www.kaggle.com/datasets/daniaherzalla/network-jamming-dataset).
+The dataset used in this project is publicly available at [Kaggle: Network Jamming Simulation Dataset](https://www.kaggle.com/datasets/daniaherzalla/network-jamming-simulation-dataset).
 
 ## Repository Structure
 
@@ -77,9 +77,9 @@ If you find this project useful, please cite our paper:
 @inproceedings{herzalla2025graph,
   title={Graph Neural Networks for Jamming Source Localization},
   author={Herzalla, Dania and Lunardi, Willian T and Andreoni, Martin},
-  booktitle={ECML PKDD 2025 - Applied Data Science Track},
+  booktitle = {Machine Learning and Knowledge Discovery in Databases. Applied Data Science Track},
   year={2025},
-  publisher={},
-  doi={doi.here}
+  publisher={Springer Nature Switzerland},
+  doi={10.48550/arXiv.2506.03196}
 }
 ```
