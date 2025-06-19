@@ -4,7 +4,7 @@ This repository accompanies our paper:
 
 > **Graph Neural Networks for Jamming Source Localization**
 > Dania Herzalla, Willian T Lunardi, Martin Andreoni
-> *ECML PKDD 2025 - Applied Data Science Track*
+> *ECML PKDD 2025*
 > [Link to the paper (DOI)](https://arxiv.org/abs/2506.03196)
 
 ## Overview
@@ -77,7 +77,7 @@ If you find this project useful, please cite our paper:
 @inproceedings{herzalla2025graph,
   title={Graph Neural Networks for Jamming Source Localization},
   author={Herzalla, Dania and Lunardi, Willian T and Andreoni, Martin},
-  booktitle = {Machine Learning and Knowledge Discovery in Databases. Applied Data Science Track},
+  booktitle = {Proceedings of the European Conference on Machine Learning and Knowledge Discovery in Databases (ECML PKDD)},
   year={2025},
   publisher={Springer Nature Switzerland},
   doi={10.48550/arXiv.2506.03196}
